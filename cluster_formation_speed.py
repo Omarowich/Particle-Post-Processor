@@ -1,32 +1,15 @@
-import numpy as np
-from sklearn.cluster import DBSCAN
-from scipy.optimize import linear_sum_assignment
-from scipy.spatial.distance import cdist
-import os
-import numpy as np
-from pprint import pprint
-import pandas as pd
-import imageio
 import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
-from scipy.spatial import KDTree
-
-from Data_Reader import read_particle_data
+import numpy as np
+from Classify_Crystals import classify_crystal_structure
+from Mat_Data_Reader import Mat_read_particle_data
 from Nearest_Partners import find_nearest_neighbors
 from Particle_Angels import angles_between_neighbors
-from Classify_Crystals import classify_crystal_structure
-from New_Crystal_Classificator_only_center_particle_coloured import crystal_classifier
 from Visualise_Crystals import visualize_crystals
-from Mat_Data_Reader import Mat_read_particle_data
-from data_reader_csv import read_particle_data_csv
-import math
-from sklearn.cluster import DBSCAN
-from sklearn.cluster import KMeans
-from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import linear_sum_assignment
-from scipy.ndimage import gaussian_filter1d
+from scipy.spatial.distance import cdist
+from sklearn.cluster import DBSCAN
 
-
+from data_reader_csv import read_particle_data_csv
 
 
 def detect_clusters_DBSCAN(x_coords, y_coords, eps=1.0, min_samples=3):

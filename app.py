@@ -1,43 +1,38 @@
 # app.py
 
-import os
-import re
 import math
-import numpy as np
-import tempfile
+import os
 import pathlib
+import re
+import tempfile
 from pathlib import Path
 from typing import Optional
 
-import streamlit as st
 import matplotlib.pyplot as plt
-
+import numpy as np
+import streamlit as st
 from pptx import Presentation
-from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
+from pptx.util import Inches, Pt
 
-from track_cluster_movement import track_cluster_centroids
-from rg_over_time import average_rg_over_time
-from plot_crystal_at_timestep import plot_crystals_at_timestep
-from plot_bond_orientation_at_time_step import (
-    plot_bond_orientational_order_at_timestep,
-)
-from plot_fourier_analysis import fourier_of_metric
+from area_fraction_over_time import area_fraction_over_time
+from bond_orientation_over_time import bond_orientational_order_over_time
+from data_reader_csv import read_particle_data_csv
 from movement_change_calculator_time_study import (
     particle_displacement_from_inintal_position_over_time,
     particle_displacement_over_time,
     median_total_path_distance_over_time,
-    movement_heatmap_over_time,
 )
-
-from plot_together_tkb_func import plots_together
-
-from area_fraction_over_time import area_fraction_over_time
-from bond_orientation_over_time import bond_orientational_order_over_time
-from track_crystal_formation_over_time import detect_crystals_over_time
 from particle_distance_over_time import particle_distance_over_time
-from data_reader_csv import read_particle_data_csv
-
+from plot_bond_orientation_at_time_step import (
+    plot_bond_orientational_order_at_timestep,
+)
+from plot_crystal_at_timestep import plot_crystals_at_timestep
+from plot_fourier_analysis import fourier_of_metric
+from plot_together_tkb_func import plots_together
+from rg_over_time import average_rg_over_time
+from track_cluster_movement import track_cluster_centroids
+from track_crystal_formation_over_time import detect_crystals_over_time
 
 # ---------------------------------------------------------------------
 # Default root directory (used as default value for the user-editable root)

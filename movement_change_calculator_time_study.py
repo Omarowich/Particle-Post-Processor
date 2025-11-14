@@ -1,22 +1,15 @@
-import os
-import numpy as np
-from pprint import pprint
-import pandas as pd
-import imageio
-import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
-from scipy.spatial import KDTree
-
-from Data_Reader import read_particle_data
-from Nearest_Partners import find_nearest_neighbors
-from Particle_Angels import angles_between_neighbors
-from Classify_Crystals import classify_crystal_structure
-from New_Crystal_Classificator_only_center_particle_coloured import crystal_classifier
-from Visualise_Crystals import visualize_crystals
-from Mat_Data_Reader import Mat_read_particle_data
-from data_reader_csv import read_particle_data_csv
 import math
 
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from Classify_Crystals import classify_crystal_structure
+from Mat_Data_Reader import Mat_read_particle_data
+from Nearest_Partners import find_nearest_neighbors
+from Particle_Angels import angles_between_neighbors
+from Visualise_Crystals import visualize_crystals
+
+from data_reader_csv import read_particle_data_csv
 
 
 def particle_displacement_over_time(coordDynX, coordDynY, TauB=25,skip=0, normY=0):
