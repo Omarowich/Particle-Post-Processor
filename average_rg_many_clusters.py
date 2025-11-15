@@ -1,9 +1,11 @@
-import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.neighbors import NearestNeighbors, radius_neighbors_graph
+import numpy as np
 from scipy.sparse.csgraph import connected_components
 from sklearn.cluster import DBSCAN
+from sklearn.neighbors import NearestNeighbors, radius_neighbors_graph
+
 from data_reader_csv import read_particle_data_csv
+
 
 def cluster_rg_over_time(
     coordDynX_path,

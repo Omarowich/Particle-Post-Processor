@@ -1,7 +1,9 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
 import os
+
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.patches import Circle
+
 
 def crystal_classifier(coordinates, neighbors_indices, angles, angle_threshold=5.0, dbond=2.21, bounds=(-55, 55), marker_radius=1, mode='center', FileNameGlobal=""):
     N = coordinates.shape[0]

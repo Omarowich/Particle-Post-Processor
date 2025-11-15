@@ -1,5 +1,3 @@
-import numpy as np
-from pprint import pprint
 import pandas as pd
 
 def read_particle_data_csv(file_path, sheet_name=None):

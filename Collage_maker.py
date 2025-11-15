@@ -1,6 +1,7 @@
-from PIL import Image
 import os
+
 import matplotlib.pyplot as plt
+from PIL import Image
 
 
 def extract_tkb_tuab(filename):

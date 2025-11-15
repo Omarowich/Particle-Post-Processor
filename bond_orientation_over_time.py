@@ -1,7 +1,9 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.spatial import cKDTree
+
 from data_reader_csv import read_particle_data_csv
+
 
 def bond_orientational_order_over_time(coordDynX, coordDynY, n=6, neighbor_cutoff=3.5, TauB=25, skip=0, normY=0):
     coordDynX = read_particle_data_csv(coordDynX)[skip::2, 1:][1:, :]

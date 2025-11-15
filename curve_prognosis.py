@@ -1,13 +1,8 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from scipy.interpolate import CubicSpline
-from scipy.interpolate import UnivariateSpline
 from scipy.signal import argrelextrema
-from scipy.interpolate import make_interp_spline
-from scipy.signal import savgol_filter
-import statsmodels.api as sm
-
 
 
 def analyze_rg_curve(TkB, RG, resolution=500, plot=True, remove_outliers=True):

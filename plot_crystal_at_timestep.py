@@ -1,7 +1,8 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.spatial import Voronoi, voronoi_plot_2d
 from scipy.spatial.distance import pdist, squareform
+
 from data_reader_csv import read_particle_data_csv
 
 

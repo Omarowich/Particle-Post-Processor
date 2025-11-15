@@ -4,7 +4,28 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="fixed some import errors" />
+    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="fixed some import errors">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Collage_maker.py" beforeDir="false" afterPath="$PROJECT_DIR$/Collage_maker.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/New_Crystal_Classificator_only_center_particle_coloured.py" beforeDir="false" afterPath="$PROJECT_DIR$/New_Crystal_Classificator_only_center_particle_coloured.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/area_fraction_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/area_fraction_over_time.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/average_rg_many_clusters.py" beforeDir="false" afterPath="$PROJECT_DIR$/average_rg_many_clusters.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bond_orientation_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/bond_orientation_over_time.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cluster_formation_speed.py" beforeDir="false" afterPath="$PROJECT_DIR$/cluster_formation_speed.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cluster_post_processor.py" beforeDir="false" afterPath="$PROJECT_DIR$/cluster_post_processor.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crystaline_structer_plot.py" beforeDir="false" afterPath="$PROJECT_DIR$/crystaline_structer_plot.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/curve_prognosis.py" beforeDir="false" afterPath="$PROJECT_DIR$/curve_prognosis.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data_reader_csv.py" beforeDir="false" afterPath="$PROJECT_DIR$/data_reader_csv.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/movement_change_calculator_time_study.py" beforeDir="false" afterPath="$PROJECT_DIR$/movement_change_calculator_time_study.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/particle_distance_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/particle_distance_over_time.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/phase_diagram_from_folder.py" beforeDir="false" afterPath="$PROJECT_DIR$/phase_diagram_from_folder.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/plot_average_bond_angel_at_time_step.py" beforeDir="false" afterPath="$PROJECT_DIR$/plot_average_bond_angel_at_time_step.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/plot_bond_orientation_at_time_step.py" beforeDir="false" afterPath="$PROJECT_DIR$/plot_bond_orientation_at_time_step.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/plot_crystal_at_timestep.py" beforeDir="false" afterPath="$PROJECT_DIR$/plot_crystal_at_timestep.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/plot_fourier_analysis.py" beforeDir="false" afterPath="$PROJECT_DIR$/plot_fourier_analysis.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/plot_slopes_over_tkb.py" beforeDir="false" afterPath="$PROJECT_DIR$/plot_slopes_over_tkb.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/track_cluster_movement.py" beforeDir="false" afterPath="$PROJECT_DIR$/track_cluster_movement.py" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -13,42 +34,42 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
-  "lastFilter": {
-    "state": "OPEN",
-    "assignee": "Omarowich"
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;Omarowich&quot;
   }
-}]]></component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://github.com/Omarowich/Particle-Post-Processor.git",
-    "accountId": "370737b8-0cab-47d4-b55d-d16cba0c848f"
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/Omarowich/Particle-Post-Processor.git&quot;,
+    &quot;accountId&quot;: &quot;370737b8-0cab-47d4-b55d-d16cba0c848f&quot;
   }
-}]]></component>
+}</component>
   <component name="ProblemsViewState">
     <option name="selectedTabId" value="CurrentFile" />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "associatedIndex": 1
-}]]></component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 1
+}</component>
   <component name="ProjectId" id="35UOhHhcm2K5Owy3bz2ExwVP3E0" />
   <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "git-widget-placeholder": "main",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -65,7 +86,7 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1763161300787</updated>
-      <workItem from="1763161301851" duration="2242000" />
+      <workItem from="1763161301851" duration="3069000" />
     </task>
     <task id="LOCAL-00001" summary="fixed some import errors">
       <option name="closed" value="true" />
@@ -75,7 +96,15 @@
       <option name="project" value="LOCAL" />
       <updated>1763163558268</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="fixed some import errors">
+      <option name="closed" value="true" />
+      <created>1763206315660</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1763206315660</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -95,5 +124,15 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="fixed some import errors" />
     <option name="LAST_COMMIT_MESSAGE" value="fixed some import errors" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/data_reader_csv.py</url>
+          <option name="timeStamp" value="1" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
   </component>
 </project>

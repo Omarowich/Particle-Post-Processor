@@ -1,7 +1,9 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.spatial import cKDTree
+
 from data_reader_csv import read_particle_data_csv
+
 
 def plot_average_bond_angle_at_timestep(coordDynX, coordDynY, timestep, neighbor_cutoff=3.5, skip=0, degrees=True):
     # Load data
