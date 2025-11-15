@@ -33,6 +33,13 @@ from plot_together_tkb_func import plots_together
 from rg_over_time import average_rg_over_time
 from track_cluster_movement import track_cluster_centroids
 from track_crystal_formation_over_time import detect_crystals_over_time
+from phase_snapshot_fields import (
+    snapshot_local_density,
+    snapshot_displacement_vectors,
+    snapshot_alignment_field,
+    snapshot_displacement_vectors_voronoi
+)
+
 
 # ---------------------------------------------------------------------
 # Default root directory (used as default value for the user-editable root)
@@ -244,17 +251,20 @@ def build_pptx_from_images(
 # ---------------------------------------------------------------------
 def make_snapshot_phase_panel(
     base_dir,
-    tkb_rows,                       # e.g. (0, 5, 10, 20, 50)
-    column_times_s,                 # in SECONDS, e.g. (1, 5, 10, 20, 26)
-    taub,                           # TauB used; total_time_sec = taub * 13.514
+    tkb_rows,
+    column_times_s,
+    taub,
     x_name="datax.csv",
     y_name="datay.csv",
     figure_size=(12, 14),
     dpi=200,
-    plot_func=None,                 # e.g. plot_bond_orientational_order_at_timestep
+    plot_func=None,
     plot_kwargs=None,
     show_xy_labels=False,
+    colorbar_cmap=None,   # NEW
+    colorbar_label=None,  # NEW
 ):
+
     if plot_kwargs is None:
         plot_kwargs = {}
     if plot_func is None:
@@ -321,7 +331,25 @@ def make_snapshot_phase_panel(
                 label = rf"{int(tkb) if tkb.is_integer() else tkb}$T_{{kB}}$"
                 ax.set_ylabel(label, fontsize=14)
 
+    # --- optional shared colorbar on the side ---
+    if colorbar_cmap is not None:
+        from matplotlib.cm import ScalarMappable
+        from matplotlib.colors import Normalize
+
+        sm = ScalarMappable(norm=Normalize(vmin=0, vmax=1),
+                            cmap=plt.get_cmap(colorbar_cmap))
+        sm.set_array([])
+
+        fig.colorbar(
+            sm,
+            ax=axes.ravel().tolist(),
+            label=colorbar_label if colorbar_label else "",
+            fraction=0.03,
+            pad=0.02,
+        )
+
     return fig, axes
+
 
 
 # ---------------------------------------------------------------------
@@ -1135,14 +1163,26 @@ elif plot_mode == "Phase diagram":
         [
             "Bond orientational order snapshot (ψₙ)",
             "Crystal snapshot",
+            "Local density snapshot",
+            "Displacement vectors snapshot",
+            "Alignment field snapshot",
+            "Displacement vectors snapshot (Voronoi)",
         ],
         key="phase_snapshot",
     )
 
     if snapshot_label == "Bond orientational order snapshot (ψₙ)":
         snapshot_func = plot_bond_orientational_order_at_timestep
-    else:
+    elif snapshot_label == "Crystal snapshot":
         snapshot_func = plot_crystals_at_timestep
+    elif snapshot_label == "Displacement vectors snapshot":
+        snapshot_func = snapshot_displacement_vectors  # the per-particle one
+    elif snapshot_label == "Displacement vectors snapshot (Voronoi)":
+        snapshot_func = snapshot_displacement_vectors_voronoi
+    elif snapshot_label == "Alignment field snapshot":
+        snapshot_func = snapshot_alignment_field
+    elif snapshot_label == "Local density snapshot":
+        snapshot_func = snapshot_local_density
 
     # --- Styling options for phase diagram ---
     st.sidebar.header("8. Styling (phase diagram)")
@@ -1225,6 +1265,17 @@ elif plot_mode == "Phase diagram":
         particle_radius_um=float(particle_radius_um),
     )
 
+    # Decide colorbar based on snapshot type
+    if snapshot_label == "Local density snapshot":
+        cb_cmap = "viridis"
+        cb_label = "Normalized local density"
+    elif snapshot_label == "Alignment field snapshot":
+        cb_cmap = "plasma"
+        cb_label = "|ψ| (local alignment)"
+    else:
+        cb_cmap = None
+        cb_label = None
+
     fig, axes = make_snapshot_phase_panel(
         base_dir=base_dir,
         tkb_rows=tkb_rows,
@@ -1237,6 +1288,8 @@ elif plot_mode == "Phase diagram":
         plot_func=snapshot_func,
         plot_kwargs=plot_kwargs,
         show_xy_labels=show_xy_labels,
+        colorbar_cmap=cb_cmap,
+        colorbar_label=cb_label,
     )
 
     apply_global_styling(

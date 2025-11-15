@@ -4,14 +4,22 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="optimised all import errors">
+    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="fixed crystal snapshot">
+      <change afterPath="$PROJECT_DIR$/phase_snapshot_fields.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/plot_crystal_at_timestep.py" beforeDir="false" afterPath="$PROJECT_DIR$/plot_crystal_at_timestep.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/app.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -68,7 +76,7 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1763161300787</updated>
-      <workItem from="1763161301851" duration="5921000" />
+      <workItem from="1763161301851" duration="10742000" />
     </task>
     <task id="LOCAL-00001" summary="fixed some import errors">
       <option name="closed" value="true" />
@@ -102,7 +110,15 @@
       <option name="project" value="LOCAL" />
       <updated>1763207517672</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="fixed crystal snapshot">
+      <option name="closed" value="true" />
+      <created>1763209708439</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1763209708439</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -122,7 +138,8 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="fixed some import errors" />
     <MESSAGE value="optimised all import errors" />
-    <option name="LAST_COMMIT_MESSAGE" value="optimised all import errors" />
+    <MESSAGE value="fixed crystal snapshot" />
+    <option name="LAST_COMMIT_MESSAGE" value="fixed crystal snapshot" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
