@@ -902,7 +902,7 @@ elif plot_mode == "Multiple plots":
 
     x_axis_mode_multi = st.sidebar.radio(
         "X-axis units",
-        ["Seconds", "Brownian time T_kB"],
+        ["Seconds", "Brownian time τ_B"],
         key="x_axis_mode_multi",
     )
 
@@ -947,7 +947,7 @@ elif plot_mode == "Multiple plots":
             color_start=color_start_multi,
             color_end=color_end_multi,
             x_axis_mode="tkb"
-            if x_axis_mode_multi == "Brownian time T_kB"
+            if x_axis_mode_multi == "Brownian time τ_B"
             else "seconds",
         )
 

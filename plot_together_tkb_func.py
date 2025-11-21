@@ -91,7 +91,7 @@ def plots_together(
     # Optionally rescale time axis
     if x_axis_mode.lower() == "tkb":
         x_vals_ref = t_ref / BROWNIAN_SECONDS
-        x_label = r"Time $T_{kB}$"
+        x_label = r"Time $\tau_B$"
     else:
         x_vals_ref = t_ref
         x_label = "Time (s)"

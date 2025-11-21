@@ -4,10 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="fixed crystal snapshot">
-      <change afterPath="$PROJECT_DIR$/phase_snapshot_fields.py" afterDir="false" />
+    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="added more phase diagram analysis">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/app.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/plot_together_tkb_func.py" beforeDir="false" afterPath="$PROJECT_DIR$/plot_together_tkb_func.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -51,6 +51,7 @@
   <component name="PropertiesComponent">{
   &quot;keyToString&quot;: {
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;main&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
@@ -76,7 +77,9 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1763161300787</updated>
-      <workItem from="1763161301851" duration="10742000" />
+      <workItem from="1763161301851" duration="10785000" />
+      <workItem from="1763230325408" duration="3209000" />
+      <workItem from="1763709536203" duration="1331000" />
     </task>
     <task id="LOCAL-00001" summary="fixed some import errors">
       <option name="closed" value="true" />
@@ -118,7 +121,15 @@
       <option name="project" value="LOCAL" />
       <updated>1763209708439</updated>
     </task>
-    <option name="localTasksCounter" value="6" />
+    <task id="LOCAL-00006" summary="added more phase diagram analysis">
+      <option name="closed" value="true" />
+      <created>1763219417049</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1763219417049</updated>
+    </task>
+    <option name="localTasksCounter" value="7" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -139,7 +150,8 @@
     <MESSAGE value="fixed some import errors" />
     <MESSAGE value="optimised all import errors" />
     <MESSAGE value="fixed crystal snapshot" />
-    <option name="LAST_COMMIT_MESSAGE" value="fixed crystal snapshot" />
+    <MESSAGE value="added more phase diagram analysis" />
+    <option name="LAST_COMMIT_MESSAGE" value="added more phase diagram analysis" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
