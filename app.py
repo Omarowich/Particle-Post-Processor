@@ -788,43 +788,52 @@ elif plot_mode == "Multiple plots":
     # ---- TkB selection: detect & tick, plus optional custom ----
     st.sidebar.header("4. TkB values")
 
-    available_tkbs = []
+    # Each run is a single simulation folder (TkB, TauB)
+    # Folder names like: "5Tkb_2TauB", "50Tkb 10TauB", etc.
+    available_runs = []  # list of (folder_path, tkb, taub)
+
     if base_dir and os.path.isdir(base_dir):
         try:
-            folder_re = re.compile(r"^([0-9]+(?:\.[0-9]+)?)Tkb_")
+            folder_re = re.compile(
+                r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB$",
+                re.IGNORECASE,
+            )
             for fn in os.listdir(base_dir):
                 m = folder_re.match(fn)
-                if m:
-                    available_tkbs.append(float(m.group(1)))
-            available_tkbs = sorted(set(available_tkbs))
+                if not m:
+                    continue
+                tkb_val = float(m.group(1))
+                tau_val = float(m.group(2))
+                folder_path = os.path.join(base_dir, fn)
+                available_runs.append((folder_path, tkb_val, tau_val))
         except Exception as e:
-            st.sidebar.error(f"Could not scan TkB folders in {base_dir}: {e}")
+            st.sidebar.error(f"Could not scan TkB/TauB folders in {base_dir}: {e}")
 
-    if available_tkbs:
-        TkBs_selected = st.sidebar.multiselect(
-            "Select TkB values (from folders):",
-            available_tkbs,
-            default=available_tkbs,
-            key="multi_tkbs",
+    available_runs = sorted(available_runs, key=lambda r: (r[1], r[2]))  # sort by TkB, TauB
+
+    def format_run_option(run) -> str:
+        _, tkb, tau = run
+        return f"{tkb:g} Tkb (TauB: {tau:g})"
+
+    if available_runs:
+        selected_runs = st.sidebar.multiselect(
+            "Select TkB / TauB combinations (from folders):",
+            options=available_runs,
+            default=available_runs,
+            key="multi_runs",
+            format_func=format_run_option,
         )
     else:
-        TkBs_selected = []
+        selected_runs = []
         st.sidebar.warning(
-            "No Tkb_* subfolders detected. You can still add custom TkB values below."
+            "No Tkb_*TauB* subfolders detected. Please check your base folder."
         )
 
-    custom_tkb_str = st.sidebar.text_input(
-        "Add custom TkB values (optional, comma-separated):",
-        value="",
-        key="multi_tkb_custom",
-    )
-    TkBs = list(TkBs_selected)
-    if custom_tkb_str.strip():
-        try:
-            extra = [float(s.strip()) for s in custom_tkb_str.split(",") if s.strip()]
-            TkBs = sorted(set(TkBs + extra))
-        except ValueError:
-            st.sidebar.error("Could not parse custom TkB values.")
+    if not selected_runs:
+        st.warning("No TkB/TauB runs selected.")
+        st.stop()
+
+
 
     st.sidebar.header("5. File names")
     x_name = st.sidebar.text_input(
@@ -915,14 +924,24 @@ elif plot_mode == "Multiple plots":
         st.warning("Please select or enter a base folder path.")
         st.stop()
 
-    if not TkBs:
-        st.warning("No TkB values selected. Please tick some or add custom values.")
+    if not selected_runs:
+        st.warning("No TkB/TauB runs selected.")
         st.stop()
 
     st.subheader("Multiple plots over TkB")
     st.write(f"Base folder: `{base_dir}`")
     st.write(f"Metrics: **{metrics_selected}**")
-    st.write(f"TkB values: `{TkBs}`")
+    st.write("Selected runs (TkB, TauB):")
+
+
+    readable_runs = [
+        f"{tkb:g} Tkb  {tau:g} TauB"  # or f"{tkb:g}Tkb_{tau:g}TauB"
+        for _, tkb, tau in selected_runs
+    ]
+
+    st.write("Selected runs:")
+    for txt in readable_runs:
+        st.write(f"- {txt}")
 
     metric_kwargs = dict(TauB=TauB, skip=skip, normY=int(normY))
 
@@ -940,7 +959,7 @@ elif plot_mode == "Multiple plots":
             plot_title=default_ylabel,
             x_name=x_name,
             y_name=y_name,
-            TkBs=TkBs,
+            runs=selected_runs,  # <-- NEW: exact folders to use
             color_mode="gradient"
             if color_mode_multi == "Gradient over TkB"
             else "default",
@@ -950,6 +969,7 @@ elif plot_mode == "Multiple plots":
             if x_axis_mode_multi == "Brownian time τ_B"
             else "seconds",
         )
+
 
         fig = plt.gcf()
         apply_global_styling(
