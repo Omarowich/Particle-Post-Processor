@@ -55,6 +55,55 @@ import operator as op
 import numpy as np
 
 
+def slice_by_time_window(t: np.ndarray, y: np.ndarray, start_frac: float, end_frac: float):
+    t = np.asarray(t, float)
+    y = np.asarray(y, float)
+    m = np.isfinite(t) & np.isfinite(y)
+    t = t[m]
+    y = y[m]
+    if t.size < 2:
+        return t, y
+
+    t0, t1 = float(t.min()), float(t.max())
+    a = t0 + (t1 - t0) * float(start_frac)
+    b = t0 + (t1 - t0) * float(end_frac)
+
+    sel = (t >= a) & (t <= b)
+    return t[sel], y[sel]
+
+
+def avg_slope_linear_fit(t: np.ndarray, y: np.ndarray, t_start_frac=0.0, t_end_frac=1.0) -> float:
+    """
+    Returns slope dy/dt from a least-squares linear fit of y(t)
+    between fractions of the time span.
+    """
+    t = np.asarray(t, float)
+    y = np.asarray(y, float)
+
+    # finite mask
+    m = np.isfinite(t) & np.isfinite(y)
+    t = t[m]
+    y = y[m]
+    if t.size < 2:
+        return float("nan")
+
+    t0, t1 = float(t.min()), float(t.max())
+    if t1 <= t0:
+        return float("nan")
+
+    a = t0 + (t1 - t0) * float(t_start_frac)
+    b = t0 + (t1 - t0) * float(t_end_frac)
+
+    sel = (t >= a) & (t <= b)
+    t_fit = t[sel]
+    y_fit = y[sel]
+
+    if t_fit.size < 2:
+        return float("nan")
+
+    # slope from polyfit (degree 1)
+    slope, intercept = np.polyfit(t_fit, y_fit, 1)
+    return float(slope)
 
 
 def _safe_dt(t):
@@ -858,9 +907,48 @@ with st.sidebar.expander("📊 PowerPoint export (from existing PNGs)", expanded
 st.sidebar.header("1. Output type")
 plot_mode = st.sidebar.radio(
     "Select output type:",
-    ["Single plot", "Multiple plots", "Phase diagram"],
+    ["Single plot", "Multiple plots", "Phase diagram", "Summary plots"],
     key="plot_mode",
 )
+
+metric_options = [
+    "Radius of gyration",
+    "Area fraction",
+    "Bond orientational order",
+    "Detect crystals",
+    "Particle distance",
+    "Median total path distance",
+    "Particle displacement (over time)",
+    "Particle displacement (from initial)",
+    "Number of clusters",
+    "Average cluster size",
+]
+
+metric_map = {
+    "Radius of gyration": (average_rg_over_time, "Radius of gyration"),
+    "Area fraction": (area_fraction_over_time, "Area fraction"),
+    "Bond orientational order": (
+        bond_orientational_order_over_time,
+        "Bond orientational order",
+    ),
+    "Detect crystals": (detect_crystals_over_time, "Crystal metric"),
+    "Particle distance": (particle_distance_over_time, "Particle distance"),
+    "Median total path distance": (
+        median_total_path_distance_over_time,
+        "Median path distance",
+    ),
+    "Particle displacement (over time)": (
+        particle_displacement_over_time,
+        "Displacement",
+    ),
+    "Particle displacement (from initial)": (
+        particle_displacement_from_inintal_position_over_time,
+        "Displacement from initial",
+    ),
+    "Number of clusters": (num_clusters_over_time, "Number of clusters"),
+    "Average cluster size": (avg_cluster_size_over_time, "Average cluster size"),
+
+}
 
 # ---------------------------------------------------------------------
 # SINGLE PLOT MODE  (upload X & Y)
@@ -1178,44 +1266,6 @@ elif plot_mode == "Multiple plots":
 
     st.sidebar.header("3. Metric for curves")
 
-    metric_options = [
-        "Radius of gyration",
-        "Area fraction",
-        "Bond orientational order",
-        "Detect crystals",
-        "Particle distance",
-        "Median total path distance",
-        "Particle displacement (over time)",
-        "Particle displacement (from initial)",
-        "Number of clusters",
-        "Average cluster size",
-    ]
-
-    metric_map = {
-        "Radius of gyration": (average_rg_over_time, "Radius of gyration"),
-        "Area fraction": (area_fraction_over_time, "Area fraction"),
-        "Bond orientational order": (
-            bond_orientational_order_over_time,
-            "Bond orientational order",
-        ),
-        "Detect crystals": (detect_crystals_over_time, "Crystal metric"),
-        "Particle distance": (particle_distance_over_time, "Particle distance"),
-        "Median total path distance": (
-            median_total_path_distance_over_time,
-            "Median path distance",
-        ),
-        "Particle displacement (over time)": (
-            particle_displacement_over_time,
-            "Displacement",
-        ),
-        "Particle displacement (from initial)": (
-            particle_displacement_from_inintal_position_over_time,
-            "Displacement from initial",
-        ),
-        "Number of clusters": (num_clusters_over_time, "Number of clusters"),
-        "Average cluster size": (avg_cluster_size_over_time, "Average cluster size"),
-
-    }
 
     metrics_selected = st.sidebar.multiselect(
         "Select metric function(s) (y-axis):",
@@ -2073,3 +2123,262 @@ elif plot_mode == "Phase diagram":
         output_dir=output_dir,
     )
     st.success("Phase-diagram snapshot panel done ✅")
+
+
+
+# ---------------------------------------------------------------------
+# SUMMARY PLOT MODE  (folder-based)
+# ---------------------------------------------------------------------
+
+elif plot_mode == "Summary plots":
+    st.sidebar.header("2. Data folder (summary plots)")
+
+    st.sidebar.header("Time window (applies to all reductions)")
+    window_time_units = st.sidebar.radio(
+        "Window unit", ["seconds", "τB"], key="summary_window_units"
+    )
+    t_start_frac = st.sidebar.slider(
+        "Window start (fraction of run)", 0.0, 0.9, 0.0, 0.05, key="summary_window_start"
+    )
+    t_end_frac = st.sidebar.slider(
+        "Window end (fraction of run)", 0.1, 1.0, 1.0, 0.05, key="summary_window_end"
+    )
+
+    folder_source = st.sidebar.radio(
+        "Folder source:",
+        ["HIWI root subfolder", "Custom path"],
+        key="summary_folder_source",
+    )
+
+    hiwi_subdirs = []
+    if os.path.isdir(source_root):
+        hiwi_subdirs = [
+            d for d in os.listdir(source_root)
+            if os.path.isdir(os.path.join(source_root, d))
+        ]
+
+    if folder_source == "HIWI root subfolder":
+        subchoice = st.sidebar.selectbox("Choose subfolder:", hiwi_subdirs, key="summary_hiwi_sub")
+        base_dir = os.path.join(source_root, subchoice) if subchoice else ""
+    else:
+        base_dir = st.sidebar.text_input("Custom base folder path:", value="", key="summary_folder_custom")
+
+    base_dir = base_dir.strip().strip('"').strip("'")
+
+    # --- detect runs like in Multiple plots ---
+    available_runs = []
+    if base_dir and os.path.isdir(base_dir):
+        folder_re = re.compile(
+            r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB$",
+            re.IGNORECASE,
+        )
+        for fn in os.listdir(base_dir):
+            m = folder_re.match(fn)
+            if not m:
+                continue
+            tkb_val = float(m.group(1))
+            tau_val = float(m.group(2))
+            available_runs.append((os.path.join(base_dir, fn), tkb_val, tau_val))
+    available_runs = sorted(available_runs, key=lambda r: (r[1], r[2]))
+
+    def format_run_option(run) -> str:
+        _, tkb, tau = run
+        return f"{tkb:g} Tkb (TauB: {tau:g})"
+
+    selected_runs = st.sidebar.multiselect(
+        "Select runs:",
+        options=available_runs,
+        default=available_runs,
+        key="summary_runs",
+        format_func=format_run_option,
+    )
+
+    st.sidebar.header("3. Files")
+    x_name = st.sidebar.text_input("X filename:", value="datax.csv", key="summary_xname")
+    y_name = st.sidebar.text_input("Y filename:", value="datay.csv", key="summary_yname")
+
+    st.sidebar.header("4. Metric curve to summarize")
+    metric_label = st.sidebar.selectbox("Metric:", metric_options, key="summary_metric_label")
+
+    st.sidebar.header("5. Common parameters")
+    skip = st.sidebar.number_input("Skip (frame stride)", value=1, step=1, min_value=0, key="summary_skip")
+    normY = st.sidebar.checkbox("Normalize Y axis (only affects plotting)", value=True, key="summary_normY")
+
+    # (optional) share your cluster params if you want summary for cluster metrics
+    st.sidebar.header("Cluster metrics parameters")
+    cluster_eps_multi = st.sidebar.number_input("DBSCAN eps", value=3.5, step=0.1, key="summary_cluster_eps")
+    cluster_min_samples_multi = st.sidebar.number_input("DBSCAN min_samples", value=3, step=1, min_value=1, key="summary_cluster_mins")
+    cluster_min_cluster_size_multi = st.sidebar.number_input("Min cluster size", value=3, step=1, min_value=1, key="summary_cluster_minsz")
+
+    st.sidebar.header("6. Reduction (scalar from curve)")
+    reducer = st.sidebar.selectbox(
+        "Scalar to compute from y(t):",
+        ["max", "min", "mean", "last", "slope (linear fit)"],
+        key="summary_reducer",
+    )
+
+
+
+    st.sidebar.header("7. Plot against")
+    x_choice = st.sidebar.selectbox("X-axis:", ["TkB", "TauB"], key="summary_x_choice")
+
+    # caching behavior
+    export_data = st.sidebar.checkbox("Recompute + overwrite saved run data", value=False, key="summary_recompute")
+    export_dir = st.sidebar.text_input("Optional export folder (CSV of scalars)", value="", key="summary_export_dir")
+
+    run_summary = st.sidebar.button("▶ Run summary plot", key="run_summary")
+
+    if not run_summary:
+        st.stop()
+
+    if not base_dir or not os.path.isdir(base_dir):
+        st.warning("Choose a valid base folder.")
+        st.stop()
+    if not selected_runs:
+        st.warning("Select at least one run.")
+        st.stop()
+
+    dataset_tag = os.path.basename(base_dir.rstrip("\\/"))
+    metric_func, default_ylabel = metric_map[metric_label]
+
+    # --- load/compute series using your existing helper ---
+    # IMPORTANT: add cluster kwargs when needed
+    series, missing = get_series_for_metric(
+        metric_label=metric_label,
+        metric_func=metric_func,
+        selected_runs=selected_runs,
+        base_dir=base_dir,
+        dataset_tag=dataset_tag,
+        x_name=x_name,
+        y_name=y_name,
+        skip=int(skip),
+        normY=int(normY),
+        export_data=export_data,
+        export_dir="",  # we export scalars separately below
+    )
+
+    if missing:
+        st.warning("Missing data files for: " + ", ".join(missing))
+
+    # if metric is cluster-based, force recompute branch params (same idea as calculator fix)
+    # easiest: just overwrite series by recomputing with params if needed
+    if metric_label in ["Number of clusters", "Average cluster size"]:
+        # recompute with params (and ignore old cached, per your earlier choice)
+        series = []
+        for folder_path, tkb_val, tau_val in selected_runs:
+            run_name = os.path.basename(folder_path)
+            fx = os.path.join(folder_path, x_name)
+            fy = os.path.join(folder_path, y_name)
+            if not (os.path.isfile(fx) and os.path.isfile(fy)):
+                continue
+            kwargs_run = dict(
+                skip=int(skip),
+                normY=int(normY),
+                TauB=float(tau_val),
+                eps=float(cluster_eps_multi),
+                min_samples=int(cluster_min_samples_multi),
+                min_cluster_size=int(cluster_min_cluster_size_multi),
+            )
+            t, y = load_or_compute_metric_cached(
+                base_dir=base_dir,
+                run_folder=run_name,
+                fx=fx,
+                fy=fy,
+                metric_func=metric_func,
+                metric_kwargs=kwargs_run,
+            )
+            series.append({"run": run_name, "tkb": float(tkb_val), "taub": float(tau_val), "y": np.asarray(y, float)})
+
+    if not series:
+        st.warning("No data series available for this metric.")
+        st.stop()
+
+    # --- compute scalar per run ---
+    rows = []
+    for s in series:
+        y = np.asarray(s["y"], float)
+        n = len(y)
+        if n < 2:
+            scalar = np.nan
+            rows.append((s["run"], s["tkb"], s["taub"], scalar))
+            continue
+
+        taub = float(s["taub"])
+        t_sec = np.linspace(0.0, taub * 13.513, n)
+
+        # choose time axis unit for windowing
+        if window_time_units == "τB":
+            t_use = t_sec / 13.513
+        else:
+            t_use = t_sec
+
+        # ✅ apply window to every reduction
+        t_w, y_w = slice_by_time_window(t_use, y, t_start_frac, t_end_frac)
+
+        if y_w.size == 0:
+            scalar = np.nan
+        else:
+            if reducer == "max":
+                scalar = float(np.nanmax(y_w))
+            elif reducer == "min":
+                scalar = float(np.nanmin(y_w))
+            elif reducer == "mean":
+                scalar = float(np.nanmean(y_w))
+            elif reducer == "last":
+                scalar = float(y_w[-1])
+            elif reducer == "slope (linear fit)":
+                # slope dy/dt (or dy/dτB depending on window unit)
+                if t_w.size < 2:
+                    scalar = np.nan
+                else:
+                    slope, intercept = np.polyfit(t_w, y_w, 1)
+                    scalar = float(slope)
+            else:
+                scalar = np.nan
+
+        rows.append((s["run"], s["tkb"], s["taub"], scalar))
+
+
+    # --- plot ---
+    plt.close("all")
+    plt.figure()
+    ax = plt.gca()
+
+    if x_choice == "TkB":
+        xvals = np.array([r[1] for r in rows], float)
+        xlabel = "TkB"
+        group_key = np.array([r[2] for r in rows], float)  # group by TauB in legend
+        label_fmt = lambda ta: f"TauB {ta:g}"
+    else:
+        xvals = np.array([r[2] for r in rows], float)
+        xlabel = "TauB"
+        group_key = np.array([r[1] for r in rows], float)  # group by TkB in legend
+        label_fmt = lambda tk: f"TkB {tk:g}"
+
+    yvals = np.array([r[3] for r in rows], float)
+
+    for g in sorted(set(group_key)):
+        mask = group_key == g
+        ax.plot(xvals[mask], yvals[mask], marker="o", linestyle="-", label=label_fmt(g))
+
+    ax.set_title(f"{reducer}({metric_label}) vs {xlabel}")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(f"{reducer}({metric_label})")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+    fig = plt.gcf()
+    apply_global_styling(fig, legend_on=True, legend_fontsize=14, axis_fontsize=16, title_on=True, title_fontsize=18)
+    st.pyplot(fig)
+
+    # --- export scalars (optional) ---
+    if export_dir.strip():
+        out = Path(export_dir.strip())
+        out.mkdir(parents=True, exist_ok=True)
+        csv_path = out / slugify(f"{dataset_tag}_{metric_label}_{reducer}_vs_{xlabel}")  # no extension yet
+        csv_path = csv_path.with_suffix(".csv")
+        with open(csv_path, "w", newline="") as f:
+            f.write("run,tkb,taub,scalar\n")
+            for run_name, tkb, taub, scalar in rows:
+                f.write(f"{run_name},{tkb},{taub},{scalar}\n")
+        st.info(f"Exported scalars to: `{csv_path}`")

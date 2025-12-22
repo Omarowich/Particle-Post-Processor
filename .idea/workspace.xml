@@ -4,12 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="Fixed the clustering in Areafraction&#10;&#10;still need to add line smoothing.">
-      <change afterPath="$PROJECT_DIR$/app_helpers.py" afterDir="false" />
+    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="added Function mixer and saved the outputs for faster calculation next time&#10;&#10;MASSIVE UPDATE.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/app.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/area_fraction_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/area_fraction_over_time.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cluster_post_processor.py" beforeDir="false" afterPath="$PROJECT_DIR$/cluster_post_processor.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -148,7 +145,7 @@
       <workItem from="1765719557683" duration="8525000" />
       <workItem from="1765979814630" duration="923000" />
       <workItem from="1766134895577" duration="2473000" />
-      <workItem from="1766323585848" duration="24977000" />
+      <workItem from="1766323585848" duration="29744000" />
     </task>
     <task id="LOCAL-00001" summary="fixed some import errors">
       <option name="closed" value="true" />
@@ -214,7 +211,15 @@
       <option name="project" value="LOCAL" />
       <updated>1765533784040</updated>
     </task>
-    <option name="localTasksCounter" value="9" />
+    <task id="LOCAL-00009" summary="added Function mixer and saved the outputs for faster calculation next time&#10;&#10;MASSIVE UPDATE.">
+      <option name="closed" value="true" />
+      <created>1766403162938</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1766403162938</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -238,7 +243,8 @@
     <MESSAGE value="added more phase diagram analysis" />
     <MESSAGE value="fixed x axis labeling" />
     <MESSAGE value="Fixed the clustering in Areafraction&#10;&#10;still need to add line smoothing." />
-    <option name="LAST_COMMIT_MESSAGE" value="Fixed the clustering in Areafraction&#10;&#10;still need to add line smoothing." />
+    <MESSAGE value="added Function mixer and saved the outputs for faster calculation next time&#10;&#10;MASSIVE UPDATE." />
+    <option name="LAST_COMMIT_MESSAGE" value="added Function mixer and saved the outputs for faster calculation next time&#10;&#10;MASSIVE UPDATE." />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
