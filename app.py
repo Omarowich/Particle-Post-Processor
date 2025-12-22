@@ -907,7 +907,7 @@ with st.sidebar.expander("📊 PowerPoint export (from existing PNGs)", expanded
 st.sidebar.header("1. Output type")
 plot_mode = st.sidebar.radio(
     "Select output type:",
-    ["Single plot", "Multiple plots", "Phase diagram", "Summary plots"],
+    ["Single plot", "Multiple plots", "Summary plots", "Phase diagram"],
     key="plot_mode",
 )
 
@@ -1756,7 +1756,12 @@ elif plot_mode == "Multiple plots":
                 y_grid = np.interp(t_grid_sec, x_raw, y_raw, left=y_raw[0], right=y_raw[-1])
 
                 x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
-                ax.plot(x, y_grid, label=f"{s['tkb']:g} Tkb (TauB {taub:g})")
+                ax.plot(
+                    x,
+                    y_grid,
+                    label=f"{s['tkb']:g} Tkb (TauB {taub:g})",
+                    color=color_for_tkb(s["tkb"]),
+                )
 
         ax.set_title(default_ylabel)
         ax.set_ylabel(default_ylabel)
