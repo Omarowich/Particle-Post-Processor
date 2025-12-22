@@ -6,20 +6,6 @@ from sklearn.cluster import DBSCAN
 from data_reader_csv import read_particle_data_csv
 
 
-def detect_clusters_DBSCAN(x_coords, y_coords, eps=1.0, min_samples=3):
-    x_coords = np.array(x_coords, dtype=float)
-    y_coords = np.array(y_coords, dtype=float)
-    positions = np.column_stack((x_coords, y_coords))  # Combine x and y into one array
-    clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(positions)
-    #print(clustering.labels_)
-    return clustering.labels_  # Returns a list of cluster IDs (-1 means noise)
-
-# def detect_clusters(x_coords, y_coords, num_clusters=3):
-#     positions = np.column_stack((x_coords, y_coords))
-#     kmeans = KMeans(n_clusters=num_clusters).fit(positions)
-#     return kmeans.labels_
-
-
 
 
 
@@ -57,49 +43,117 @@ def plot_clusters(x_coords, y_coords, cluster_labels):
 
 
 
-def analyze_clusters_over_time(coordDynX, coordDynY, eps=10, min_samples=2,TauB=25,skip=0):
 
-    coordDynX = read_particle_data_csv(coordDynX)[skip::2,1:][1:,:]  # Read x-coordinates
-    coordDynY = read_particle_data_csv(coordDynY)[skip::2,1:][1:,:]  # Read y-coordinates
+def analyze_clusters_over_time(
+    coordDynX,
+    coordDynY,
+    TauB=25,
+    skip=1,
+    eps=3.5,
+    min_samples=3,
+    min_cluster_size=3,
+    normY=1,
+    plot=False,
+):
+    """
+    Detect DBSCAN clusters per frame (same clustering logic as in area_fraction_over_time),
+    then compute:
+      - number of clusters over time
+      - average cluster size over time (mean particles per cluster, excluding noise)
 
-    num_timesteps = len(coordDynX)
-    cluster_sizes = {}
-    num_clusters = []
-    avg_cluster_sizes = []
-    time_axis = []
+    Notes:
+      - Uses DBSCAN(eps=cluster_eps, min_samples=cluster_min_samples)
+      - Excludes noise label (-1)
+      - Filters clusters by min_cluster_size (default 3)
+
+    Returns
+    -------
+    time_axis : (T,) array
+    n_clusters : (T,) int array
+    avg_cluster_size : (T,) float array (0 if no clusters)
+    cluster_sizes_per_t : list of lists (each inner list = sizes of clusters at t)
+    """
+
+    # load data (same slicing pattern you started)
+    X = read_particle_data_csv(coordDynX)[skip::2, 1:][1:, :]
+    Y = read_particle_data_csv(coordDynY)[skip::2, 1:][1:, :]
+
+    num_timesteps = len(X)
+    time_axis = np.linspace(0, TauB * 13.513, num_timesteps)
+
+    n_clusters = np.zeros(num_timesteps, dtype=int)
+    avg_cluster_size = np.zeros(num_timesteps, dtype=float)
+    cluster_sizes_per_t = []
 
     for t in range(num_timesteps):
-        x_coords = coordDynX[t]
-        y_coords = coordDynY[t]
-        cluster_labels = detect_clusters_DBSCAN(x_coords, y_coords, eps, min_samples)
+        x_coords = X[t]
+        y_coords = Y[t]
+        positions = np.column_stack((x_coords, y_coords))
 
-        unique_clusters = set(label for label in cluster_labels if label != -1)
-        num_clusters.append(len(unique_clusters))
+        # Not enough points to form clusters reliably
+        if positions.shape[0] < max(1, min_samples):
+            cluster_sizes_per_t.append([])
+            continue
 
+        labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(positions)
+
+        # collect cluster sizes excluding noise
         sizes = []
+        for lab in (set(labels) - {-1}):
+            sz = int(np.sum(labels == lab))
+            if sz >= int(min_cluster_size):
+                sizes.append(sz)
 
-        for cluster_id in unique_clusters:
-            cluster_points = np.array([(x, y) for x, y, lbl in zip(x_coords, y_coords, cluster_labels) if lbl == cluster_id])
-            sizes.append(len(cluster_points))
+        cluster_sizes_per_t.append(sizes)
+        n_clusters[t] = len(sizes)
+        avg_cluster_size[t] = float(np.mean(sizes)) if sizes else 0.0
 
-        cluster_sizes[t] = sizes
+    if plot:
+        # plot: number of clusters
+        plt.figure(figsize=(8, 4))
+        plt.plot(time_axis, n_clusters)
+        plt.xlabel("Time (τB)")
+        plt.ylabel("Number of clusters")
+        plt.title("Number of clusters over time (DBSCAN)")
+        plt.grid(True)
+        plt.tight_layout()
+        if normY == 1:
+            plt.ylim(bottom=0)
+        plt.show()
 
-        # Calculate average cluster size for this timestep
-        avg_cluster_size = np.mean(sizes) if sizes else 0
-        avg_cluster_sizes.append(avg_cluster_size)
-        time_axis.append(t)
+        # plot: average cluster size
+        plt.figure(figsize=(8, 4))
+        plt.plot(time_axis, avg_cluster_size)
+        plt.xlabel("Time (τB)")
+        plt.ylabel("Avg cluster size (particles)")
+        plt.title("Average cluster size over time (DBSCAN)")
+        plt.grid(True)
+        plt.tight_layout()
+        if normY == 1:
+            plt.ylim(bottom=0)
+        plt.show()
+
+    return time_axis, n_clusters, avg_cluster_size, cluster_sizes_per_t
 
 
-    max_time = TauB * 13.513
-    time_axis = np.linspace(0, max_time, num_timesteps)
+def num_clusters_over_time(coordDynX, coordDynY, eps=3.5, min_samples=3, min_cluster_size=3, TauB=25, skip=1, normY=0):
+    time_axis, n_clusters, avg_cluster_sizes, cluster_sizes = analyze_clusters_over_time(
+        coordDynX, coordDynY,
+        eps=eps, min_samples=min_samples, min_cluster_size=min_cluster_size,
+        TauB=TauB, skip=skip,
+        plot=False
+    )
+    return time_axis, np.asarray(n_clusters, float)
 
 
-    # Smooth the average cluster sizes using a Gaussian filter
-    #avg_cluster_sizes = gaussian_filter1d(avg_cluster_sizes, sigma=2)
-
-    return cluster_sizes, num_clusters,avg_cluster_sizes,time_axis
-
-
+def avg_cluster_size_over_time(coordDynX, coordDynY, eps=3.5, min_samples=3, min_cluster_size=3, TauB=25, skip=1, normY=0):
+    time_axis, n_clusters, avg_cluster_sizes, cluster_sizes = analyze_clusters_over_time(
+        coordDynX, coordDynY,
+        eps=eps, min_samples=min_samples, min_cluster_size=min_cluster_size,
+        TauB=TauB, skip=skip,
+        plot=False
+    )
+    return time_axis, np.asarray(avg_cluster_sizes, float)
 
 
 
@@ -107,7 +161,6 @@ def plot_cluster_metrics(cluster_sizes, num_clusters,avg_cluster_sizes,time_axis
     """
     Plots the number of clusters and their sizes over time.
     """
-    time_steps = list(cluster_sizes.keys())
 
     # Plot number of clusters
     plt.figure(figsize=(10, 5))
@@ -133,11 +186,9 @@ def plot_cluster_metrics(cluster_sizes, num_clusters,avg_cluster_sizes,time_axis
 
 
 if  __name__ == '__main__':
-    coordDynX = r"Z:\MML MS BS students\Bachelor Students\Omar Elsabbagh\50x50+ARF\acoustic outputs\10TkB_25TauB\datax.csv"
-    coordDynY = r"Z:\MML MS BS students\Bachelor Students\Omar Elsabbagh\50x50+ARF\acoustic outputs\10TkB_25TauB\datay.csv"
+    coordDynX = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Students\Omar Elsabbagh\HIWI\NAF\10Tkb_1app. py0TauB\datax.csv"
+    coordDynY = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Students\Omar Elsabbagh\HIWI\NAF\10Tkb_1app. py0TauB\datay.csv"
 
-    # Run cluster detection over all timesteps
-    cluster_sizes, num_clusters,avg_cluster_sizes,time_axis = analyze_clusters_over_time(coordDynX, coordDynY, eps=3.043, min_samples=3)
-    # Plot number of clusters and their sizes
-    plot_cluster_metrics(cluster_sizes, num_clusters,avg_cluster_sizes,time_axis)
-
+    # Returns: time_axis, n_clusters, avg_cluster_size, cluster_sizes_per_t
+    time_axis, num_clusters, avg_cluster_sizes, cluster_sizes = analyze_clusters_over_time(coordDynX, coordDynY, eps=3.5, min_samples=3)
+    plot_cluster_metrics(cluster_sizes, num_clusters, avg_cluster_sizes, time_axis)

@@ -121,7 +121,7 @@ def area_fraction_over_time(
     TauB=25,
     skip=0,
     normY=0,
-    cluster_mode="global",          # "global" or "per_cluster"
+    cluster_mode="per_cluster",          # "global" or "per_cluster"
     cluster_eps=3.5,
     cluster_min_samples=3,
     tight_alpha=1.0,                # concavity of center-hull
@@ -248,6 +248,67 @@ def area_fraction_over_time(
     plt.show()
 
     return time_axis, occupancy_percentages
+
+
+def visualize_area_fraction_clusters_at_timestep(
+    coordDynX,
+    coordDynY,
+    timestep=None,                 # None = last
+    particle_radius=1.0,
+    skip=0,
+    normY=0,
+    cluster_eps=3.5,
+    cluster_min_samples=3,
+    tight_alpha=1.0,
+):
+    """
+    Visualize per-cluster concave+dilated hulls for ONE frame.
+    Uses the same logic as area_fraction_over_time(cluster_mode="per_cluster").
+    """
+
+    coordDynX = read_particle_data_csv(coordDynX)[skip::2, 1:][1:, :]
+    coordDynY = read_particle_data_csv(coordDynY)[skip::2, 1:][1:, :]
+
+    n_frames = len(coordDynX)
+    if n_frames == 0:
+        print("No frames.")
+        return
+
+    if timestep is None:
+        timestep = n_frames - 1
+    timestep = int(max(0, min(n_frames - 1, timestep)))
+
+    x_coords = coordDynX[timestep]
+    y_coords = coordDynY[timestep]
+    positions = np.column_stack((x_coords, y_coords))
+
+    if len(positions) < 3:
+        print("Not enough points for clustering/hulls.")
+        return
+
+    labels = DBSCAN(eps=cluster_eps, min_samples=cluster_min_samples).fit_predict(positions)
+    unique_labels = [lab for lab in set(labels) if lab != -1]
+
+    cluster_shapes = []
+    for lab in unique_labels:
+        cluster_points = positions[labels == lab]
+        if len(cluster_points) < 3:
+            continue
+
+        center_poly = alpha_shape_shapely(cluster_points, alpha=tight_alpha)
+        center_poly = center_poly.buffer(0)
+
+        region_poly = center_poly.buffer(particle_radius)
+        if region_poly.is_empty:
+            continue
+
+        outline = np.array(region_poly.exterior.coords)[:, :2]
+        cluster_shapes.append((lab, cluster_points, outline))
+
+    _visualize_cluster_frame(
+        positions, labels, cluster_shapes,
+        title=f"Area-fraction clusters at frame {timestep}"
+    )
 
 
 

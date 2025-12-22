@@ -4,11 +4,12 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="fixed x axis labeling">
+    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="Fixed the clustering in Areafraction&#10;&#10;still need to add line smoothing.">
+      <change afterPath="$PROJECT_DIR$/app_helpers.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/app.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/area_fraction_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/area_fraction_over_time.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/plot_together_tkb_func.py" beforeDir="false" afterPath="$PROJECT_DIR$/plot_together_tkb_func.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cluster_post_processor.py" beforeDir="false" afterPath="$PROJECT_DIR$/cluster_post_processor.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -52,6 +53,7 @@
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
     "Python.area_fraction_over_time.executor": "Run",
+    "Python.cluster_post_processor.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.git.unshallow": "true",
     "git-widget-placeholder": "main",
@@ -64,7 +66,7 @@
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
-  <component name="RunManager">
+  <component name="RunManager" selected="Python.cluster_post_processor">
     <configuration name="area_fraction_over_time" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="Particle Post Processor and Analyzer" />
       <option name="ENV_FILES" value="" />
@@ -88,8 +90,32 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
+    <configuration name="cluster_post_processor" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="Particle Post Processor and Analyzer" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/cluster_post_processor.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="Python.cluster_post_processor" />
         <item itemvalue="Python.area_fraction_over_time" />
       </list>
     </recent_temporary>
@@ -118,7 +144,11 @@
       <workItem from="1764247040986" duration="3828000" />
       <workItem from="1764271839150" duration="312000" />
       <workItem from="1765460502382" duration="6063000" />
-      <workItem from="1765529358149" duration="4363000" />
+      <workItem from="1765529358149" duration="4437000" />
+      <workItem from="1765719557683" duration="8525000" />
+      <workItem from="1765979814630" duration="923000" />
+      <workItem from="1766134895577" duration="2473000" />
+      <workItem from="1766323585848" duration="24977000" />
     </task>
     <task id="LOCAL-00001" summary="fixed some import errors">
       <option name="closed" value="true" />
@@ -176,7 +206,15 @@
       <option name="project" value="LOCAL" />
       <updated>1763712763574</updated>
     </task>
-    <option name="localTasksCounter" value="8" />
+    <task id="LOCAL-00008" summary="Fixed the clustering in Areafraction&#10;&#10;still need to add line smoothing.">
+      <option name="closed" value="true" />
+      <created>1765533784040</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1765533784040</updated>
+    </task>
+    <option name="localTasksCounter" value="9" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -199,7 +237,8 @@
     <MESSAGE value="fixed crystal snapshot" />
     <MESSAGE value="added more phase diagram analysis" />
     <MESSAGE value="fixed x axis labeling" />
-    <option name="LAST_COMMIT_MESSAGE" value="fixed x axis labeling" />
+    <MESSAGE value="Fixed the clustering in Areafraction&#10;&#10;still need to add line smoothing." />
+    <option name="LAST_COMMIT_MESSAGE" value="Fixed the clustering in Areafraction&#10;&#10;still need to add line smoothing." />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -212,6 +251,7 @@
     </breakpoint-manager>
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/Particle_Post_Processor_and_Analyzer$area_fraction_over_time.coverage" NAME="area_fraction_over_time Coverage Results" MODIFIED="1765533691113" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/Particle_Post_Processor_and_Analyzer$cluster_post_processor.coverage" NAME="cluster_post_processor Coverage Results" MODIFIED="1766353825043" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/Particle_Post_Processor_and_Analyzer$area_fraction_over_time.coverage" NAME="area_fraction_over_time Coverage Results" MODIFIED="1766339353109" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>
