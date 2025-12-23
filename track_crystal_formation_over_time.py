@@ -6,7 +6,7 @@ from data_reader_csv import read_particle_data_csv
 from scipy.spatial import Voronoi
 
 
-def detect_crystals_over_time(coordDynX, coordDynY, eps=3.043, min_samples=5, TauB=1, skip=1,normY=0):
+def detect_crystals_over_time(coordDynX, coordDynY, eps=3.043, min_samples=5, TauB=1, skip=1,normY=0,plot=False,plot_types=None,type="Hexagonal"):
     """Detect crystalline particles (hexagonal, square, triangular) over time and plot the fraction of particles in crystals."""
 
     # Load particle data
@@ -83,35 +83,58 @@ def detect_crystals_over_time(coordDynX, coordDynY, eps=3.043, min_samples=5, Ta
     line4, = plt.plot(time_axis, crystalline_fractions, marker='', linestyle='-', label='All Crystalline Particles')
     line5, = plt.plot(time_axis, other_fractions, marker='', linestyle='-', label='No Crystals')
 
+    series = {
+        "Hexagonal": np.array(hexagonal_fractions),
+        "Square": np.array(square_fractions),
+        "Triangular": np.array(triangular_fractions),
+        "All": np.array(crystalline_fractions),
+        "None": np.array(other_fractions),
+    }
+
+    # ONLY plot if explicitly requested
+    if plot:
+        if plot_types is None:
+            plot_types = ["Hexagonal", "Square", "Triangular", "All", "None"]
+
+        plt.figure(figsize=(8, 5))
+        for k in plot_types:
+            if k in series:
+                plt.plot(time_axis, series[k], label=f"{k} ({series[k][-1]:.2f})")
+
+        plt.xlabel("Time(s)")
+        plt.ylabel("Fraction of Crystalline Particles")
+        plt.title("Crystalline Fraction Over Time")
+        plt.legend(loc="lower right", fontsize=10)
+        plt.grid()
+        if normY == 1:
+            plt.ylim(0, 1)
+        plt.show()
 
 
-    plt.xlabel("Time(s)")
-    plt.ylabel("Fraction of Crystalline Particles")
-    plt.title("Crystalline Fraction Over Time")
-    # Create a custom legend with the final values
-    # Here, we use the last values in the plot for each curve
-    plt.legend(
-        handles=[line1,
-                 line2,
-                 line3,
-                 line4,
-                 line5],
-        labels=[
-            f'Hexagonal ({hexagonal_fractions[-1]:.2f})',
-            f'Square ({square_fractions[-1]:.2f})',
-            f'Triangular ({triangular_fractions[-1]:.2f})',
-            f'All Crystals ({crystalline_fractions[-1]:.2f})',
-            f'No Crystals ({other_fractions[-1]:.2f})'
-        ],
-        loc='lower right', fontsize=10
-    )
-    plt.grid()
-    if normY == 1: plt.ylim(0, 1)
-    plt.show()
 
-    return time_axis, hexagonal_fractions, other_fractions
+    y = series.get(type, series["Hexagonal"])
+    return time_axis, y
 
 
+def crystals_hex_over_time(fx, fy, **kwargs):
+    t, series = detect_crystals_over_time(fx, fy, types_to_show=["Hexagonal"], **kwargs)
+    return t, series["Hexagonal"]
+
+def crystals_square_over_time(fx, fy, **kwargs):
+    t, series = detect_crystals_over_time(fx, fy, types_to_show=["Square"], **kwargs)
+    return t, series["Square"]
+
+def crystals_tri_over_time(fx, fy, **kwargs):
+    t, series = detect_crystals_over_time(fx, fy, types_to_show=["Triangular"], **kwargs)
+    return t, series["Triangular"]
+
+def crystals_all_over_time(fx, fy, **kwargs):
+    t, series = detect_crystals_over_time(fx, fy, types_to_show=["All"], **kwargs)
+    return t, series["All"]
+
+def crystals_none_over_time(fx, fy, **kwargs):
+    t, series = detect_crystals_over_time(fx, fy, types_to_show=["None"], **kwargs)
+    return t, series["None"]
 
     # # Plot the counts of crystal types over time (Hexagonal, Square, Triangular, Other)
     # plt.figure(figsize=(8, 5))

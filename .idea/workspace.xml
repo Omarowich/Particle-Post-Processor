@@ -4,9 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="added the summary for tkb plots. to plot reduced scalar metrics against tkb&#10;&#10;MASSIVE UPDATE.">
+    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="fixed some color issues">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/app.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/track_crystal_formation_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/track_crystal_formation_over_time.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -60,6 +61,7 @@
     "node.js.selected.package.tslint": "(autodetect)",
     "nodejs_package_manager_path": "npm",
     "run.code.analysis.last.selected.profile": "aDefault",
+    "settings.editor.selected.configurable": "preferences.toDoOptions",
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
@@ -145,7 +147,8 @@
       <workItem from="1765719557683" duration="8525000" />
       <workItem from="1765979814630" duration="923000" />
       <workItem from="1766134895577" duration="2473000" />
-      <workItem from="1766323585848" duration="30577000" />
+      <workItem from="1766323585848" duration="30909000" />
+      <workItem from="1766503830284" duration="12066000" />
     </task>
     <task id="LOCAL-00001" summary="fixed some import errors">
       <option name="closed" value="true" />
@@ -227,7 +230,15 @@
       <option name="project" value="LOCAL" />
       <updated>1766412686499</updated>
     </task>
-    <option name="localTasksCounter" value="11" />
+    <task id="LOCAL-00011" summary="fixed some color issues">
+      <option name="closed" value="true" />
+      <created>1766413734687</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1766413734687</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -253,7 +264,8 @@
     <MESSAGE value="Fixed the clustering in Areafraction&#10;&#10;still need to add line smoothing." />
     <MESSAGE value="added Function mixer and saved the outputs for faster calculation next time&#10;&#10;MASSIVE UPDATE." />
     <MESSAGE value="added the summary for tkb plots. to plot reduced scalar metrics against tkb&#10;&#10;MASSIVE UPDATE." />
-    <option name="LAST_COMMIT_MESSAGE" value="added the summary for tkb plots. to plot reduced scalar metrics against tkb&#10;&#10;MASSIVE UPDATE." />
+    <MESSAGE value="fixed some color issues" />
+    <option name="LAST_COMMIT_MESSAGE" value="fixed some color issues" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>

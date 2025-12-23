@@ -33,7 +33,14 @@ from plot_fourier_analysis import fourier_of_metric
 from plot_together_tkb_func import plots_together
 from rg_over_time import average_rg_over_time
 from track_cluster_movement import track_cluster_centroids
-from track_crystal_formation_over_time import detect_crystals_over_time
+from track_crystal_formation_over_time import (
+    detect_crystals_over_time,
+    crystals_hex_over_time,
+    crystals_square_over_time,
+    crystals_tri_over_time,
+    crystals_all_over_time,
+    crystals_none_over_time,
+)
 from phase_snapshot_fields import (
     snapshot_local_density,
     snapshot_displacement_vectors,
@@ -41,18 +48,243 @@ from phase_snapshot_fields import (
     snapshot_displacement_vectors_voronoi
 )
 
-import json, hashlib
-
-import csv
-from datetime import datetime
-
-
-import json, hashlib
-from pathlib import Path
-from datetime import datetime
 import ast
 import operator as op
-import numpy as np
+
+def sidebar_runs_common_ui(
+    prefix: str,
+    source_root: str,
+    metric_options: list[str],
+    *,
+    include_metric_select: bool = False,
+    default_metrics: list[str] | None = None,
+    include_crystal_multiselect: bool = False,
+):
+    """
+    Common sidebar UI.
+    - If include_metric_select=True: shows metric multiselect right after run selection.
+    - If include_crystal_multiselect=True: shows crystal-type multiselect ONLY when Detect crystals is selected.
+    - "File names" are placed directly under the folder chooser and collapsed in an expander.
+    """
+
+    st.sidebar.header("2. Data folder")
+
+    folder_source = st.sidebar.radio(
+        "Folder source:",
+        ["HIWI root subfolder", "Custom path"],
+        key=f"{prefix}_folder_source",
+    )
+
+    hiwi_subdirs = []
+    if os.path.isdir(source_root):
+        try:
+            hiwi_subdirs = [
+                d for d in os.listdir(source_root)
+                if os.path.isdir(os.path.join(source_root, d))
+            ]
+        except Exception as e:
+            st.sidebar.error(f"Could not list subfolders under source root: {e}")
+
+    if folder_source == "HIWI root subfolder":
+        subchoice = st.sidebar.selectbox(
+            "Choose subfolder under source root:",
+            hiwi_subdirs,
+            key=f"{prefix}_hiwi_sub",
+        )
+        base_dir = os.path.join(source_root, subchoice) if subchoice else ""
+    else:
+        base_dir = st.sidebar.text_input(
+            "Custom base folder path:",
+            value="",
+            key=f"{prefix}_folder_custom",
+        )
+
+    base_dir = base_dir.strip().strip('"').strip("'")
+    dataset_tag = os.path.basename(base_dir.rstrip("\\/")) if base_dir else ""
+
+    # --- File names: collapsed right under folder chooser (and compact) ---
+    with st.sidebar.expander("4. File names", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            x_name = st.text_input(
+                "X",
+                value="datax.csv",
+                key=f"{prefix}_xname",
+                help="X filename inside each run folder",
+            )
+        with c2:
+            y_name = st.text_input(
+                "Y",
+                value="datay.csv",
+                key=f"{prefix}_yname",
+                help="Y filename inside each run folder",
+            )
+
+    # ---- runs detection ----
+    st.sidebar.header("3. Runs (TkB / TauB)")
+
+    available_runs = []
+    if base_dir and os.path.isdir(base_dir):
+        try:
+            folder_re = re.compile(
+                r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB$",
+                re.IGNORECASE,
+            )
+            for fn in os.listdir(base_dir):
+                m = folder_re.match(fn)
+                if not m:
+                    continue
+                tkb_val = float(m.group(1))
+                tau_val = float(m.group(2))
+                folder_path = os.path.join(base_dir, fn)
+                available_runs.append((folder_path, tkb_val, tau_val))
+        except Exception as e:
+            st.sidebar.error(f"Could not scan TkB/TauB folders in {base_dir}: {e}")
+
+    available_runs = sorted(available_runs, key=lambda r: (r[1], r[2]))
+
+    def format_run_option(run) -> str:
+        _, tkb, tau = run
+        return f"{tkb:g} Tkb (TauB: {tau:g})"
+
+    if available_runs:
+        selected_runs = st.sidebar.multiselect(
+            "Select TkB / TauB combinations (from folders):",
+            options=available_runs,
+            default=available_runs,
+            key=f"{prefix}_runs",
+            format_func=format_run_option,
+        )
+    else:
+        selected_runs = []
+        st.sidebar.warning("No Tkb_*TauB* subfolders detected. Please check your base folder.")
+
+    # ---- metrics selection (NOW right after run selection) ----
+    metrics_selected = None
+    if include_metric_select:
+        st.sidebar.header("4. Metrics")
+        if default_metrics is None:
+            default_metrics = [metric_options[0]] if metric_options else []
+        metrics_selected = st.sidebar.multiselect(
+            "Select metric function(s) (y-axis):",
+            metric_options,
+            default=default_metrics,
+            key=f"{prefix}_metric_select",
+        )
+
+    # ---- Crystal metrics parameters (ONLY if Detect crystals selected) ----
+    crystal_types = []
+    if include_crystal_multiselect and metrics_selected and ("Detect crystals" in metrics_selected):
+        st.sidebar.header("Crystal metrics parameters")
+        crystal_types = st.sidebar.multiselect(
+            "Crystal types (Detect crystals)",
+            ["Hexagonal", "Square", "Triangular", "All", "None"],
+            default=["Hexagonal"],
+            key=f"{prefix}_crystal_types",
+        )
+
+    # ---- common params ----
+    st.sidebar.header("5. Common parameters")
+    TauB = st.sidebar.number_input(
+        "TauB (Brownian time)",
+        value=2.0,
+        step=0.5,
+        key=f"{prefix}_TauB",
+    )
+    skip = st.sidebar.number_input(
+        "Skip (frame stride)",
+        value=1,
+        step=1,
+        min_value=0,
+        key=f"{prefix}_skip",
+    )
+    normY = st.sidebar.checkbox(
+        "Normalize Y axis",
+        value=True,
+        key=f"{prefix}_normY",
+    )
+
+    # cluster params
+    st.sidebar.header("Cluster metrics parameters")
+    cluster_eps = st.sidebar.number_input(
+        "DBSCAN eps",
+        value=3.5,
+        step=0.1,
+        key=f"{prefix}_cluster_eps",
+    )
+    cluster_min_samples = st.sidebar.number_input(
+        "DBSCAN min_samples",
+        value=3,
+        step=1,
+        min_value=1,
+        key=f"{prefix}_cluster_min_samples",
+    )
+    cluster_min_cluster_size = st.sidebar.number_input(
+        "Min cluster size",
+        value=3,
+        step=1,
+        min_value=1,
+        key=f"{prefix}_cluster_min_cluster_size",
+    )
+
+    # styling
+    st.sidebar.header("Styling")
+    legend_on = st.sidebar.checkbox("Show legend", value=True, key=f"{prefix}_legend_on")
+    legend_fontsize = st.sidebar.number_input(
+        "Legend font size", value=16, min_value=1, max_value=40, key=f"{prefix}_legend_fs"
+    )
+    axis_fontsize = st.sidebar.number_input(
+        "Axis label/tick font size", value=18, min_value=1, max_value=40, key=f"{prefix}_axis_fs"
+    )
+    title_on = st.sidebar.checkbox("Show title", value=True, key=f"{prefix}_title_on")
+    title_fontsize = st.sidebar.number_input(
+        "Title font size", value=20, min_value=1, max_value=60, key=f"{prefix}_title_fs"
+    )
+
+    x_axis_mode = st.sidebar.radio(
+        "X-axis units",
+        ["Seconds", "Brownian time τ_B"],
+        key=f"{prefix}_xaxis_mode",
+    )
+
+    # export / recompute
+    st.sidebar.header("Caching / export")
+    export_data = st.sidebar.checkbox(
+        "Export (recompute + overwrite saved run data)",
+        value=False,
+        key=f"{prefix}_export_data",
+    )
+    export_dir = st.sidebar.text_input(
+        "Optional CSV export folder (leave empty to skip CSV export):",
+        value=DEFAULT_SAVE_DIR,
+        key=f"{prefix}_export_dir",
+    )
+
+    out = {
+        "base_dir": base_dir,
+        "dataset_tag": dataset_tag,
+        "selected_runs": selected_runs,
+        "x_name": x_name,
+        "y_name": y_name,
+        "TauB": TauB,
+        "skip": int(skip),
+        "normY": int(normY),
+        "cluster_eps": float(cluster_eps),
+        "cluster_min_samples": int(cluster_min_samples),
+        "cluster_min_cluster_size": int(cluster_min_cluster_size),
+        "legend_on": legend_on,
+        "legend_fontsize": int(legend_fontsize),
+        "axis_fontsize": int(axis_fontsize),
+        "title_on": title_on,
+        "title_fontsize": int(title_fontsize),
+        "x_axis_mode": x_axis_mode,
+        "export_data": export_data,
+        "export_dir": export_dir,
+        "crystal_types": crystal_types,
+        "metrics_selected": metrics_selected,  # may be None if include_metric_select=False
+    }
+    return out
+
 
 
 def slice_by_time_window(t: np.ndarray, y: np.ndarray, start_frac: float, end_frac: float):
@@ -347,6 +579,7 @@ def get_series_for_metric(
     normY: int,
     export_data: bool,
     export_dir: str,
+    extra_kwargs= None,
 ):
     """
     Returns series = [{"run","tkb","taub","y"}...] for one metric_label.
@@ -381,10 +614,10 @@ def get_series_for_metric(
                 continue
 
             kwargs_run = dict(skip=int(skip), normY=int(normY), TauB=float(tau_val))
-            if metric_label in ["Number of clusters", "Average cluster size"]:
-                kwargs_run["eps"] = float(cluster_eps_multi)
-                kwargs_run["min_samples"] = int(cluster_min_samples_multi)
-                kwargs_run["min_cluster_size"] = int(cluster_min_cluster_size_multi)
+            if extra_kwargs:
+                kwargs_run.update(extra_kwargs)
+
+
             t, y_calc = load_or_compute_metric_cached(
                 base_dir=base_dir,
                 run_folder=run_name,
@@ -907,7 +1140,7 @@ with st.sidebar.expander("📊 PowerPoint export (from existing PNGs)", expanded
 st.sidebar.header("1. Output type")
 plot_mode = st.sidebar.radio(
     "Select output type:",
-    ["Single plot", "Multiple plots", "Summary plots", "Phase diagram"],
+    ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram"],
     key="plot_mode",
 )
 
@@ -922,31 +1155,29 @@ metric_options = [
     "Particle displacement (from initial)",
     "Number of clusters",
     "Average cluster size",
+    # "Crystals: Hexagonal",
+    # "Crystals: Square",
+    # "Crystals: Triangular",
+    # "Crystals: All",
+    # "Crystals: None",
 ]
 
 metric_map = {
     "Radius of gyration": (average_rg_over_time, "Radius of gyration"),
     "Area fraction": (area_fraction_over_time, "Area fraction"),
-    "Bond orientational order": (
-        bond_orientational_order_over_time,
-        "Bond orientational order",
-    ),
+    "Bond orientational order": (bond_orientational_order_over_time,"Bond orientational order",),
     "Detect crystals": (detect_crystals_over_time, "Crystal metric"),
     "Particle distance": (particle_distance_over_time, "Particle distance"),
-    "Median total path distance": (
-        median_total_path_distance_over_time,
-        "Median path distance",
-    ),
-    "Particle displacement (over time)": (
-        particle_displacement_over_time,
-        "Displacement",
-    ),
-    "Particle displacement (from initial)": (
-        particle_displacement_from_inintal_position_over_time,
-        "Displacement from initial",
-    ),
+    "Median total path distance": (median_total_path_distance_over_time,"Median path distance",),
+    "Particle displacement (over time)": (particle_displacement_over_time,"Displacement"),
+    "Particle displacement (from initial)": (particle_displacement_from_inintal_position_over_time,"Displacement from initial",),
     "Number of clusters": (num_clusters_over_time, "Number of clusters"),
     "Average cluster size": (avg_cluster_size_over_time, "Average cluster size"),
+    # "Crystals: Hexagonal": (crystals_hex_over_time, "Hexagonal crystal fraction"),
+    # "Crystals: Square": (crystals_square_over_time, "Square crystal fraction"),
+    # "Crystals: Triangular": (crystals_tri_over_time, "Triangular crystal fraction"),
+    # "Crystals: All": (crystals_all_over_time, "All crystalline fraction"),
+    # "Crystals: None": (crystals_none_over_time, "Non-crystalline fraction"),
 
 }
 
@@ -1228,365 +1459,70 @@ if plot_mode == "Single plot":
 # MULTIPLE PLOTS MODE  (folder-based, uses plots_together)
 # ---------------------------------------------------------------------
 elif plot_mode == "Multiple plots":
-    st.sidebar.header("2. Data folder (for multiple plots)")
-
-    folder_source = st.sidebar.radio(
-        "Folder source:",
-        ["HIWI root subfolder", "Custom path"],
-        key="multi_folder_source",
+    ui = sidebar_runs_common_ui(
+        prefix="multi",
+        source_root=source_root,
+        metric_options=metric_options,
+        include_metric_select=True,
+        default_metrics=[metric_options[0]],
+        include_crystal_multiselect=True,
     )
 
-    hiwi_subdirs = []
-    if os.path.isdir(source_root):
-        try:
-            hiwi_subdirs = [
-                d for d in os.listdir(source_root)
-                if os.path.isdir(os.path.join(source_root, d))
-            ]
-        except Exception as e:
-            st.sidebar.error(f"Could not list subfolders under source root: {e}")
+    metrics_selected = ui["metrics_selected"]
+    crystal_types_multi = ui["crystal_types"]
+    base_dir = ui["base_dir"]
+    dataset_tag = ui["dataset_tag"]
+    selected_runs = ui["selected_runs"]
+    x_name = ui["x_name"]
+    y_name = ui["y_name"]
+    skip = ui["skip"]
+    normY = ui["normY"]
+    cluster_eps_multi = ui["cluster_eps"]
+    cluster_min_samples_multi = ui["cluster_min_samples"]
+    cluster_min_cluster_size_multi = ui["cluster_min_cluster_size"]
+    legend_on_multi = ui["legend_on"]
+    legend_fontsize_multi = ui["legend_fontsize"]
+    axis_fontsize_multi = ui["axis_fontsize"]
+    title_on_multi = ui["title_on"]
+    title_fontsize_multi = ui["title_fontsize"]
+    x_axis_mode_multi = ui["x_axis_mode"]
+    export_data = ui["export_data"]
+    export_dir = ui["export_dir"]
+    TauB = ui["TauB"]
 
-    if folder_source == "HIWI root subfolder":
-        subchoice = st.sidebar.selectbox(
-            "Choose subfolder under source root:",
-            hiwi_subdirs,
-            key="multi_hiwi_sub",
-        )
-        base_dir = os.path.join(source_root, subchoice) if subchoice else ""
-        dataset_tag = os.path.basename(base_dir.rstrip("\\/"))  # e.g. "NAF"
-
-    else:
-        base_dir = st.sidebar.text_input(
-            "Custom base folder path:",
-            value="",
-            key="multi_folder_custom",
-        )
-
-    base_dir = base_dir.strip().strip('"').strip("'")
-
-    st.sidebar.header("3. Metric for curves")
-
-
-    metrics_selected = st.sidebar.multiselect(
-        "Select metric function(s) (y-axis):",
-        metric_options,
-        default=[metric_options[0]],
-        key="multi_metric",
-    )
-
-    if not metrics_selected:
-        st.sidebar.warning("Select at least one metric.")
-        st.stop()
-
-    # ---- TkB selection: detect & tick, plus optional custom ----
-    st.sidebar.header("4. TkB values")
-
-    # Each run is a single simulation folder (TkB, TauB)
-    # Folder names like: "5Tkb_2TauB", "50Tkb 10TauB", etc.
-    available_runs = []  # list of (folder_path, tkb, taub)
-
-    if base_dir and os.path.isdir(base_dir):
-        try:
-            folder_re = re.compile(
-                r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB$",
-                re.IGNORECASE,
-            )
-            for fn in os.listdir(base_dir):
-                m = folder_re.match(fn)
-                if not m:
-                    continue
-                tkb_val = float(m.group(1))
-                tau_val = float(m.group(2))
-                folder_path = os.path.join(base_dir, fn)
-                available_runs.append((folder_path, tkb_val, tau_val))
-        except Exception as e:
-            st.sidebar.error(f"Could not scan TkB/TauB folders in {base_dir}: {e}")
-
-    available_runs = sorted(available_runs, key=lambda r: (r[1], r[2]))  # sort by TkB, TauB
-
-    def format_run_option(run) -> str:
-        _, tkb, tau = run
-        return f"{tkb:g} Tkb (TauB: {tau:g})"
-
-    if available_runs:
-        selected_runs = st.sidebar.multiselect(
-            "Select TkB / TauB combinations (from folders):",
-            options=available_runs,
-            default=available_runs,
-            key="multi_runs",
-            format_func=format_run_option,
-        )
-    else:
-        selected_runs = []
-        st.sidebar.warning(
-            "No Tkb_*TauB* subfolders detected. Please check your base folder."
-        )
-
-    if not selected_runs:
-        st.warning("No TkB/TauB runs selected.")
-        st.stop()
+    crystal_types_multi = ui["crystal_types"]
 
 
 
-    st.sidebar.header("5. File names")
-    x_name = st.sidebar.text_input(
-        "X filename inside each Tkb_* folder:", value="datax.csv", key="multi_xname"
-    )
-    y_name = st.sidebar.text_input(
-        "Y filename inside each Tkb_* folder:", value="datay.csv", key="multi_yname"
-    )
-
-    st.sidebar.header("6. Common parameters passed to metric_func")
-    TauB = st.sidebar.number_input(
-        "TauB (Brownian time)", value=2.0, step=0.5, key="TauB_multi"
-    )
-
-    cluster_eps_multi = st.sidebar.number_input("DBSCAN eps", value=3.5, step=0.1, key="cluster_eps_multi")
-
-    cluster_min_samples_multi = st.sidebar.number_input("DBSCAN min_samples", value=3, step=1, min_value=1,
-                                                        key="cluster_min_samples_multi")
-
-    cluster_min_cluster_size_multi = st.sidebar.number_input("Min cluster size", value=3, step=1, min_value=1,
-                                                             key="cluster_min_cluster_size_multi")
-
-    skip = st.sidebar.number_input(
-        "Skip (frame stride)", value=1, step=1, min_value=0, key="skip_multi"
-    )
-    normY = st.sidebar.checkbox(
-        "Normalize Y axis", value=True, key="normY_multi"
-    )
-
-    # --- Styling options for multiple plots ---
-    st.sidebar.header("7. Styling (multiple plots)")
-    legend_on_multi = st.sidebar.checkbox(
-        "Show legend", value=True, key="legend_on_multi"
-    )
-    legend_fontsize_multi = st.sidebar.number_input(
-        "Legend font size",
-        value=16,
-        min_value=1,
-        max_value=40,
-        key="legend_fs_multi",
-    )
-    axis_fontsize_multi = st.sidebar.number_input(
-        "Axis label/tick font size",
-        value=18,
-        min_value=1,
-        max_value=40,
-        key="axis_fs_multi",
-    )
-    title_on_multi = st.sidebar.checkbox(
-        "Show title", value=True, key="title_on_multi"
-    )
-    title_fontsize_multi = st.sidebar.number_input(
-        "Title font size",
-        value=20,
-        min_value=1,
-        max_value=60,
-        key="title_fs_multi",
-    )
-
+    # ---- Color mode UI ----
+    st.sidebar.header("Curve colors")
     color_mode_multi = st.sidebar.radio(
         "Curve colors",
         ["Matplotlib default", "Gradient over TkB"],
-        key="color_mode_multi",
+        key="multi_color_mode",  # unique key
     )
 
     if color_mode_multi == "Gradient over TkB":
         st.sidebar.write("Gradient colors:")
         col1, col2 = st.sidebar.columns(2)
         with col1:
-            color_start_multi = st.color_picker(
+            color_start_multi = st.sidebar.color_picker(
                 "Start",
                 value="#000000",
-                key="color_start_multi",
+                key="multi_color_start",
             )
         with col2:
-            color_end_multi = st.color_picker(
+            color_end_multi = st.sidebar.color_picker(
                 "End",
                 value="#CCCCCC",
-                key="color_end_multi",
+                key="multi_color_end",
             )
     else:
         color_start_multi = "#000000"
         color_end_multi = "#CCCCCC"
 
-    x_axis_mode_multi = st.sidebar.radio(
-        "X-axis units",
-        ["Seconds", "Brownian time τ_B"],
-        key="x_axis_mode_multi",
-    )
 
-
-
-    st.sidebar.checkbox(
-        "Prefer saved datasets (skip recompute if available)",
-        value=True,
-        key="prefer_saved_dataset_multi",
-    )
-    prefer_saved_dataset = st.session_state["prefer_saved_dataset_multi"]
-
-    # If checked => recompute + overwrite saved arrays (and optionally export CSV)
-    export_data = st.sidebar.checkbox(
-        "Export (recompute + overwrite saved run data)",
-        value=False,
-        key="export_data_multi",
-    )
-    export_dir = st.sidebar.text_input(
-        "Optional CSV export folder (leave empty to skip CSV export):",
-        value=DEFAULT_SAVE_DIR,
-        key="export_dir_multi",
-    )
-
-    st.markdown("---")
-    st.subheader("🧮 Calculator (typed expression)")
-
-    calc_metric_options = metric_options  # your existing list
-
-    mA_label = st.selectbox("Metric A", calc_metric_options, key="expr_calc_A")
-    mB_label = st.selectbox("Metric B", calc_metric_options, key="expr_calc_B")
-
-    expr = st.text_input(
-        "Expression (use A and B):",
-        value="A / B",
-        key="expr_calc_expr",
-        help="Examples: A/B, (A/B)*100, log(A)/sqrt(B), A/(B+1e-9), deriv(A,t), integ(A,t), fft_amp(A)"
-    )
-
-    calc_title = st.text_input(
-        "Derived plot title",
-        value=f"{expr}  (A={mA_label}, B={mB_label})",
-        key="expr_calc_title",
-    )
-
-    plot_expr = st.button("Plot derived (auto-load/compute)", key="expr_calc_plot")
-
-    st.caption("Allowed functions: " + ", ".join(sorted(_ALLOWED_FUNCS.keys())))
-
-    if plot_expr:
-        # ✅ define this AFTER expr exists and BEFORE plotting
-        plot_fft = ("fft_amp" in expr) or ("fft_power" in expr)
-
-        if not selected_runs:
-            st.warning("Select at least one run (TkB/TauB) first.")
-            st.stop()
-        if not base_dir:
-            st.warning("Select a base folder first.")
-            st.stop()
-
-        dataset_tag = os.path.basename(base_dir.rstrip("\\/"))
-
-        funcA, _ = metric_map[mA_label]
-        funcB, _ = metric_map[mB_label]
-
-        with st.spinner("Loading / computing Metric A..."):
-            A_series, missingA = get_series_for_metric(
-                metric_label=mA_label,
-                metric_func=funcA,
-                selected_runs=selected_runs,
-                base_dir=base_dir,
-                dataset_tag=dataset_tag,
-                x_name=x_name,
-                y_name=y_name,
-                skip=int(skip),
-                normY=int(normY),
-                export_data=export_data,
-                export_dir=export_dir,
-            )
-
-        with st.spinner("Loading / computing Metric B..."):
-            B_series, missingB = get_series_for_metric(
-                metric_label=mB_label,
-                metric_func=funcB,
-                selected_runs=selected_runs,
-                base_dir=base_dir,
-                dataset_tag=dataset_tag,
-                x_name=x_name,
-                y_name=y_name,
-                skip=int(skip),
-                normY=int(normY),
-                export_data=export_data,
-                export_dir=export_dir,
-            )
-
-        if missingA:
-            st.warning("Missing files for Metric A runs: " + ", ".join(missingA))
-        if missingB:
-            st.warning("Missing files for Metric B runs: " + ", ".join(missingB))
-
-        A_map = {s["run"]: s for s in A_series}
-        B_map = {s["run"]: s for s in B_series}
-        common_runs = sorted(set(A_map.keys()) & set(B_map.keys()))
-        if not common_runs:
-            st.warning("No overlapping runs between Metric A and Metric B.")
-            st.stop()
-
-        plt.close("all")
-        plt.figure()
-        ax = plt.gca()
-
-        for run_name in common_runs:
-            a = A_map[run_name]
-            b = B_map[run_name]
-
-            taub_a = float(a["taub"])
-            taub_b = float(b["taub"])
-            if abs(taub_a - taub_b) > 1e-9:
-                st.warning(f"Skipping {run_name}: TauB mismatch between metrics ({taub_a} vs {taub_b})")
-                continue
-
-            t_grid_sec, yA, yB = align_y_by_taub_length(a["y"], b["y"], taub_a)
-
-            env = {
-                "A": yA,
-                "B": yB,
-                "t": t_grid_sec,
-                "pi": float(np.pi),
-                "e": float(np.e),
-            }
-
-            try:
-                y_out = safe_eval_expr(expr, env)
-                y_out = np.asarray(y_out, float)
-            except Exception as e:
-                st.error(f"Expression error: {e}")
-                st.stop()
-
-            # ✅ choose x-axis correctly
-            if plot_fft:
-                x = fft_freqs(t_grid_sec)  # Hz
-            else:
-                x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
-
-            ax.plot(x, y_out, label=run_name)
-
-        ax.set_title(calc_title)
-
-        # ✅ label axis correctly
-        if plot_fft:
-            ax.set_xlabel("Frequency (Hz)")
-        else:
-            ax.set_xlabel("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")
-
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-
-        fig = plt.gcf()
-        apply_global_styling(
-            fig,
-            legend_on=legend_on_multi,
-            legend_fontsize=legend_fontsize_multi,
-            axis_fontsize=axis_fontsize_multi,
-            title_on=title_on_multi,
-            title_fontsize=title_fontsize_multi,
-        )
-        st.pyplot(fig)
-
-    ########## RUN ####################
     run = st.sidebar.button("▶ Run multiple-plot routine", key="run_multi")
-
-
-
     if not run:
         st.stop()
 
@@ -1693,6 +1629,79 @@ elif plot_mode == "Multiple plots":
                 "y": np.asarray(y, float),
             })
 
+        # --- Detect crystals: plot one curve per selected crystal type ---
+        if metric_label == "Detect crystals":
+            plt.figure()
+            ax = plt.gca()
+
+            for kind in crystal_types_multi:
+                # compute one series per kind (same cache system, because kwargs differ)
+                series_kind = []
+                missing = []
+
+                for folder_path, tkb_val, tau_val in selected_runs:
+                    run_name = os.path.basename(folder_path)
+
+                    fx = os.path.join(folder_path, x_name)
+                    fy = os.path.join(folder_path, y_name)
+                    if not (os.path.isfile(fx) and os.path.isfile(fy)):
+                        missing.append(run_name)
+                        continue
+
+                    # IMPORTANT: pass the chosen kind into kwargs
+                    kwargs_run = dict(skip=int(skip), normY=int(normY), TauB=float(tau_val))
+                    kwargs_run["type"] = kind         # <-- use this instead if your function param is named type
+
+                    t, y = load_or_compute_metric_cached(
+                        base_dir=base_dir,
+                        run_folder=run_name,
+                        fx=fx,
+                        fy=fy,
+                        metric_func=detect_crystals_over_time,
+                        metric_kwargs=kwargs_run,
+                    )
+
+                    series_kind.append({
+                        "run": run_name,
+                        "tkb": float(tkb_val),
+                        "taub": float(tau_val),
+                        "y": np.asarray(y, float),
+                    })
+
+                # plot this kind across runs (your existing grouping-by-taub logic)
+                for taub in sorted({s["taub"] for s in series_kind}):
+                    group = [s for s in series_kind if s["taub"] == taub]
+                    n_points = max(len(s["y"]) for s in group)
+                    t_end_sec = taub * 13.513
+                    t_grid_sec = np.linspace(0.0, t_end_sec, n_points)
+
+                    for s in group:
+                        y_raw = s["y"]
+                        x_raw = np.linspace(0.0, t_end_sec, len(y_raw))
+                        y_grid = np.interp(t_grid_sec, x_raw, y_raw, left=y_raw[0], right=y_raw[-1])
+
+                        x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
+
+                        ax.plot(
+                            x,
+                            y_grid,
+                            label=f"{s['tkb']:g} Tkb (TauB {taub:g}) — {kind}",
+                        )
+
+            ax.set_title("Crystal metric")
+            ax.set_ylabel("Fraction")
+            ax.set_xlabel("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+
+            fig = plt.gcf()
+            apply_global_styling(fig, legend_on=legend_on_multi, legend_fontsize=legend_fontsize_multi,
+                                 axis_fontsize=axis_fontsize_multi, title_on=title_on_multi,
+                                 title_fontsize=title_fontsize_multi)
+            st.pyplot(fig)
+
+            continue  # <-- IMPORTANT: skip the normal metric plotting below
+
         if missing:
             st.warning("Missing data files for: " + ", ".join(missing))
 
@@ -1789,6 +1798,282 @@ elif plot_mode == "Multiple plots":
 
 
     st.success("Multiple-plot figure(s) done ✅")
+
+
+
+
+
+
+
+
+##########################################################
+# Function Mixer
+##########################################################
+
+elif plot_mode == "Function mixer":
+    ui = sidebar_runs_common_ui(
+        prefix="mix",
+        source_root=source_root,
+        metric_options=metric_options,
+        include_metric_select=False,
+        include_crystal_multiselect=False,
+    )
+
+    base_dir = ui["base_dir"]
+    dataset_tag = ui["dataset_tag"]
+    selected_runs = ui["selected_runs"]
+    x_name = ui["x_name"]
+    y_name = ui["y_name"]
+    skip = ui["skip"]
+    normY = ui["normY"]
+    cluster_eps_multi = ui["cluster_eps"]
+    cluster_min_samples_multi = ui["cluster_min_samples"]
+    cluster_min_cluster_size_multi = ui["cluster_min_cluster_size"]
+    legend_on_multi = ui["legend_on"]
+    legend_fontsize_multi = ui["legend_fontsize"]
+    axis_fontsize_multi = ui["axis_fontsize"]
+    title_on_multi = ui["title_on"]
+    title_fontsize_multi = ui["title_fontsize"]
+    x_axis_mode_multi = ui["x_axis_mode"]
+    export_data = ui["export_data"]
+    export_dir = ui["export_dir"]
+
+    st.markdown("---")
+    st.subheader("🧮 Function Mixer")
+
+    calc_metric_options = metric_options  # your existing list
+
+    st.markdown("### Time window")
+    c1, c2, c3 = st.columns([1, 2, 2])
+
+    with c1:
+        st.caption("Slice source data")
+
+    with c2:
+        mix_t_start_frac = st.slider(
+            "Window start (fraction of run)",
+            0.0, 0.9, 0.0, 0.01,
+            key="mix_window_start",
+        )
+
+    with c3:
+        mix_t_end_frac = st.slider(
+            "Window end (fraction of run)",
+            0.1, 1.0, 1.0, 0.01,
+            key="mix_window_end",
+        )
+
+    mA_label = st.selectbox("Metric A", calc_metric_options, key="expr_calc_A")
+
+    crystal_type_A = None
+    if mA_label == "Detect crystals":
+        with st.expander("Crystal options for A", expanded=True):
+            crystal_type_A = st.selectbox(
+                "Crystal type for A:",
+                ["Hexagonal", "Square", "Triangular", "All", "None"],
+                index=0,
+                key="crystal_type_A",
+            )
+
+    mB_label = st.selectbox("Metric B", calc_metric_options, key="expr_calc_B")
+
+    crystal_type_B = None
+    if mB_label == "Detect crystals":
+        with st.expander("Crystal options for B", expanded=True):
+            crystal_type_B = st.selectbox(
+                "Crystal type for B:",
+                ["Hexagonal", "Square", "Triangular", "All", "None"],
+                index=0,
+                key="crystal_type_B",
+            )
+
+    expr = st.text_input(
+        "Expression (use A and B):",
+        value="A / B",
+        key="expr_calc_expr",
+        help="Examples: A/B, (A/B)*100, log(A)/sqrt(B), A/(B+1e-9), deriv(A,t), integ(A,t), fft_amp(A)"
+    )
+
+    calc_title = st.text_input(
+        "Derived plot title",
+        value=f"{expr}  (A={mA_label}, B={mB_label})",
+        key="expr_calc_title",
+    )
+
+    plot_expr = st.button("Plot derived (auto-load/compute)", key="expr_calc_plot")
+
+    st.caption("Allowed functions: " + ", ".join(sorted(_ALLOWED_FUNCS.keys())))
+
+    if plot_expr:
+        # ✅ define this AFTER expr exists and BEFORE plotting
+        plot_fft = ("fft_amp" in expr) or ("fft_power" in expr)
+
+        if not selected_runs:
+            st.warning("Select at least one run (TkB/TauB) first.")
+            st.stop()
+        if not base_dir:
+            st.warning("Select a base folder first.")
+            st.stop()
+
+        dataset_tag = os.path.basename(base_dir.rstrip("\\/"))
+
+        funcA, _ = metric_map[mA_label]
+        funcB, _ = metric_map[mB_label]
+
+        extraA = {}
+        if mA_label in ["Number of clusters", "Average cluster size"]:
+            extraA.update({
+                "eps": float(cluster_eps_multi),
+                "min_samples": int(cluster_min_samples_multi),
+                "min_cluster_size": int(cluster_min_cluster_size_multi),
+            })
+        if mA_label == "Detect crystals" and crystal_type_A is not None:
+            extraA["type"] = crystal_type_A
+
+        extraB = {}
+        if mB_label in ["Number of clusters", "Average cluster size"]:
+            extraB.update({
+                "eps": float(cluster_eps_multi),
+                "min_samples": int(cluster_min_samples_multi),
+                "min_cluster_size": int(cluster_min_cluster_size_multi),
+            })
+        if mB_label == "Detect crystals" and crystal_type_B is not None:
+            extraB["type"] = crystal_type_B
+
+        metric_label_A = mA_label
+        if mA_label == "Detect crystals" and crystal_type_A:
+            metric_label_A = f"Detect crystals ({crystal_type_A})"
+
+        metric_label_B = mB_label
+        if mB_label == "Detect crystals" and crystal_type_B:
+            metric_label_B = f"Detect crystals ({crystal_type_B})"
+
+        with st.spinner("Loading / computing Metric A..."):
+            A_series, missingA = get_series_for_metric(
+                metric_label=metric_label_A,  # ✅ use the label with "(Square)" etc.
+                metric_func=funcA,
+                selected_runs=selected_runs,
+                base_dir=base_dir,
+                dataset_tag=dataset_tag,
+                x_name=x_name,
+                y_name=y_name,
+                skip=int(skip),
+                normY=int(normY),
+                export_data=export_data,
+                export_dir=export_dir,
+                extra_kwargs=extraA,  # ✅ valid kwarg
+            )
+
+        with st.spinner("Loading / computing Metric B..."):
+            B_series, missingB = get_series_for_metric(
+                metric_label=metric_label_B,  # ✅
+                metric_func=funcB,
+                selected_runs=selected_runs,
+                base_dir=base_dir,
+                dataset_tag=dataset_tag,
+                x_name=x_name,
+                y_name=y_name,
+                skip=int(skip),
+                normY=int(normY),
+                export_data=export_data,
+                export_dir=export_dir,
+                extra_kwargs=extraB,  # ✅
+            )
+
+        if missingA:
+            st.warning("Missing files for Metric A runs: " + ", ".join(missingA))
+        if missingB:
+            st.warning("Missing files for Metric B runs: " + ", ".join(missingB))
+
+        A_map = {s["run"]: s for s in A_series}
+        B_map = {s["run"]: s for s in B_series}
+        common_runs = sorted(set(A_map.keys()) & set(B_map.keys()))
+        if not common_runs:
+            st.warning("No overlapping runs between Metric A and Metric B.")
+            st.stop()
+
+        plt.close("all")
+        plt.figure()
+        ax = plt.gca()
+
+        for run_name in common_runs:
+            a = A_map[run_name]
+            b = B_map[run_name]
+
+            taub_a = float(a["taub"])
+            taub_b = float(b["taub"])
+            if abs(taub_a - taub_b) > 1e-9:
+                st.warning(f"Skipping {run_name}: TauB mismatch between metrics ({taub_a} vs {taub_b})")
+                continue
+
+            t_grid_sec, yA, yB = align_y_by_taub_length(a["y"], b["y"], taub_a)
+
+            # choose time axis for windowing
+            if x_axis_mode_multi == "Brownian time τ_B":
+                t_use = t_grid_sec / 13.513
+            else:
+                t_use = t_grid_sec
+
+            t0, t1 = float(np.min(t_use)), float(np.max(t_use))
+            a = t0 + (t1 - t0) * float(mix_t_start_frac)
+            b = t0 + (t1 - t0) * float(mix_t_end_frac)
+            sel = (t_use >= a) & (t_use <= b)
+
+            t_grid_sec = t_grid_sec[sel]
+            yA = yA[sel]
+            yB = yB[sel]
+
+            # guard
+            if t_grid_sec.size < 2:
+                st.warning(f"Skipping {run_name}: time window too small.")
+                continue
+
+
+
+            env = {
+                "A": yA,
+                "B": yB,
+                "t": t_grid_sec,
+                "pi": float(np.pi),
+                "e": float(np.e),
+            }
+
+            try:
+                y_out = safe_eval_expr(expr, env)
+                y_out = np.asarray(y_out, float)
+            except Exception as e:
+                st.error(f"Expression error: {e}")
+                st.stop()
+
+            # ✅ choose x-axis correctly
+            if plot_fft:
+                x = fft_freqs(t_grid_sec)  # Hz
+            else:
+                x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
+
+            ax.plot(x, y_out, label=run_name)
+
+        ax.set_title(calc_title)
+
+        # ✅ label axis correctly
+        if plot_fft:
+            ax.set_xlabel("Frequency (Hz)")
+        else:
+            ax.set_xlabel("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")
+
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+        fig = plt.gcf()
+        apply_global_styling(
+            fig,
+            legend_on=legend_on_multi,
+            legend_fontsize=legend_fontsize_multi,
+            axis_fontsize=axis_fontsize_multi,
+            title_on=title_on_multi,
+            title_fontsize=title_fontsize_multi,
+        )
+        st.pyplot(fig)
 
 
 # ---------------------------------------------------------------------
@@ -2143,10 +2428,10 @@ elif plot_mode == "Summary plots":
         "Window unit", ["seconds", "τB"], key="summary_window_units"
     )
     t_start_frac = st.sidebar.slider(
-        "Window start (fraction of run)", 0.0, 0.9, 0.0, 0.05, key="summary_window_start"
+        "Window start (fraction of run)", 0.0, 0.9, 0.0, 0.01, key="summary_window_start"
     )
     t_end_frac = st.sidebar.slider(
-        "Window end (fraction of run)", 0.1, 1.0, 1.0, 0.05, key="summary_window_end"
+        "Window end (fraction of run)", 0.1, 1.0, 1.0, 0.01, key="summary_window_end"
     )
 
     folder_source = st.sidebar.radio(
@@ -2246,8 +2531,7 @@ elif plot_mode == "Summary plots":
     dataset_tag = os.path.basename(base_dir.rstrip("\\/"))
     metric_func, default_ylabel = metric_map[metric_label]
 
-    # --- load/compute series using your existing helper ---
-    # IMPORTANT: add cluster kwargs when needed
+
     series, missing = get_series_for_metric(
         metric_label=metric_label,
         metric_func=metric_func,
@@ -2259,7 +2543,8 @@ elif plot_mode == "Summary plots":
         skip=int(skip),
         normY=int(normY),
         export_data=export_data,
-        export_dir="",  # we export scalars separately below
+        export_dir="",
+        extra_kwargs=None,  # ✅ optional
     )
 
     if missing:
@@ -2293,6 +2578,8 @@ elif plot_mode == "Summary plots":
                 metric_kwargs=kwargs_run,
             )
             series.append({"run": run_name, "tkb": float(tkb_val), "taub": float(tau_val), "y": np.asarray(y, float)})
+
+
 
     if not series:
         st.warning("No data series available for this metric.")
@@ -2387,3 +2674,9 @@ elif plot_mode == "Summary plots":
             for run_name, tkb, taub, scalar in rows:
                 f.write(f"{run_name},{tkb},{taub},{scalar}\n")
         st.info(f"Exported scalars to: `{csv_path}`")
+
+
+
+# TODO: add plotly toogle
+# TODO: Phase-transition detection
+# TODO: Error bars + statistics ( You compute: Mean curve, deviation, error band for runs of the same tkb, tauB)
