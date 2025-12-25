@@ -103,9 +103,9 @@ def _visualize_cluster_frame(positions, labels, cluster_shapes, title="Clusters"
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title(title)
-    handles, labels_ = ax.get_legend_handles_labels()
-    if handles:
-        ax.legend(fontsize=8)
+    #handles, labels_ = ax.get_legend_handles_labels()
+    #if handles:
+    #    ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
@@ -313,8 +313,8 @@ def visualize_area_fraction_clusters_at_timestep(
 
 
 if __name__ == "__main__":
-    coordDynX = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Students\Omar Elsabbagh\HIWI\NAF\3Tkb_50TauB\datax.csv"
-    coordDynY = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Students\Omar Elsabbagh\HIWI\NAF\3Tkb_50TauB\datay.csv"
+    coordDynX = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Students\Omar Elsabbagh\HIWI\Raw data\AAF\3Tkb_20TauB\datax.csv"
+    coordDynY = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Students\Omar Elsabbagh\HIWI\Raw data\AAF\3Tkb_20TauB\datay.csv"
 
     TauB = 5
     skip = 1

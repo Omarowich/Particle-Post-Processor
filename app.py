@@ -51,6 +51,948 @@ from phase_snapshot_fields import (
 import ast
 import operator as op
 
+def post_analysis_block_generic(
+    key: str,
+    curves: list[dict],
+    ylabel: str,
+    xlabel: str,
+    legend_on=True,
+    legend_fontsize=14,
+    axis_fontsize=16,
+    title_on=True,
+    title_fontsize=18,
+    extra_ui_fn=None,
+    sweep_rows=None,
+    x_choice=None,
+):
+
+    with st.expander("🔎 Post-analysis (knee / turning / threshold / peaks / breakpoint)", expanded=False):
+        if not curves:
+            st.info("No curves available.")
+            return
+
+        # ALWAYS rendered (state won’t reset)
+
+
+        with st.form(key=f"post_form_{key}", clear_on_submit=False):
+            run_opts = ["All"] + [c["run"] for c in curves]
+            pick = st.selectbox("Analyze curve", run_opts, index=0, key=f"{key}_pick")
+
+            smooth_win = st.slider("Smoothing window", 1, 51, 9, 2, key=f"{key}_smooth")
+            sustain = st.slider("Flatten sustain (% of points)", 1, 30, 8, 1, key=f"{key}_sustain")
+            slope_eps_user = st.number_input(
+                "Flatten slope threshold (leave 0 for auto)",
+                value=0.0, step=0.0001, format="%.6f", key=f"{key}_slopeeps"
+            )
+
+            do_knee = st.checkbox("Mark knee (triangle method)", True, key=f"{key}_knee")
+            do_turn = st.checkbox("Mark turning point (curvature)", True, key=f"{key}_turn")
+            do_flat = st.checkbox("Mark flattening point", True, key=f"{key}_flat")
+            label_markers = st.checkbox("Label markers on plot", value=True, key=f"{key}_labels")
+
+            st.markdown("#### Extra post-analysis")
+            do_thr = st.checkbox("X-to-threshold", value=False, key=f"{key}_thr")
+            thr_mode = st.selectbox("Threshold mode", ["absolute", "% of max (per curve)"], index=1, key=f"{key}_thrmode")
+            thr_val = st.number_input("Threshold value (abs or fraction)", value=0.6, step=0.01, format="%.4f", key=f"{key}_thrval")
+            thr_dir = st.selectbox("Threshold direction", ["rising", "falling"], index=0, key=f"{key}_thrdir")
+            thr_sustain = st.number_input("Threshold sustain (points)", value=3, step=1, min_value=1, key=f"{key}_thrsus")
+
+            do_auc = st.checkbox("AUC + mean over x-window", value=False, key=f"{key}_auc")
+            do_maxslope = st.checkbox("Max |slope| marker", value=False, key=f"{key}_maxslope")
+
+            do_peaks = st.checkbox("Peak detection", value=False, key=f"{key}_peaks")
+            peak_min_prom = st.number_input("Min peak prominence", value=0.0, step=0.01, format="%.4f", key=f"{key}_pprom")
+            peak_min_dist = st.number_input("Min distance between peaks (points)", value=5, step=1, min_value=1, key=f"{key}_pdist")
+
+            do_pwlin = st.checkbox("Piecewise-linear breakpoint", value=False, key=f"{key}_pwlin")
+            pw_min_seg = st.slider("Min segment size (fraction)", 0.05, 0.4, 0.1, 0.05, key=f"{key}_pwseg")
+
+            do_prog = st.checkbox("Prognosis (fit surface & predict)", value=False, key=f"{key}_prog")
+            tk_query = st.text_input("Predict at TkB values (comma)", value="20,30,40,50", key=f"{key}_prog_tk")
+            ta_query = st.text_input("Predict at TauB values (comma)", value="30", key=f"{key}_prog_ta")
+
+            show_locus = st.checkbox("Show locus (connect feature points)", value=True, key=f"{key}_show_locus")
+            locus_type = st.selectbox("Locus type", ["turn", "knee", "flat"], index=0, key=f"{key}_locus_type")
+
+            # ✅ optional extra content INSIDE the expander
+            if extra_ui_fn is not None:
+                st.markdown("---")
+                extra_ui_fn()
+                st.markdown("---")
+
+            run_post = st.form_submit_button("▶ Run post-analysis")
+
+        if not run_post:
+            st.caption("Adjust settings, then click **Run post-analysis**.")
+            return
+
+        # ---- run ----
+        plt.close("all")
+        plt.figure()
+        ax2 = plt.gca()
+
+
+
+
+        # plot selected curves
+        ################
+        #NOT DUPLICATE: JUST PLOTTING FIRST FOR OVERLAY##########
+        ################
+
+        for c in curves:
+            if pick != "All" and c["run"] != pick:
+                continue
+            x = np.asarray(c["x"], float)
+            y = np.asarray(c["y"], float)
+
+            # sort by x (important for summary sweeps!)
+            m = np.isfinite(x) & np.isfinite(y)
+            x, y = x[m], y[m]
+            if x.size < 2:
+                continue
+            order = np.argsort(x)
+            x, y = x[order], y[order]
+
+            ax2.plot(x, y, label=c["run"])
+
+        slope_eps = None if slope_eps_user == 0 else float(slope_eps_user)
+        sustain_frac = float(sustain) / 100.0
+
+        results = []
+        turn_pts = []
+        knee_pts = []
+        flat_pts = []
+
+        y_level = 0
+
+        for c in curves:
+            if pick != "All" and c["run"] != pick:
+                continue
+
+            x = np.asarray(c["x"], float)
+            y = np.asarray(c["y"], float)
+
+            m = np.isfinite(x) & np.isfinite(y)
+            x, y = x[m], y[m]
+            if x.size < 3:
+                continue
+            order = np.argsort(x)
+            x, y = x[order], y[order]
+            sw = _clamp_smooth_win(len(x), smooth_win)
+
+            row = {"curve": c["run"]}
+
+            if do_knee:
+                xk_val, ik = detect_knee_point_triangle(x, y, smooth_win=smooth_win)
+                xk, yk = _feature_xy_from_detector(x, y, xk_val, ik)
+
+                row["x_knee"] = xk
+                if np.isfinite(xk):
+                    ax2.axvline(xk, linestyle="--", linewidth=1.5)
+                    if label_markers:
+                        _label_vline(ax2, xk, "knee", y_level=y_level);
+                        y_level += 1
+                    knee_pts.append((xk, yk))
+
+            if do_turn:
+                xt_val, it = detect_turning_point_curvature(x, y, smooth_win=smooth_win)
+                xt, yt = _feature_xy_from_detector(x, y, xt_val, it)
+
+                row["x_turn"] = xt
+                if np.isfinite(xt):
+                    ax2.axvline(xt, linestyle=":", linewidth=1.5)
+                    if label_markers:
+                        _label_vline(ax2, xt, "turn", y_level=y_level);
+                        y_level += 1
+                    turn_pts.append((xt, yt))
+
+            if do_flat:
+                xf_val, iflat = detect_flattening_point(
+                    x, y, smooth_win=smooth_win, slope_eps=slope_eps, sustain_frac=sustain_frac
+                )
+                xf, yf = _feature_xy_from_detector(x, y, xf_val, iflat)
+
+                row["x_flat"] = xf
+                if np.isfinite(xf):
+                    ax2.axvline(xf, linestyle="-.", linewidth=1.5)
+                    if label_markers:
+                        _label_vline(ax2, xf, "flat", y_level=y_level);
+                        y_level += 1
+                    flat_pts.append((xf, yf))
+
+            if do_thr:
+                if "max" in thr_mode:
+                    yref = np.nanmax(y)
+                    thr = float(thr_val) * yref
+                else:
+                    thr = float(thr_val)
+
+                xthr, _ = first_sustained_crossing(x, y, thr, direction=thr_dir, sustain=int(thr_sustain))
+                row["thr"] = thr
+                row["x_thr"] = xthr
+                if np.isfinite(xthr):
+                    ax2.axvline(xthr, linestyle="-", linewidth=2.0)
+                    if label_markers:
+                        _label_vline(ax2, xthr, "thr", y_level=y_level); y_level += 1
+
+            if do_auc:
+                ok = np.isfinite(x) & np.isfinite(y)
+                if np.sum(ok) >= 2:
+                    auc = float(np.trapz(y[ok], x[ok]))
+                    span = float(x[ok][-1] - x[ok][0])
+                    mean = auc / span if span != 0 else np.nan
+                else:
+                    auc, mean = np.nan, np.nan
+                row["auc"] = auc
+                row["mean"] = mean
+
+            if do_maxslope:
+                dy = np.gradient(_moving_average(y, sw), x)
+                i = int(np.nanargmax(np.abs(dy)))
+                row["x_maxabs_slope"] = float(x[i])
+                row["maxabs_slope"] = float(dy[i])
+                ax2.axvline(x[i], linestyle="--", linewidth=1.2)
+                if label_markers:
+                    _label_vline(ax2, x[i], "max|slope|", y_level=y_level); y_level += 1
+
+            if do_peaks:
+                idxs = simple_peaks(y, min_prom=float(peak_min_prom), min_dist=int(peak_min_dist))
+                row["n_peaks"] = len(idxs)
+                for j, i in enumerate(idxs[:10]):
+                    ax2.axvline(x[i], linestyle=":", linewidth=1.0)
+                    if label_markers and j == 0:
+                        _label_vline(ax2, x[i], "peaks", y_level=y_level); y_level += 1
+
+
+            if do_pwlin:
+                xb, _, sse = piecewise_linear_breakpoint(x, y, min_seg_frac=float(pw_min_seg))
+                row["x_break"] = xb
+                row["pw_sse"] = sse
+                if np.isfinite(xb):
+                    ax2.axvline(xb, linestyle="-", linewidth=2.5)
+                    if label_markers:
+                        _label_vline(ax2, xb, "break", y_level=y_level); y_level += 1
+
+            results.append(row)
+
+
+        if do_prog:
+            _overlay_prognosis_surface(
+                ax2,
+                sweep_rows=sweep_rows,
+                x_choice=x_choice,
+                tk_query=tk_query,
+                ta_query=ta_query,
+            )
+
+        if show_locus:
+            _overlay_feature_locus(ax2, curves, feature=locus_type, smooth_win=smooth_win, label=f"{locus_type} locus")
+
+        ax2.set_title("Post-analysis (summary sweep)")
+        ax2.set_ylabel(ylabel)
+        ax2.set_xlabel(xlabel)
+        ax2.grid(True, alpha=0.3)
+        ax2.legend()
+
+        fig2 = plt.gcf()
+        apply_global_styling(
+            fig2,
+            legend_on=legend_on,
+            legend_fontsize=legend_fontsize,
+            axis_fontsize=axis_fontsize,
+            title_on=title_on,
+            title_fontsize=title_fontsize,
+        )
+        st.pyplot(fig2)
+
+        import pandas as pd
+        st.dataframe(pd.DataFrame(results))
+
+
+
+
+def post_analysis_block(
+    key: str,
+    curves: list[dict],
+    ylabel: str,
+    x_axis_mode: str,
+    legend_on=True,
+    legend_fontsize=14,
+    axis_fontsize=16,
+    title_on=True,
+    title_fontsize=18,
+):
+    """
+    curves: list of dicts with at least:
+      - run (str)
+      - x (np.ndarray)
+      - y (np.ndarray)
+    optional:
+      - tkb, taub, kind, etc.
+    """
+    with st.expander("🔎 Post-analysis (turning point / flattening / thresholds)", expanded=False):
+
+        if not curves:
+            st.info("No curves available.")
+            return
+
+        with st.form(key=f"post_form_{key}", clear_on_submit=False):
+            run_opts = ["All"] + sorted({c.get("run", "run") for c in curves})
+            pick = st.selectbox("Analyze run", run_opts, index=0, key=f"{key}_pick")
+
+            smooth_win = st.slider("Smoothing window", 1, 51, 9, 2, key=f"{key}_smooth")
+            sustain = st.slider("Flatten sustain (% of points)", 1, 30, 8, 1, key=f"{key}_sustain")
+            slope_eps_user = st.number_input(
+                "Flatten slope threshold (leave 0 for auto)",
+                value=0.0, step=0.0001, format="%.6f",
+                key=f"{key}_slopeeps",
+            )
+
+            do_knee = st.checkbox("Mark knee (triangle method)", True, key=f"{key}_knee")
+            do_turn = st.checkbox("Mark turning point (curvature)", True, key=f"{key}_turn")
+            do_flat = st.checkbox("Mark flattening point", True, key=f"{key}_flat")
+            label_markers = st.checkbox("Label markers on plot", value=True, key=f"{key}_labels")
+
+            st.markdown("#### Extra post-analysis")
+            do_thr = st.checkbox("Time-to-threshold", value=False, key=f"{key}_thr")
+            thr_mode = st.selectbox("Threshold mode", ["absolute", "% of max (per curve)"], index=1, key=f"{key}_thrm")
+            thr_val = st.number_input("Threshold value (abs or fraction)", value=0.6, step=0.01, format="%.4f", key=f"{key}_thrv")
+            thr_dir = st.selectbox("Threshold direction", ["rising", "falling"], index=0, key=f"{key}_thrd")
+            thr_sustain = st.number_input("Threshold sustain (points)", value=3, step=1, min_value=1, key=f"{key}_thrs")
+
+            do_auc = st.checkbox("AUC + mean over window", value=False, key=f"{key}_auc")
+            do_maxslope = st.checkbox("Max |slope| marker", value=False, key=f"{key}_ms")
+
+            do_peaks = st.checkbox("Peak detection", value=False, key=f"{key}_peaks")
+            peak_min_prom = st.number_input("Min peak prominence", value=0.0, step=0.01, format="%.4f", key=f"{key}_pp")
+            peak_min_dist = st.number_input("Min distance between peaks (points)", value=5, step=1, min_value=1, key=f"{key}_pd")
+
+            do_pwlin = st.checkbox("Piecewise-linear breakpoint", value=False, key=f"{key}_pw")
+            pw_min_seg = st.slider("Min segment size (fraction)", 0.05, 0.4, 0.1, 0.05, key=f"{key}_pwseg")
+
+            run_post = st.form_submit_button("▶ Run post-analysis")
+
+        if not run_post:
+            st.caption("Adjust settings, then click **Run post-analysis**.")
+            return
+
+        # -------- run analysis + plot ----------
+        plt.close("all")
+        plt.figure()
+        ax2 = plt.gca()
+
+        # re-plot selected curves
+        for c in curves:
+            if pick != "All" and c.get("run") != pick:
+                continue
+            ax2.plot(c["x"], c["y"], label=c.get("run", "run"))
+
+        slope_eps = None if slope_eps_user == 0 else float(slope_eps_user)
+        sustain_frac = float(sustain) / 100.0
+
+        results = []
+        y_level = 0
+
+        for c in curves:
+            if pick != "All" and c.get("run") != pick:
+                continue
+
+            x = np.asarray(c["x"], float)
+            y = np.asarray(c["y"], float)
+
+            m = np.isfinite(x) & np.isfinite(y)
+            row = {"run": c.get("run"), "tkb": c.get("tkb"), "taub": c.get("taub"), "kind": c.get("kind")}
+            if np.sum(m) < 5:
+                row["note"] = "Skipped: <5 finite points"
+                results.append(row)
+                continue
+
+            x = x[m]
+            y = y[m]
+
+            row = {
+                "run": c.get("run"),
+                "tkb": c.get("tkb"),
+                "taub": c.get("taub"),
+                "kind": c.get("kind"),
+            }
+
+            if do_knee:
+                xk, _ = detect_knee_point_triangle(x, y, smooth_win=smooth_win)
+                row["t_knee"] = xk
+                if np.isfinite(xk):
+                    ax2.axvline(xk, linestyle="--", linewidth=1.5)
+                    if label_markers:
+                        _label_vline(ax2, xk, "knee", y_level=y_level); y_level += 1
+
+            if do_turn:
+                xt, _ = detect_turning_point_curvature(x, y, smooth_win=smooth_win)
+                row["t_turn"] = xt
+                if np.isfinite(xt):
+                    ax2.axvline(xt, linestyle=":", linewidth=1.5)
+                    if label_markers:
+                        _label_vline(ax2, xt, "turn", y_level=y_level); y_level += 1
+
+            if do_flat:
+                xf, _ = detect_flattening_point(x, y, smooth_win=smooth_win, slope_eps=slope_eps, sustain_frac=sustain_frac)
+                row["t_flat"] = xf
+                if np.isfinite(xf):
+                    ax2.axvline(xf, linestyle="-.", linewidth=1.5)
+                    if label_markers:
+                        _label_vline(ax2, xf, "flat", y_level=y_level); y_level += 1
+
+            if do_thr:
+                if "max" in thr_mode:
+                    thr = float(thr_val) * float(np.nanmax(y))
+                else:
+                    thr = float(thr_val)
+
+                xthr, _ = first_sustained_crossing(x, y, thr, direction=thr_dir, sustain=int(thr_sustain))
+                row["thr"] = thr
+                row["t_thr"] = xthr
+                if np.isfinite(xthr):
+                    ax2.axvline(xthr, linestyle="-", linewidth=2.0)
+                    if label_markers:
+                        _label_vline(ax2, xthr, "thr", y_level=y_level); y_level += 1
+
+            if do_auc:
+                m = np.isfinite(x) & np.isfinite(y)
+                if np.sum(m) >= 2:
+                    auc = float(np.trapz(y[m], x[m]))
+                    span = float(x[m][-1] - x[m][0])
+                    mean = auc / span if span != 0 else np.nan
+                else:
+                    auc, mean = np.nan, np.nan
+                row["auc"] = auc
+                row["mean"] = mean
+
+            if do_maxslope:
+                dy = np.gradient(_moving_average(y, smooth_win), x)
+                i = int(np.nanargmax(np.abs(dy)))
+                row["t_maxabs_slope"] = float(x[i])
+                row["maxabs_slope"] = float(dy[i])
+                ax2.axvline(x[i], linestyle="--", linewidth=1.2)
+                if label_markers:
+                    _label_vline(ax2, x[i], "max|slope|", y_level=y_level); y_level += 1
+
+            if do_peaks:
+                idxs = simple_peaks(y, min_prom=float(peak_min_prom), min_dist=int(peak_min_dist))
+                row["n_peaks"] = len(idxs)
+                for j, ii in enumerate(idxs[:10]):
+                    ax2.axvline(x[ii], linestyle=":", linewidth=1.0)
+                    if label_markers and j == 0:
+                        _label_vline(ax2, x[ii], "peaks", y_level=y_level); y_level += 1
+
+            if do_pwlin:
+                xb, _, sse = piecewise_linear_breakpoint(x, y, min_seg_frac=float(pw_min_seg))
+                row["t_break"] = xb
+                row["pw_sse"] = sse
+                if np.isfinite(xb):
+                    ax2.axvline(xb, linestyle="-", linewidth=2.5)
+                    if label_markers:
+                        _label_vline(ax2, xb, "break", y_level=y_level); y_level += 1
+
+            results.append(row)
+
+        ax2.set_title(f"")
+        ax2.set_ylabel(ylabel)
+        ax2.set_xlabel("Time (τB)" if x_axis_mode == "Brownian time τ_B" else "Time (s)")
+        ax2.grid(True, alpha=0.3)
+        ax2.legend()
+
+        fig2 = plt.gcf()
+        apply_global_styling(
+            fig2,
+            legend_on=legend_on,
+            legend_fontsize=legend_fontsize,
+            axis_fontsize=axis_fontsize,
+            title_on=title_on,
+            title_fontsize=title_fontsize,
+        )
+        st.pyplot(fig2)
+
+        import pandas as pd
+        st.dataframe(pd.DataFrame(results))
+
+_num_re = re.compile(r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)")
+
+def _try_float_from_label(s: str):
+    m = _num_re.search(str(s))
+    return float(m.group(1)) if m else None
+
+def _overlay_feature_locus(ax, curves, feature: str, smooth_win: int, label: str):
+    pts = []
+    for c in curves:
+        x = np.asarray(c["x"], float)
+        y = np.asarray(c["y"], float)
+        m = np.isfinite(x) & np.isfinite(y)
+        x, y = x[m], y[m]
+        if x.size < 3:
+            continue
+        o = np.argsort(x)
+        x, y = x[o], y[o]
+
+        if feature == "turn":
+            xf, _ = detect_turning_point_curvature(x, y, smooth_win=smooth_win)
+        elif feature == "knee":
+            xf, _ = detect_knee_point_triangle(x, y, smooth_win=smooth_win)
+        elif feature == "flat":
+            xf, _ = detect_flattening_point(x, y, smooth_win=smooth_win, slope_eps=None, sustain_frac=0.08)
+        else:
+            continue
+
+        if not np.isfinite(xf):
+            continue
+
+        # SNAP: use nearest sampled point, not interpolation
+        i = int(np.nanargmin(np.abs(x - xf)))
+        pts.append({
+            "x": float(x[i]),
+            "y": float(y[i]),
+            "order": _try_float_from_label(c.get("run", "")),
+        })
+
+    if len(pts) < 2:
+        return
+
+    # Connect in parameter order if possible (TauB 2, TauB 10, ...)
+    if all(p["order"] is not None for p in pts):
+        pts.sort(key=lambda p: p["order"])
+    else:
+        # fallback: connect left-to-right
+        pts.sort(key=lambda p: p["x"])
+
+    ax.plot([p["x"] for p in pts], [p["y"] for p in pts],
+            linestyle="--", marker="x", linewidth=2, label=label)
+
+def _feature_xy_from_detector(x, y, x_or_idx, idx):
+    """
+    Many detectors return (x_value, idx) or (idx, something).
+    We accept both and try to produce a valid (xf, yf) on the curve.
+    """
+    # prefer index if provided
+    if idx is not None and np.isfinite(idx):
+        i = int(np.clip(int(idx), 0, len(x) - 1))
+        return float(x[i]), float(y[i])
+
+    # otherwise treat first output as x-value
+    xv = float(x_or_idx)
+    if not np.isfinite(xv):
+        return np.nan, np.nan
+
+    return xv, float(np.interp(xv, x, y))
+
+def _clamp_smooth_win(n: int, w: int) -> int:
+    w = int(w)
+
+    # must be at least 3 if possible
+    if n >= 3:
+        w = max(3, w)
+    else:
+        return max(1, min(w, n))
+
+    # can't exceed n (and prefer odd <= n)
+    w = min(w, n)
+
+    # force odd
+    if w % 2 == 0:
+        w -= 1
+
+    # if we accidentally dropped below 3, bump back (only happens for very small n)
+    if w < 3 and n >= 3:
+        w = 3
+
+    return w
+
+
+
+def _overlay_feature_locus(ax, curves, *, feature="turn", smooth_win=9, label=None):
+    pts = []
+
+    for c in curves:
+        x = np.asarray(c["x"], float)
+        y = np.asarray(c["y"], float)
+
+        m = np.isfinite(x) & np.isfinite(y)
+        x, y = x[m], y[m]
+        if x.size < 3:
+            continue
+
+        o = np.argsort(x)
+        x, y = x[o], y[o]
+
+        # detect feature x-position
+        if feature == "turn":
+            xf, _ = detect_turning_point_curvature(x, y, smooth_win=smooth_win)
+        elif feature == "flat":
+            xf, _ = detect_flattening_point(x, y, smooth_win=smooth_win)
+        else:  # "knee"
+            xf, _ = detect_knee_point_triangle(x, y, smooth_win=smooth_win)
+
+        if not np.isfinite(xf):
+            continue
+
+        # IMPORTANT: y value at that x, not y[idx]
+        yf = float(np.interp(xf, x, y))
+        pts.append((float(xf), float(yf)))
+
+    if len(pts) >= 2:
+        pts.sort(key=lambda p: p[0])
+        if label is None:
+            label = f"{feature} locus"
+
+        ax.plot(
+            [p[0] for p in pts],
+            [p[1] for p in pts],
+            linestyle="--",
+            marker="x",
+            linewidth=2,
+            label=label,
+        )
+
+
+def _overlay_prognosis_surface(
+    ax,
+    *,
+    sweep_rows,
+    x_choice,
+    tk_query,
+    ta_query,
+    min_points=6,
+):
+    """
+    Fit a quadratic surface y = f(TkB, TauB) to summary sweep rows,
+    then overlay predicted curves on the current axes.
+
+    sweep_rows: [(run, tkb, taub, scalar), ...]
+    x_choice: "TkB" or "TauB"  (this is what the current plot uses on x-axis)
+    tk_query/ta_query: comma-separated strings of query points.
+    """
+    if not sweep_rows or x_choice not in ("TkB", "TauB"):
+        return
+
+    tk = np.array([r[1] for r in sweep_rows], float)
+    ta = np.array([r[2] for r in sweep_rows], float)
+    yy = np.array([r[3] for r in sweep_rows], float)
+
+    m = np.isfinite(tk) & np.isfinite(ta) & np.isfinite(yy)
+    tk, ta, yy = tk[m], ta[m], yy[m]
+
+    if tk.size < int(min_points):
+        return  # not enough data to fit
+
+    # quadratic surface in (tk, ta)
+    X = np.column_stack([np.ones_like(tk), tk, ta, tk**2, ta**2, tk * ta])
+    coef, *_ = np.linalg.lstsq(X, yy, rcond=None)
+
+    def predict(tk_new, ta_new):
+        tk_new = np.asarray(tk_new, float)
+        ta_new = np.asarray(ta_new, float)
+        Xn = np.column_stack([np.ones_like(tk_new), tk_new, ta_new, tk_new**2, ta_new**2, tk_new * ta_new])
+        return Xn @ coef
+
+    # parse queries safely
+    try:
+        tk_list = [float(s.strip()) for s in str(tk_query).split(",") if s.strip()]
+    except Exception:
+        tk_list = []
+    try:
+        ta_list = [float(s.strip()) for s in str(ta_query).split(",") if s.strip()]
+    except Exception:
+        ta_list = []
+
+    if x_choice == "TkB":
+        if not tk_list or not ta_list:
+            return
+        # y vs TkB for each requested TauB
+        for taub_val in ta_list:
+            yhat = predict(tk_list, [taub_val] * len(tk_list))
+            order = np.argsort(tk_list)
+            xs = np.asarray(tk_list, float)[order]
+            ys = np.asarray(yhat, float)[order]
+            ax.plot(xs, ys, linestyle="--", marker=".", label=f"pred TauB {taub_val:g}")
+
+    else:  # x_choice == "TauB"
+        if not ta_list or not tk_list:
+            return
+        # y vs TauB for each requested TkB
+        for tkb_val in tk_list:
+            yhat = predict([tkb_val] * len(ta_list), ta_list)
+            order = np.argsort(ta_list)
+            xs = np.asarray(ta_list, float)[order]
+            ys = np.asarray(yhat, float)[order]
+            ax.plot(xs, ys, linestyle="--", marker=".", label=f"pred TkB {tkb_val:g}")
+
+
+def first_sustained_crossing(x, y, thr, direction="rising", sustain=3):
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    m = np.isfinite(x) & np.isfinite(y)
+    x, y = x[m], y[m]
+    if x.size < sustain:
+        return np.nan, None
+
+    if direction == "rising":
+        ok = y >= thr
+    else:
+        ok = y <= thr
+
+    for i in range(0, len(ok) - sustain + 1):
+        if np.all(ok[i:i+sustain]):
+            return float(x[i]), i
+    return np.nan, None
+
+
+
+
+def simple_peaks(y, min_prom=0.0, min_dist=5):
+    """
+    Simple peak detector.
+    Returns indices of peaks.
+    """
+    y = np.asarray(y, float)
+    n = len(y)
+    if n < 3:
+        return []
+
+    # find local maxima
+    cand = []
+    for i in range(1, n - 1):
+        if np.isfinite(y[i-1]) and np.isfinite(y[i]) and np.isfinite(y[i+1]):
+            if y[i] > y[i-1] and y[i] > y[i+1]:
+                cand.append(i)
+
+    # prominence filter
+    def prominence(i):
+        left = np.nanmin(y[max(0, i - min_dist): i + 1])
+        right = np.nanmin(y[i: min(n, i + min_dist + 1)])
+        return y[i] - max(left, right)
+
+    cand = [i for i in cand if prominence(i) >= min_prom]
+
+    # enforce minimum distance
+    kept = []
+    for i in sorted(cand, key=lambda j: y[j], reverse=True):
+        if all(abs(i - k) >= min_dist for k in kept):
+            kept.append(i)
+
+    return sorted(kept)
+
+def first_threshold_crossing(x, y, thr, *, direction="rising", sustain_pts=1):
+    """
+    Return (x_cross, idx_cross) of first sustained threshold crossing.
+    direction: "rising" -> y >= thr, "falling" -> y <= thr
+    sustain_pts: must hold condition for this many consecutive points
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    ok = np.isfinite(x) & np.isfinite(y)
+    x = x[ok]; y = y[ok]
+    if x.size < 2:
+        return np.nan, None
+
+    sustain_pts = int(max(1, sustain_pts))
+    if direction == "falling":
+        cond = (y <= thr)
+    else:
+        cond = (y >= thr)
+
+    for i in range(0, len(cond) - sustain_pts + 1):
+        if np.all(cond[i:i+sustain_pts]):
+            return float(x[i]), int(i)
+    return np.nan, None
+
+
+def auc_and_mean(x, y):
+    """Return (auc, mean) over x using trapezoid AUC and time-average."""
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    ok = np.isfinite(x) & np.isfinite(y)
+    x = x[ok]; y = y[ok]
+    if x.size < 2:
+        return np.nan, np.nan
+
+    auc = float(np.trapz(y, x))
+    dt = float(x[-1] - x[0])
+    mean = float(auc / dt) if dt != 0 else np.nan
+    return auc, mean
+
+
+def max_slope_time(x, y, *, smooth_win=9):
+    """
+    Return (x_at_max_abs_slope, idx, slope_value) using smoothed derivative.
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    ok = np.isfinite(x) & np.isfinite(y)
+    x = x[ok]; y = y[ok]
+    if x.size < 3:
+        return np.nan, None, np.nan
+
+    ys = _moving_average(y, smooth_win)
+    dy = np.gradient(ys, x)
+    idx = int(np.nanargmax(np.abs(dy)))
+    return float(x[idx]), idx, float(dy[idx])
+
+
+
+
+def piecewise_linear_breakpoint(x, y, min_seg_frac=0.1):
+    """
+    Fit two line segments with a breakpoint k and choose k minimizing SSE.
+    Returns (x_break, idx_break, sse).
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    m = np.isfinite(x) & np.isfinite(y)
+    x, y = x[m], y[m]
+    n = x.size
+
+    if n < 10:
+        return np.nan, None, np.nan
+
+    min_seg = max(3, int(round(min_seg_frac * n)))
+    best_sse = np.inf
+    best_k = None
+
+    for k in range(min_seg, n - min_seg):
+        p1 = np.polyfit(x[:k], y[:k], 1)
+        p2 = np.polyfit(x[k:], y[k:], 1)
+
+        y1 = np.polyval(p1, x[:k])
+        y2 = np.polyval(p2, x[k:])
+
+        sse = np.nansum((y[:k] - y1) ** 2) + np.nansum((y[k:] - y2) ** 2)
+
+        if sse < best_sse:
+            best_sse = sse
+            best_k = k
+
+    if best_k is None:
+        return np.nan, None, np.nan
+
+    return float(x[best_k]), int(best_k), float(best_sse)
+
+def _label_vline(ax, x, text, *, rotation=90, fontsize=10, pad_frac=0.02, y_level=0):
+    """
+    Put a small label near the top of the axes at x.
+    y_level lets you stagger labels (0,1,2...) to reduce overlap.
+    """
+    y0, y1 = ax.get_ylim()
+    yr = (y1 - y0) if (y1 != y0) else 1.0
+    y = y1 - (pad_frac + 0.06 * y_level) * yr
+    ax.text(x, y, text, rotation=rotation, va="top", ha="left", fontsize=fontsize)
+
+
+def _moving_average(y, win: int):
+    y = np.asarray(y, float)
+    win = int(max(1, win))
+    if win <= 1 or y.size < 3:
+        return y
+    # pad edges to avoid shrinking
+    pad = win // 2
+    ypad = np.pad(y, (pad, pad), mode="edge")
+    k = np.ones(win, float) / win
+    return np.convolve(ypad, k, mode="valid")
+
+def detect_flattening_point(x, y, *, smooth_win=9, slope_eps=None, sustain_frac=0.08):
+    """
+    Flattening = first time where |dy/dx| stays below slope_eps for a sustained window.
+    If slope_eps is None, it is set relative to typical slope magnitude.
+    Returns (x_flat, idx_flat) or (np.nan, None).
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    if x.size < 3:
+        return np.nan, None
+
+    ys = _moving_average(y, smooth_win)
+    dy = np.gradient(ys, x)
+
+    if slope_eps is None:
+        # relative threshold: small fraction of typical slope
+        ref = np.nanmedian(np.abs(dy))
+        slope_eps = 0.08 * ref if np.isfinite(ref) and ref > 0 else 1e-12
+
+    sustain = int(max(2, round(sustain_frac * x.size)))
+    ok = np.abs(dy) <= slope_eps
+
+    # find first index i such that ok[i:i+sustain] all True
+    for i in range(0, len(ok) - sustain):
+        if np.all(ok[i:i + sustain]):
+            return float(x[i]), int(i)
+
+    return np.nan, None
+
+def detect_knee_point_triangle(x, y, *, smooth_win=9):
+    """
+    Knee/turning point via "triangle method":
+    Normalize curve, then find point with max distance to line from start->end.
+    Returns (x_knee, idx_knee) or (np.nan, None).
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+
+    # keep only finite pairs
+    m = np.isfinite(x) & np.isfinite(y)
+    x = x[m]
+    y = y[m]
+    if x.size < 3:
+        return np.nan, None
+
+    ys = _moving_average(y, smooth_win)
+
+    # normalize x to [0,1]
+    x0, x1 = float(x[0]), float(x[-1])
+    if not np.isfinite(x0) or not np.isfinite(x1) or x1 == x0:
+        return np.nan, None
+    xn = (x - x0) / (x1 - x0)
+
+    # normalize y to [0,1]
+    y0, y1 = float(np.nanmin(ys)), float(np.nanmax(ys))
+    if not np.isfinite(y0) or not np.isfinite(y1) or y1 == y0:
+        return np.nan, None
+    yn = (ys - y0) / (y1 - y0)
+
+    # line from start to end
+    p0 = np.array([0.0, yn[0]])
+    p1 = np.array([1.0, yn[-1]])
+    v = p1 - p0
+    nv = np.linalg.norm(v)
+    if not np.isfinite(nv) or nv == 0:
+        return np.nan, None
+
+    pts = np.column_stack([xn, yn])
+    cross = np.abs((pts[:, 0] - p0[0]) * v[1] - (pts[:, 1] - p0[1]) * v[0])
+    dist = cross / nv
+
+    # NEW: guard against all-NaN dist
+    if not np.any(np.isfinite(dist)):
+        return np.nan, None
+
+    idx = int(np.nanargmax(dist))
+    return float(x[idx]), idx
+
+def detect_turning_point_curvature(x, y, *, smooth_win=9):
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+
+    m = np.isfinite(x) & np.isfinite(y)
+    x = x[m]
+    y = y[m]
+    if x.size < 3:
+        return np.nan, None
+
+    ys = _moving_average(y, smooth_win)
+    d1 = np.gradient(ys, x)
+    d2 = np.gradient(d1, x)
+
+    if not np.any(np.isfinite(d2)):
+        return np.nan, None
+
+    idx = int(np.nanargmax(np.abs(d2)))
+    return float(x[idx]), idx
+
 def sidebar_runs_common_ui(
     prefix: str,
     source_root: str,
@@ -1490,7 +2432,6 @@ elif plot_mode == "Multiple plots":
     export_dir = ui["export_dir"]
     TauB = ui["TauB"]
 
-    crystal_types_multi = ui["crystal_types"]
 
 
 
@@ -1523,7 +2464,11 @@ elif plot_mode == "Multiple plots":
 
 
     run = st.sidebar.button("▶ Run multiple-plot routine", key="run_multi")
-    if not run:
+    have_cached = st.session_state.get("multi_cached", False)
+
+
+    if (not run) and (not have_cached):
+        st.info("⬅️ Click **Run multiple-plot routine** to compute plots.")
         st.stop()
 
     if not base_dir:
@@ -1556,83 +2501,12 @@ elif plot_mode == "Multiple plots":
         plt.close("all")
         metric_func, default_ylabel = metric_map[metric_label]
 
-        st.markdown(f"### Metric: {metric_label}")
-
-        # ------------------------------------------------------------
-        # NEW: multi-run plotting with
-        #  - correct per-run TauB on x-axis
-        #  - same-TauB runs resampled to same x-length
-        #  - on-disk caching for faster reruns
-        # ------------------------------------------------------------
-
-        dataset_tag = os.path.basename(base_dir.rstrip("\\/"))  # e.g. NAF, ASF, ARF
-
-        series = []  # will contain dicts with run/tkb/taub/y_len only; we regenerate x later
-
-        missing = []
-        for folder_path, tkb_val, tau_val in selected_runs:
-            run_name = os.path.basename(folder_path)
-            tkb_val = float(tkb_val)
-            tau_val = float(tau_val)
-
-            npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label)
-            #st.write(
-            #    f"🔎 {metric_label} | {run_name} -> saved file exists? {npz_path.exists()} | export_data={export_data}")
-
-            if (not export_data) and npz_path.exists():
-                # Load previously saved y (fast)
-                y = load_rundata_npz(npz_path)
-            else:
-                # Recompute (only happens when export_data=True or file missing)
-                fx = os.path.join(folder_path, x_name)
-                fy = os.path.join(folder_path, y_name)
-                if not (os.path.isfile(fx) and os.path.isfile(fy)):
-                    missing.append(run_name)
-                    continue
-
-                kwargs_run = dict(skip=int(skip), normY=int(normY), TauB=float(tau_val))
-                if metric_label in ["Number of clusters", "Average cluster size"]:
-                    kwargs_run["eps"] = float(cluster_eps_multi)
-                    kwargs_run["min_samples"] = int(cluster_min_samples_multi)
-                    kwargs_run["min_cluster_size"] = int(cluster_min_cluster_size_multi)
-                t, y = load_or_compute_metric_cached(
-                    base_dir=base_dir,
-                    run_folder=run_name,
-                    fx=fx,
-                    fy=fy,
-                    metric_func=metric_func,
-                    metric_kwargs=kwargs_run,
-                )
-
-                # Save just y (no time)
-                try:
-                    save_rundata_npz(npz_path, np.asarray(y, float))
-                except Exception as e:
-                    st.warning(f"Could not save run data {npz_path.name}: {e}")
-
-                # Optional CSV export (no time)
-                if export_dir.strip():
-                    try:
-                        out = Path(export_dir.strip())
-                        out.mkdir(parents=True, exist_ok=True)
-                        csv_path = out / (npz_path.stem + ".csv")
-                        export_rundata_csv(csv_path, np.asarray(y, float))
-                        save_rundata_npz(npz_path, y)
-
-                    except Exception as e:
-                        st.warning(f"Could not export CSV for {run_name}: {e}")
-
-            series.append({
-                "run": run_name,
-                "tkb": tkb_val,
-                "taub": tau_val,
-                "y": np.asarray(y, float),
-            })
-
         # --- Detect crystals: plot one curve per selected crystal type ---
         if metric_label == "Detect crystals":
             plt.figure()
             ax = plt.gca()
+
+            post_curves = []  # define this once before the TauB grouping loop
 
             for kind in crystal_types_multi:
                 # compute one series per kind (same cache system, because kwargs differ)
@@ -1650,7 +2524,7 @@ elif plot_mode == "Multiple plots":
 
                     # IMPORTANT: pass the chosen kind into kwargs
                     kwargs_run = dict(skip=int(skip), normY=int(normY), TauB=float(tau_val))
-                    kwargs_run["type"] = kind         # <-- use this instead if your function param is named type
+                    kwargs_run["type"] = kind  # <-- use this instead if your function param is named type
 
                     t, y = load_or_compute_metric_cached(
                         base_dir=base_dir,
@@ -1667,7 +2541,6 @@ elif plot_mode == "Multiple plots":
                         "taub": float(tau_val),
                         "y": np.asarray(y, float),
                     })
-
                 # plot this kind across runs (your existing grouping-by-taub logic)
                 for taub in sorted({s["taub"] for s in series_kind}):
                     group = [s for s in series_kind if s["taub"] == taub]
@@ -1687,6 +2560,21 @@ elif plot_mode == "Multiple plots":
                             y_grid,
                             label=f"{s['tkb']:g} Tkb (TauB {taub:g}) — {kind}",
                         )
+                        # collect for post-analysis
+
+                        # inside the loop where you have x and y_grid:
+                        post_curves.append({
+                            "run": s["run"],
+                            "tkb": s["tkb"],
+                            "taub": taub,
+                            "kind": kind,  # for crystal type
+                            "x": np.asarray(x, float),
+                            "y": np.asarray(y_grid, float),
+                        })
+
+            # after plotting + after post_curves is populated
+            st.session_state[f"post_curves_{metric_label}"] = post_curves
+            st.session_state["multi_cached"] = True
 
             ax.set_title("Crystal metric")
             ax.set_ylabel("Fraction")
@@ -1702,13 +2590,132 @@ elif plot_mode == "Multiple plots":
 
             continue  # <-- IMPORTANT: skip the normal metric plotting below
 
+        st.markdown(f"### Metric: {metric_label}")
+
+        # ------------------------------------------------------------
+        # NEW: multi-run plotting with
+        #  - correct per-run TauB on x-axis
+        #  - same-TauB runs resampled to same x-length
+        #  - on-disk caching for faster reruns
+        # ------------------------------------------------------------
+
+        series = []  # will contain dicts with run/tkb/taub/y_len only; we regenerate x later
+        missing = []
+
+        if run:
+            dataset_tag = os.path.basename(base_dir.rstrip("\\/"))  # e.g. NAF, ASF, ARF
+
+            for folder_path, tkb_val, tau_val in selected_runs:
+                run_name = os.path.basename(folder_path)
+                tkb_val = float(tkb_val)
+                tau_val = float(tau_val)
+
+                npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label)
+                #st.write(
+                #    f"🔎 {metric_label} | {run_name} -> saved file exists? {npz_path.exists()} | export_data={export_data}")
+
+                if (not export_data) and npz_path.exists():
+                    # Load previously saved y (fast)
+                    y = load_rundata_npz(npz_path)
+                else:
+                    # Recompute (only happens when export_data=True or file missing)
+                    fx = os.path.join(folder_path, x_name)
+                    fy = os.path.join(folder_path, y_name)
+                    if not (os.path.isfile(fx) and os.path.isfile(fy)):
+                        missing.append(run_name)
+                        continue
+
+                    kwargs_run = dict(skip=int(skip), normY=int(normY), TauB=float(tau_val))
+                    if metric_label in ["Number of clusters", "Average cluster size"]:
+                        kwargs_run["eps"] = float(cluster_eps_multi)
+                        kwargs_run["min_samples"] = int(cluster_min_samples_multi)
+                        kwargs_run["min_cluster_size"] = int(cluster_min_cluster_size_multi)
+                    t, y = load_or_compute_metric_cached(
+                        base_dir=base_dir,
+                        run_folder=run_name,
+                        fx=fx,
+                        fy=fy,
+                        metric_func=metric_func,
+                        metric_kwargs=kwargs_run,
+                    )
+
+                    # Save just y (no time)
+                    try:
+                        save_rundata_npz(npz_path, np.asarray(y, float))
+                    except Exception as e:
+                        st.warning(f"Could not save run data {npz_path.name}: {e}")
+
+                    # Optional CSV export (no time)
+                    if export_dir.strip():
+                        try:
+                            out = Path(export_dir.strip())
+                            out.mkdir(parents=True, exist_ok=True)
+                            csv_path = out / (npz_path.stem + ".csv")
+                            export_rundata_csv(csv_path, np.asarray(y, float))
+                            save_rundata_npz(npz_path, y)
+
+                        except Exception as e:
+                            st.warning(f"Could not export CSV for {run_name}: {e}")
+
+                series.append({
+                    "run": run_name,
+                    "tkb": tkb_val,
+                    "taub": tau_val,
+                    "y": np.asarray(y, float),
+                })
+
+
+
         if missing:
             st.warning("Missing data files for: " + ", ".join(missing))
 
-        if not series:
-            st.warning("No valid runs found.")
-            st.stop()
+        if not run:
+            post_curves = st.session_state.get(f"post_curves_{metric_label}", [])
+            if not post_curves:
+                st.info(f"No cached curves for {metric_label}. Click Run once.")
+                continue
 
+            plt.figure()
+            ax = plt.gca()
+            for c in post_curves:
+                ax.plot(
+                    c["x"], c["y"],
+                    label=f"{c['tkb']:g} Tkb (TauB {c['taub']:g}) — {c.get('kind', '')}"
+                )
+
+            ax.relim()
+            ax.autoscale_view()
+            ax.set_title(default_ylabel)
+            ax.set_ylabel(default_ylabel)
+            ax.set_xlabel("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+
+            fig = plt.gcf()
+            apply_global_styling(
+                fig,
+                legend_on=legend_on_multi,
+                legend_fontsize=legend_fontsize_multi,
+                axis_fontsize=axis_fontsize_multi,
+                title_on=title_on_multi,
+                title_fontsize=title_fontsize_multi,
+            )
+            st.pyplot(fig)
+
+
+
+            post_analysis_block(
+                key=f"multi_{metric_label}",
+                curves=st.session_state.get(f"post_curves_{metric_label}", []),
+                ylabel=default_ylabel,
+                x_axis_mode=x_axis_mode_multi,
+                legend_on=legend_on_multi,
+                legend_fontsize=legend_fontsize_multi,
+                axis_fontsize=axis_fontsize_multi,
+                title_on=title_on_multi,
+                title_fontsize=title_fontsize_multi,
+)
+            continue  # <-- skip compute/export/plot path when using cached curves
 
         if export_data:
             if not export_dir.strip():
@@ -1747,6 +2754,7 @@ elif plot_mode == "Multiple plots":
             return cmap((tkb - tmin) / (tmax - tmin))
 
 
+        post_curves = []  # define this once before the TauB grouping loop
         # Group by TauB so same-TauB runs share identical x-axis length
         for taub in sorted({s["taub"] for s in series}):
             group = [s for s in series if s["taub"] == taub]
@@ -1771,6 +2779,21 @@ elif plot_mode == "Multiple plots":
                     label=f"{s['tkb']:g} Tkb (TauB {taub:g})",
                     color=color_for_tkb(s["tkb"]),
                 )
+                # collect for post-analysis
+
+
+                # inside the loop where you have x and y_grid:
+                post_curves.append({
+                    "run": s["run"],
+                    "tkb": s["tkb"],
+                    "taub": taub,
+                    "x": np.asarray(x, float),
+                    "y": np.asarray(y_grid, float),
+                })
+
+        # after plotting + after post_curves is populated
+        st.session_state[f"post_curves_{metric_label}"] = post_curves
+        st.session_state["multi_cached"] = True
 
         ax.set_title(default_ylabel)
         ax.set_ylabel(default_ylabel)
@@ -1795,7 +2818,17 @@ elif plot_mode == "Multiple plots":
             save_enabled=save_plots,
             output_dir=output_dir,
         )
-
+        post_analysis_block(
+            key=f"multi_{metric_label}",
+            curves=st.session_state.get(f"post_curves_{metric_label}", []),
+            ylabel=default_ylabel,
+            x_axis_mode=x_axis_mode_multi,
+            legend_on=legend_on_multi,
+            legend_fontsize=legend_fontsize_multi,
+            axis_fontsize=axis_fontsize_multi,
+            title_on=title_on_multi,
+            title_fontsize=title_fontsize_multi,
+        )
 
     st.success("Multiple-plot figure(s) done ✅")
 
@@ -1904,7 +2937,55 @@ elif plot_mode == "Function mixer":
 
     st.caption("Allowed functions: " + ", ".join(sorted(_ALLOWED_FUNCS.keys())))
 
+    # ✅ If user clicked Run post-analysis (or any rerun) and we already have cached curves, redraw from cache
+    if (not plot_expr) and st.session_state.get("post_curves_mixer"):
+        curves = st.session_state["post_curves_mixer"]
+        meta = st.session_state.get("mixer_meta", {})
+
+        plt.close("all")
+        plt.figure()
+        ax = plt.gca()
+        for c in curves:
+            ax.plot(c["x"], c["y"], label=c["run"])
+
+        ax.set_title(meta.get("title", "Derived expression"))
+
+        if meta.get("plot_fft", False):
+            ax.set_xlabel("Frequency (Hz)")
+        else:
+            ax.set_xlabel("Time (τB)" if meta.get("x_axis_mode") == "Brownian time τ_B" else "Time (s)")
+
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+        fig = plt.gcf()
+        apply_global_styling(
+            fig,
+            legend_on=legend_on_multi,
+            legend_fontsize=legend_fontsize_multi,
+            axis_fontsize=axis_fontsize_multi,
+            title_on=title_on_multi,
+            title_fontsize=title_fontsize_multi,
+        )
+        st.pyplot(fig)
+
+        post_analysis_block(
+            key="mixer",
+            curves=curves,
+            ylabel=meta.get("title", "Derived expression"),
+            x_axis_mode=meta.get("x_axis_mode", x_axis_mode_multi),
+            legend_on=legend_on_multi,
+            legend_fontsize=legend_fontsize_multi,
+            axis_fontsize=axis_fontsize_multi,
+            title_on=title_on_multi,
+            title_fontsize=title_fontsize_multi,
+        )
+
+        st.stop()
+
     if plot_expr:
+        st.session_state["post_curves_mixer"] = []
+
         # ✅ define this AFTER expr exists and BEFORE plotting
         plot_fft = ("fft_amp" in expr) or ("fft_power" in expr)
 
@@ -1996,17 +3077,23 @@ elif plot_mode == "Function mixer":
         plt.figure()
         ax = plt.gca()
 
-        for run_name in common_runs:
-            a = A_map[run_name]
-            b = B_map[run_name]
 
-            taub_a = float(a["taub"])
-            taub_b = float(b["taub"])
+        st.session_state.setdefault("post_curves_mixer", [])
+
+        # reset curves for THIS derived expression run
+        post_curves = []
+
+        for run_name in common_runs:
+            a_run = A_map[run_name]  # dict
+            b_run = B_map[run_name]  # dict
+
+            taub_a = float(a_run["taub"])
+            taub_b = float(b_run["taub"])
             if abs(taub_a - taub_b) > 1e-9:
                 st.warning(f"Skipping {run_name}: TauB mismatch between metrics ({taub_a} vs {taub_b})")
                 continue
 
-            t_grid_sec, yA, yB = align_y_by_taub_length(a["y"], b["y"], taub_a)
+            t_grid_sec, yA, yB = align_y_by_taub_length(a_run["y"], b_run["y"], taub_a)
 
             # choose time axis for windowing
             if x_axis_mode_multi == "Brownian time τ_B":
@@ -2015,20 +3102,17 @@ elif plot_mode == "Function mixer":
                 t_use = t_grid_sec
 
             t0, t1 = float(np.min(t_use)), float(np.max(t_use))
-            a = t0 + (t1 - t0) * float(mix_t_start_frac)
-            b = t0 + (t1 - t0) * float(mix_t_end_frac)
-            sel = (t_use >= a) & (t_use <= b)
+            win_a = t0 + (t1 - t0) * float(mix_t_start_frac)
+            win_b = t0 + (t1 - t0) * float(mix_t_end_frac)
+            sel = (t_use >= win_a) & (t_use <= win_b)
 
             t_grid_sec = t_grid_sec[sel]
             yA = yA[sel]
             yB = yB[sel]
 
-            # guard
             if t_grid_sec.size < 2:
                 st.warning(f"Skipping {run_name}: time window too small.")
                 continue
-
-
 
             env = {
                 "A": yA,
@@ -2045,7 +3129,7 @@ elif plot_mode == "Function mixer":
                 st.error(f"Expression error: {e}")
                 st.stop()
 
-            # ✅ choose x-axis correctly
+            plot_fft = ("fft_amp" in expr) or ("fft_power" in expr)
             if plot_fft:
                 x = fft_freqs(t_grid_sec)  # Hz
             else:
@@ -2053,7 +3137,34 @@ elif plot_mode == "Function mixer":
 
             ax.plot(x, y_out, label=run_name)
 
+            post_curves.append({
+                "run": run_name,
+                "tkb": float(a_run["tkb"]),
+                "taub": float(taub_a),
+                "x": np.asarray(x, float),
+                "y": np.asarray(y_out, float),
+            })
+
+
+            # ✅ IMPORTANT: append INSIDE the loop (one entry per run)
+            st.session_state["post_curves_mixer"].append({
+                "run": run_name,
+                "tkb": float(a_run["tkb"]),
+                "taub": float(a_run["taub"]),
+                "x": np.asarray(x, float),
+                "y": np.asarray(y_out, float),
+            })
+
         ax.set_title(calc_title)
+
+
+        # ✅ overwrite cache with ALL curves
+        st.session_state["post_curves_mixer"] = post_curves
+        st.session_state["mixer_meta"] = {
+            "title": calc_title,
+            "plot_fft": plot_fft,
+            "x_axis_mode": x_axis_mode_multi,
+        }
 
         # ✅ label axis correctly
         if plot_fft:
@@ -2074,6 +3185,19 @@ elif plot_mode == "Function mixer":
             title_fontsize=title_fontsize_multi,
         )
         st.pyplot(fig)
+
+
+        post_analysis_block(
+            key="mixer",
+            curves=st.session_state.get("post_curves_mixer", []),
+            ylabel=calc_title,
+            x_axis_mode=x_axis_mode_multi,
+            legend_on=legend_on_multi,
+            legend_fontsize=legend_fontsize_multi,
+            axis_fontsize=axis_fontsize_multi,
+            title_on=title_on_multi,
+            title_fontsize=title_fontsize_multi,
+        )
 
 
 # ---------------------------------------------------------------------
@@ -2416,6 +3540,7 @@ elif plot_mode == "Phase diagram":
 
 
 
+
 # ---------------------------------------------------------------------
 # SUMMARY PLOT MODE  (folder-based)
 # ---------------------------------------------------------------------
@@ -2471,9 +3596,13 @@ elif plot_mode == "Summary plots":
             available_runs.append((os.path.join(base_dir, fn), tkb_val, tau_val))
     available_runs = sorted(available_runs, key=lambda r: (r[1], r[2]))
 
+
+
+
     def format_run_option(run) -> str:
         _, tkb, tau = run
         return f"{tkb:g} Tkb (TauB: {tau:g})"
+
 
     selected_runs = st.sidebar.multiselect(
         "Select runs:",
@@ -2497,8 +3626,10 @@ elif plot_mode == "Summary plots":
     # (optional) share your cluster params if you want summary for cluster metrics
     st.sidebar.header("Cluster metrics parameters")
     cluster_eps_multi = st.sidebar.number_input("DBSCAN eps", value=3.5, step=0.1, key="summary_cluster_eps")
-    cluster_min_samples_multi = st.sidebar.number_input("DBSCAN min_samples", value=3, step=1, min_value=1, key="summary_cluster_mins")
-    cluster_min_cluster_size_multi = st.sidebar.number_input("Min cluster size", value=3, step=1, min_value=1, key="summary_cluster_minsz")
+    cluster_min_samples_multi = st.sidebar.number_input("DBSCAN min_samples", value=3, step=1, min_value=1,
+                                                        key="summary_cluster_mins")
+    cluster_min_cluster_size_multi = st.sidebar.number_input("Min cluster size", value=3, step=1, min_value=1,
+                                                             key="summary_cluster_minsz")
 
     st.sidebar.header("6. Reduction (scalar from curve)")
     reducer = st.sidebar.selectbox(
@@ -2506,8 +3637,6 @@ elif plot_mode == "Summary plots":
         ["max", "min", "mean", "last", "slope (linear fit)"],
         key="summary_reducer",
     )
-
-
 
     st.sidebar.header("7. Plot against")
     x_choice = st.sidebar.selectbox("X-axis:", ["TkB", "TauB"], key="summary_x_choice")
@@ -2518,6 +3647,74 @@ elif plot_mode == "Summary plots":
 
     run_summary = st.sidebar.button("▶ Run summary plot", key="run_summary")
 
+    have_cached = st.session_state.get("summary_cached", False)
+
+    pa_key = f"summary_{metric_label}_{reducer}_{x_choice}_{window_time_units}_{t_start_frac:.3f}_{t_end_frac:.3f}"
+    st.session_state.setdefault("summary_cache_by_key", {})
+    cache_map = st.session_state["summary_cache_by_key"]
+    have_cached = pa_key in cache_map
+
+
+    cache_map = st.session_state.get("summary_cache_by_key", {})
+    have_cached = pa_key in cache_map
+
+    # ✅ If we are NOT re-running computation, but we already have cached summary output,
+    # redraw from cache so post-analysis doesn't reset on reruns.
+    if (not run_summary) and have_cached:
+        cache = cache_map[pa_key]
+        curves = cache["curves"]
+        rows = cache.get("rows", None)  # we will store rows in cache (next step)
+        x_choice = cache["x_choice"]
+        xlabel_pa = cache["pa_xlabel"]
+
+        if cache is None:
+            st.info("No cached summary yet. Click Run summary plot once.")
+            st.stop()
+
+        label_mode = cache["label_mode"]
+        label_fmt = (lambda ta: f"TauB {ta:g}") if label_mode == "TauB" else (lambda tk: f"TkB {tk:g}")
+
+
+        plt.close("all")
+        plt.figure()
+        ax = plt.gca()
+
+        xvals = np.asarray(cache["xvals"], float)
+        yvals = np.asarray(cache["yvals"], float)
+        group_key = np.asarray(cache["group_key"], float)
+
+        for g in sorted(set(group_key)):
+            mask = group_key == g
+            ax.plot(xvals[mask], yvals[mask], marker="o", linestyle="-", label=label_fmt(g))
+
+        ax.set_title(cache["title"])
+        ax.set_xlabel(cache["xlabel"])
+        ax.set_ylabel(cache["ylabel"])
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+        fig = plt.gcf()
+        apply_global_styling(fig, legend_on=True, legend_fontsize=14, axis_fontsize=16, title_on=True,
+                             title_fontsize=18)
+        st.pyplot(fig)
+
+        post_analysis_block_generic(
+            key=pa_key,
+            curves=curves,
+            ylabel=f"{reducer}({metric_label})",
+            xlabel=xlabel_pa,
+            legend_on=True,
+            legend_fontsize=14,
+            axis_fontsize=16,
+            title_on=True,
+            title_fontsize=18,
+            sweep_rows=rows,
+            x_choice=x_choice,
+        )
+
+        st.stop()
+
+    # nothing cached and button not pressed → stop
     if not run_summary:
         st.stop()
 
@@ -2530,7 +3727,6 @@ elif plot_mode == "Summary plots":
 
     dataset_tag = os.path.basename(base_dir.rstrip("\\/"))
     metric_func, default_ylabel = metric_map[metric_label]
-
 
     series, missing = get_series_for_metric(
         metric_label=metric_label,
@@ -2578,8 +3774,6 @@ elif plot_mode == "Summary plots":
                 metric_kwargs=kwargs_run,
             )
             series.append({"run": run_name, "tkb": float(tkb_val), "taub": float(tau_val), "y": np.asarray(y, float)})
-
-
 
     if not series:
         st.warning("No data series available for this metric.")
@@ -2630,29 +3824,66 @@ elif plot_mode == "Summary plots":
 
         rows.append((s["run"], s["tkb"], s["taub"], scalar))
 
+    # ----------------------------
+    # Read UI state FIRST (no widgets yet)
+    # ----------------------------
 
-    # --- plot ---
+    # --- choose x-axis + grouping ---
+    if x_choice == "TkB":
+        xvals = np.array([r[1] for r in rows], float)
+        xlabel = "TkB"
+        group_key = np.array([r[2] for r in rows], float)  # group by TauB
+        label_fmt = lambda ta: f"TauB {ta:g}"
+        xlabel_pa = "TkB"
+        label_mode = "TauB"
+    else:
+        xvals = np.array([r[2] for r in rows], float)
+        xlabel = "TauB"
+        group_key = np.array([r[1] for r in rows], float)  # group by TkB
+        label_fmt = lambda tk: f"TkB {tk:g}"
+        xlabel_pa = "TauB"
+        label_mode = "TkB"
+
+    yvals = np.array([r[3] for r in rows], float)
+
+    # build curves (needed for knee + post-analysis)
+    curves = []
+    for g in sorted(set(group_key)):
+        mask = group_key == g
+        curves.append({"run": label_fmt(g), "x": xvals[mask], "y": yvals[mask]})
+
+    st.session_state.setdefault("summary_cache_by_key", {})
+    st.session_state["summary_cache_by_key"][pa_key] = {
+        "xvals": xvals,
+        "yvals": yvals,
+        "group_key": group_key,
+        "xlabel": xlabel,
+        "ylabel": f"{reducer}({metric_label})",
+        "title": f"{reducer}({metric_label}) vs {xlabel}",
+        "label_mode": "TauB" if x_choice == "TkB" else "TkB",
+        "curves": curves,
+        "rows": rows,  # ✅ ADD THIS
+        "x_choice": x_choice,  # ✅ ADD THIS
+        "pa_key": pa_key,
+        "pa_xlabel": xlabel_pa,
+        "pa_ylabel": f"{reducer}({metric_label})",
+    }
+
+    # ----------------------------
+    # NOW build the figure using the CURRENT widget values
+    # ----------------------------
     plt.close("all")
     plt.figure()
     ax = plt.gca()
 
-    if x_choice == "TkB":
-        xvals = np.array([r[1] for r in rows], float)
-        xlabel = "TkB"
-        group_key = np.array([r[2] for r in rows], float)  # group by TauB in legend
-        label_fmt = lambda ta: f"TauB {ta:g}"
-    else:
-        xvals = np.array([r[2] for r in rows], float)
-        xlabel = "TauB"
-        group_key = np.array([r[1] for r in rows], float)  # group by TkB in legend
-        label_fmt = lambda tk: f"TkB {tk:g}"
-
-    yvals = np.array([r[3] for r in rows], float)
-
+    # measured curves
     for g in sorted(set(group_key)):
         mask = group_key == g
         ax.plot(xvals[mask], yvals[mask], marker="o", linestyle="-", label=label_fmt(g))
 
+
+
+    # finalize
     ax.set_title(f"{reducer}({metric_label}) vs {xlabel}")
     ax.set_xlabel(xlabel)
     ax.set_ylabel(f"{reducer}({metric_label})")
@@ -2661,21 +3892,23 @@ elif plot_mode == "Summary plots":
 
     fig = plt.gcf()
     apply_global_styling(fig, legend_on=True, legend_fontsize=14, axis_fontsize=16, title_on=True, title_fontsize=18)
+
+    # render plot at the TOP placeholder
     st.pyplot(fig)
 
-    # --- export scalars (optional) ---
-    if export_dir.strip():
-        out = Path(export_dir.strip())
-        out.mkdir(parents=True, exist_ok=True)
-        csv_path = out / slugify(f"{dataset_tag}_{metric_label}_{reducer}_vs_{xlabel}")  # no extension yet
-        csv_path = csv_path.with_suffix(".csv")
-        with open(csv_path, "w", newline="") as f:
-            f.write("run,tkb,taub,scalar\n")
-            for run_name, tkb, taub, scalar in rows:
-                f.write(f"{run_name},{tkb},{taub},{scalar}\n")
-        st.info(f"Exported scalars to: `{csv_path}`")
-
-
+    post_analysis_block_generic(
+        key=pa_key,
+        curves=curves,
+        ylabel=f"{reducer}({metric_label})",
+        xlabel=xlabel_pa,
+        legend_on=True,
+        legend_fontsize=14,
+        axis_fontsize=16,
+        title_on=True,
+        title_fontsize=18,
+        sweep_rows=rows,
+        x_choice=x_choice,
+    )
 
 # TODO: add plotly toogle
 # TODO: Phase-transition detection

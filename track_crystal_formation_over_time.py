@@ -76,12 +76,12 @@ def detect_crystals_over_time(coordDynX, coordDynY, eps=3.043, min_samples=5, Ta
     time_axis = np.linspace(0, max_time, num_timesteps)
 
     # Plot crystalline fraction over time (Hexagonal, Square, Triangular, All)
-    plt.figure(figsize=(8, 5))
-    line1, = plt.plot(time_axis, hexagonal_fractions, marker='', linestyle=':', label='Hexagonal Crystals')
-    line2, = plt.plot(time_axis, square_fractions, marker='', linestyle='--', label='Square Crystals')
-    line3, = plt.plot(time_axis, triangular_fractions, marker='', linestyle='-.', label='Triangular Crystals')
-    line4, = plt.plot(time_axis, crystalline_fractions, marker='', linestyle='-', label='All Crystalline Particles')
-    line5, = plt.plot(time_axis, other_fractions, marker='', linestyle='-', label='No Crystals')
+    # plt.figure(figsize=(8, 5))
+    # line1, = plt.plot(time_axis, hexagonal_fractions, marker='', linestyle=':', label='Hexagonal Crystals')
+    # line2, = plt.plot(time_axis, square_fractions, marker='', linestyle='--', label='Square Crystals')
+    # line3, = plt.plot(time_axis, triangular_fractions, marker='', linestyle='-.', label='Triangular Crystals')
+    # line4, = plt.plot(time_axis, crystalline_fractions, marker='', linestyle='-', label='All Crystalline Particles')
+    # line5, = plt.plot(time_axis, other_fractions, marker='', linestyle='-', label='No Crystals')
 
     series = {
         "Hexagonal": np.array(hexagonal_fractions),
@@ -101,14 +101,14 @@ def detect_crystals_over_time(coordDynX, coordDynY, eps=3.043, min_samples=5, Ta
             if k in series:
                 plt.plot(time_axis, series[k], label=f"{k} ({series[k][-1]:.2f})")
 
-        plt.xlabel("Time(s)")
-        plt.ylabel("Fraction of Crystalline Particles")
-        plt.title("Crystalline Fraction Over Time")
-        plt.legend(loc="lower right", fontsize=10)
-        plt.grid()
-        if normY == 1:
-            plt.ylim(0, 1)
-        plt.show()
+        # plt.xlabel("Time(s)")
+        # plt.ylabel("Fraction of Crystalline Particles")
+        # plt.title("Crystalline Fraction Over Time")
+        # plt.legend(loc="lower right", fontsize=10)
+        # plt.grid()
+        # if normY == 1:
+        #     plt.ylim(0, 1)
+        # plt.show()
 
 
 
@@ -117,24 +117,20 @@ def detect_crystals_over_time(coordDynX, coordDynY, eps=3.043, min_samples=5, Ta
 
 
 def crystals_hex_over_time(fx, fy, **kwargs):
-    t, series = detect_crystals_over_time(fx, fy, types_to_show=["Hexagonal"], **kwargs)
-    return t, series["Hexagonal"]
+    return detect_crystals_over_time(fx, fy, type="Hexagonal", **kwargs)
 
 def crystals_square_over_time(fx, fy, **kwargs):
-    t, series = detect_crystals_over_time(fx, fy, types_to_show=["Square"], **kwargs)
-    return t, series["Square"]
+    return detect_crystals_over_time(fx, fy, type="Square", **kwargs)
 
 def crystals_tri_over_time(fx, fy, **kwargs):
-    t, series = detect_crystals_over_time(fx, fy, types_to_show=["Triangular"], **kwargs)
-    return t, series["Triangular"]
+    return detect_crystals_over_time(fx, fy, type="Triangular", **kwargs)
 
 def crystals_all_over_time(fx, fy, **kwargs):
-    t, series = detect_crystals_over_time(fx, fy, types_to_show=["All"], **kwargs)
-    return t, series["All"]
+    return detect_crystals_over_time(fx, fy, type="All", **kwargs)
 
 def crystals_none_over_time(fx, fy, **kwargs):
-    t, series = detect_crystals_over_time(fx, fy, types_to_show=["None"], **kwargs)
-    return t, series["None"]
+    return detect_crystals_over_time(fx, fy, type="None", **kwargs)
+
 
     # # Plot the counts of crystal types over time (Hexagonal, Square, Triangular, Other)
     # plt.figure(figsize=(8, 5))
