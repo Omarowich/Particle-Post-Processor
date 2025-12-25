@@ -4,11 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="Major Bug fixes for crystal.&#10;&#10;and Also startedto clean up the code.&#10;&#10;put function mixer in seperate window apart from multi plot.">
+    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="aded post analyiss for summary plots.&#10;&#10;need to fix the locust function drawer">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/app.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/area_fraction_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/area_fraction_over_time.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/track_crystal_formation_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/track_crystal_formation_over_time.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -152,7 +150,7 @@
       <workItem from="1766503830284" duration="12244000" />
       <workItem from="1766523758876" duration="1743000" />
       <workItem from="1766529491452" duration="5161000" />
-      <workItem from="1766535879691" duration="21845000" />
+      <workItem from="1766535879691" duration="24523000" />
     </task>
     <task id="LOCAL-00001" summary="fixed some import errors">
       <option name="closed" value="true" />
@@ -250,7 +248,15 @@
       <option name="project" value="LOCAL" />
       <updated>1766516225408</updated>
     </task>
-    <option name="localTasksCounter" value="13" />
+    <task id="LOCAL-00013" summary="aded post analyiss for summary plots.&#10;&#10;need to fix the locust function drawer">
+      <option name="closed" value="true" />
+      <created>1766691163094</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1766691163094</updated>
+    </task>
+    <option name="localTasksCounter" value="14" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -278,7 +284,8 @@
     <MESSAGE value="added the summary for tkb plots. to plot reduced scalar metrics against tkb&#10;&#10;MASSIVE UPDATE." />
     <MESSAGE value="fixed some color issues" />
     <MESSAGE value="Major Bug fixes for crystal.&#10;&#10;and Also startedto clean up the code.&#10;&#10;put function mixer in seperate window apart from multi plot." />
-    <option name="LAST_COMMIT_MESSAGE" value="Major Bug fixes for crystal.&#10;&#10;and Also startedto clean up the code.&#10;&#10;put function mixer in seperate window apart from multi plot." />
+    <MESSAGE value="aded post analyiss for summary plots.&#10;&#10;need to fix the locust function drawer" />
+    <option name="LAST_COMMIT_MESSAGE" value="aded post analyiss for summary plots.&#10;&#10;need to fix the locust function drawer" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>

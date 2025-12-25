@@ -1061,6 +1061,21 @@ def sidebar_runs_common_ui(
                 key=f"{prefix}_yname",
                 help="Y filename inside each run folder",
             )
+        c3, c4 = st.columns(2)
+        with c3:
+            skip = st.number_input(
+                "Skip (frame stride)",
+                value=1,
+                step=1,
+                min_value=0,
+                key=f"{prefix}_skip",
+            )
+        with c4:
+            normY = st.checkbox(
+                "Normalize Y axis",
+                value=True,
+                key=f"{prefix}_normY",
+            )
 
     # ---- runs detection ----
     st.sidebar.header("3. Runs (TkB / TauB)")
@@ -1126,48 +1141,31 @@ def sidebar_runs_common_ui(
         )
 
     # ---- common params ----
-    st.sidebar.header("5. Common parameters")
-    TauB = st.sidebar.number_input(
-        "TauB (Brownian time)",
-        value=2.0,
-        step=0.5,
-        key=f"{prefix}_TauB",
-    )
-    skip = st.sidebar.number_input(
-        "Skip (frame stride)",
-        value=1,
-        step=1,
-        min_value=0,
-        key=f"{prefix}_skip",
-    )
-    normY = st.sidebar.checkbox(
-        "Normalize Y axis",
-        value=True,
-        key=f"{prefix}_normY",
-    )
+    with st.sidebar.expander("Common parameters", expanded=False):
 
-    # cluster params
-    st.sidebar.header("Cluster metrics parameters")
-    cluster_eps = st.sidebar.number_input(
-        "DBSCAN eps",
-        value=3.5,
-        step=0.1,
-        key=f"{prefix}_cluster_eps",
-    )
-    cluster_min_samples = st.sidebar.number_input(
-        "DBSCAN min_samples",
-        value=3,
-        step=1,
-        min_value=1,
-        key=f"{prefix}_cluster_min_samples",
-    )
-    cluster_min_cluster_size = st.sidebar.number_input(
-        "Min cluster size",
-        value=3,
-        step=1,
-        min_value=1,
-        key=f"{prefix}_cluster_min_cluster_size",
-    )
+        # cluster params
+        st.subheader("Cluster metrics parameters")
+        cluster_eps = st.number_input(
+            "DBSCAN eps",
+            value=3.5,
+            step=0.1,
+            key=f"{prefix}_cluster_eps",
+        )
+        cluster_min_samples = st.number_input(
+            "DBSCAN min_samples",
+            value=3,
+            step=1,
+            min_value=1,
+            key=f"{prefix}_cluster_min_samples",
+        )
+        cluster_min_cluster_size = st.number_input(
+            "Min cluster size",
+            value=3,
+            step=1,
+            min_value=1,
+            key=f"{prefix}_cluster_min_cluster_size",
+        )
+
 
     # styling
     st.sidebar.header("Styling")
@@ -1183,11 +1181,42 @@ def sidebar_runs_common_ui(
         "Title font size", value=20, min_value=1, max_value=60, key=f"{prefix}_title_fs"
     )
 
-    x_axis_mode = st.sidebar.radio(
-        "X-axis units",
-        ["Seconds", "Brownian time τ_B"],
-        key=f"{prefix}_xaxis_mode",
-    )
+
+    # x-axis mode
+    st.sidebar.subheader("X-Axis")
+    c11, c12 = st.sidebar.columns(2)
+    with c11:
+        x_axis_mode = st.radio(
+            "X-axis units",
+            ["Seconds", "Brownian time τ_B"],
+            key=f"{prefix}_xaxis_mode",
+        )
+    with c12:
+        TauB = st.number_input(
+            "TauB (Brownian time)",
+            value=2.0,
+            step=0.5,
+            key=f"{prefix}_TauB",
+        )
+
+    # y-axis mode
+    st.sidebar.subheader("Y-Axis")
+    c21, c22 = st.sidebar.columns(2)
+    with c21:
+        y_scale = st.selectbox(
+            "Scale",
+            ["Linear", "Log"],
+            index=0,
+            key=f"{prefix}_y_scale",
+        )
+    with c22:
+        y_unit = st.text_input(
+            "Unit label",
+            value="",
+            placeholder="e.g. a.u., mm, 1/s, …",
+            key=f"{prefix}_y_unit",
+            help="This is only the label shown on the plot (does not change the data).",
+        )
 
     # export / recompute
     st.sidebar.header("Caching / export")
@@ -1223,7 +1252,10 @@ def sidebar_runs_common_ui(
         "export_data": export_data,
         "export_dir": export_dir,
         "crystal_types": crystal_types,
-        "metrics_selected": metrics_selected,  # may be None if include_metric_select=False
+        "metrics_selected": metrics_selected,
+        "y_scale": y_scale,
+        "y_unit": y_unit,
+
     }
     return out
 
@@ -2428,6 +2460,8 @@ elif plot_mode == "Multiple plots":
     title_on_multi = ui["title_on"]
     title_fontsize_multi = ui["title_fontsize"]
     x_axis_mode_multi = ui["x_axis_mode"]
+    y_scale_multi = ui.get("y_scale", "Linear")
+    y_unit_multi = ui.get("y_unit", "")
     export_data = ui["export_data"]
     export_dir = ui["export_dir"]
     TauB = ui["TauB"]
@@ -2686,7 +2720,21 @@ elif plot_mode == "Multiple plots":
             ax.relim()
             ax.autoscale_view()
             ax.set_title(default_ylabel)
-            ax.set_ylabel(default_ylabel)
+            ylabel_plot = default_ylabel
+            if y_unit_multi.strip():
+                ylabel_plot = f"{default_ylabel} [{y_unit_multi.strip()}]"
+            ax.set_ylabel(ylabel_plot)
+            # log/linear scale
+            if y_scale_multi == "Log":
+                # guard: log needs y>0
+                if np.any(np.asarray([v for c in post_curves for v in c["y"]], float) <= 0):
+                    st.warning("Log scale requires y > 0. Using Linear.")
+                    ax.set_yscale("linear")
+                else:
+                    ax.set_yscale("log")
+            else:
+                ax.set_yscale("linear")
+
             ax.set_xlabel("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")
             ax.grid(True, alpha=0.3)
             ax.legend()
@@ -2794,9 +2842,21 @@ elif plot_mode == "Multiple plots":
         # after plotting + after post_curves is populated
         st.session_state[f"post_curves_{metric_label}"] = post_curves
         st.session_state["multi_cached"] = True
-
         ax.set_title(default_ylabel)
-        ax.set_ylabel(default_ylabel)
+        ylabel_plot = default_ylabel
+        if y_unit_multi.strip():
+            ylabel_plot = f"{default_ylabel} [{y_unit_multi.strip()}]"
+        # log/linear scale
+        if y_scale_multi == "Log":
+            # guard: log needs y>0
+            if np.any(np.asarray([v for c in post_curves for v in c["y"]], float) <= 0):
+                st.warning("Log scale requires y > 0. Using Linear.")
+                ax.set_yscale("linear")
+            else:
+                ax.set_yscale("log")
+        else:
+            ax.set_yscale("linear")
+        ax.set_ylabel(ylabel_plot)
         ax.set_xlabel("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")
         ax.grid(True, alpha=0.3)
         ax.legend()
@@ -2868,6 +2928,8 @@ elif plot_mode == "Function mixer":
     title_on_multi = ui["title_on"]
     title_fontsize_multi = ui["title_fontsize"]
     x_axis_mode_multi = ui["x_axis_mode"]
+    y_scale_multi = ui.get("y_scale", "Linear")
+    y_unit_multi = ui.get("y_unit", "")
     export_data = ui["export_data"]
     export_dir = ui["export_dir"]
 
@@ -3385,6 +3447,7 @@ elif plot_mode == "Phase diagram":
         "Y filename inside each Tkb_* folder:", value="datay.csv", key="phase_yname"
     )
 
+
     st.sidebar.header("7. Snapshot plot function")
 
     snapshot_label = st.sidebar.selectbox(
@@ -3541,11 +3604,28 @@ elif plot_mode == "Phase diagram":
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ---------------------------------------------------------------------
 # SUMMARY PLOT MODE  (folder-based)
 # ---------------------------------------------------------------------
 
 elif plot_mode == "Summary plots":
+
+
     st.sidebar.header("2. Data folder (summary plots)")
 
     st.sidebar.header("Time window (applies to all reductions)")
@@ -3596,7 +3676,38 @@ elif plot_mode == "Summary plots":
             available_runs.append((os.path.join(base_dir, fn), tkb_val, tau_val))
     available_runs = sorted(available_runs, key=lambda r: (r[1], r[2]))
 
-
+    # --- File names: collapsed right under folder chooser (and compact) ---
+    with st.sidebar.expander("3. File names", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            x_name = st.text_input(
+                "X",
+                value="datax.csv",
+                key=f"summary_xname",
+                help="X filename inside each run folder",
+            )
+        with c2:
+            y_name = st.text_input(
+                "Y",
+                value="datay.csv",
+                key=f"summary_yname",
+                help="Y filename inside each run folder",
+            )
+        c3, c4 = st.columns(2)
+        with c3:
+            skip = st.number_input(
+                "Skip (frame stride)",
+                value=1,
+                step=1,
+                min_value=0,
+                key=f"summary_skip",
+            )
+        with c4:
+            normY = st.checkbox(
+                "Normalize Y axis",
+                value=True,
+                key=f"summary_normY",
+            )
 
 
     def format_run_option(run) -> str:
@@ -3612,24 +3723,37 @@ elif plot_mode == "Summary plots":
         format_func=format_run_option,
     )
 
-    st.sidebar.header("3. Files")
-    x_name = st.sidebar.text_input("X filename:", value="datax.csv", key="summary_xname")
-    y_name = st.sidebar.text_input("Y filename:", value="datay.csv", key="summary_yname")
+
+
 
     st.sidebar.header("4. Metric curve to summarize")
     metric_label = st.sidebar.selectbox("Metric:", metric_options, key="summary_metric_label")
 
-    st.sidebar.header("5. Common parameters")
-    skip = st.sidebar.number_input("Skip (frame stride)", value=1, step=1, min_value=0, key="summary_skip")
-    normY = st.sidebar.checkbox("Normalize Y axis (only affects plotting)", value=True, key="summary_normY")
+    # ---- common params ----
+    with st.sidebar.expander("5. Common parameters", expanded=False):
 
-    # (optional) share your cluster params if you want summary for cluster metrics
-    st.sidebar.header("Cluster metrics parameters")
-    cluster_eps_multi = st.sidebar.number_input("DBSCAN eps", value=3.5, step=0.1, key="summary_cluster_eps")
-    cluster_min_samples_multi = st.sidebar.number_input("DBSCAN min_samples", value=3, step=1, min_value=1,
-                                                        key="summary_cluster_mins")
-    cluster_min_cluster_size_multi = st.sidebar.number_input("Min cluster size", value=3, step=1, min_value=1,
-                                                             key="summary_cluster_minsz")
+        # cluster params
+        st.subheader("Cluster metrics parameters")
+        cluster_eps_summary = st.number_input(
+            "DBSCAN eps",
+            value=3.5,
+            step=0.1,
+            key=f"summary_cluster_eps",
+        )
+        cluster_min_samples_summary = st.number_input(
+            "DBSCAN min_samples",
+            value=3,
+            step=1,
+            min_value=1,
+            key=f"summary_cluster_min_samples",
+        )
+        cluster_min_cluster_size_summary = st.number_input(
+            "Min cluster size",
+            value=3,
+            step=1,
+            min_value=1,
+            key=f"summary_cluster_min_cluster_size",
+        )
 
     st.sidebar.header("6. Reduction (scalar from curve)")
     reducer = st.sidebar.selectbox(
@@ -3761,9 +3885,9 @@ elif plot_mode == "Summary plots":
                 skip=int(skip),
                 normY=int(normY),
                 TauB=float(tau_val),
-                eps=float(cluster_eps_multi),
-                min_samples=int(cluster_min_samples_multi),
-                min_cluster_size=int(cluster_min_cluster_size_multi),
+                eps=float(cluster_eps_summary),
+                min_samples=int(cluster_min_samples_summary),
+                min_cluster_size=int(cluster_min_cluster_size_summary),
             )
             t, y = load_or_compute_metric_cached(
                 base_dir=base_dir,
@@ -3911,5 +4035,5 @@ elif plot_mode == "Summary plots":
     )
 
 # TODO: add plotly toogle
-# TODO: Phase-transition detection
+# TODO: Fix  ########### LOCUS PLOT ######### in Phase-transition detection
 # TODO: Error bars + statistics ( You compute: Mean curve, deviation, error band for runs of the same tkb, tauB)
