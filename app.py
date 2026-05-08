@@ -2731,6 +2731,7 @@ elif plot_mode == "Multiple plots":
                     label=f"{c['tkb']:g} Tkb (TauB {c['taub']:g})" if show_taub_in_legend else f"{c['tkb']:g} Tkb"
                 )
 
+
             ax.relim()
             ax.autoscale_view()
             ax.set_title(default_ylabel)
