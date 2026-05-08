@@ -122,8 +122,9 @@ def area_fraction_over_time(
     skip=0,
     normY=0,
     cluster_mode="per_cluster",          # "global" or "per_cluster"
-    cluster_eps=3.5,
-    cluster_min_samples=3,
+    eps=3.5,
+    min_samples=3,
+    min_cluster_size=3,
     tight_alpha=1.0,                # concavity of center-hull
     visualize_clusters=False,
     visualize_timesteps=("first", "middle", "last"),
@@ -181,8 +182,8 @@ def area_fraction_over_time(
             occupancy = 100.0 * area_particles / area_hull if area_hull > 0 else 0.0
 
         elif cluster_mode == "per_cluster":
-            labels = DBSCAN(eps=cluster_eps,
-                            min_samples=cluster_min_samples).fit_predict(positions)
+            labels = DBSCAN(eps=eps,
+                            min_samples=min_samples).fit_predict(positions)
             unique_labels = [lab for lab in set(labels) if lab != -1]
 
             total_particle_area = 0.0
@@ -327,8 +328,8 @@ if __name__ == "__main__":
         skip=skip,
         particle_radius=1.0,
         cluster_mode="per_cluster",
-        cluster_eps=2.5,
-        cluster_min_samples=3,
+        eps=2.5,
+        min_samples=3,
         tight_alpha=0.3,
         visualize_clusters=True,
         visualize_timesteps=("middle", "last"),

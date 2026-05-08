@@ -108,7 +108,7 @@ def post_analysis_block_generic(
             pw_min_seg = st.slider("Min segment size (fraction)", 0.05, 0.4, 0.1, 0.05, key=f"{key}_pwseg")
 
             do_prog = st.checkbox("Prognosis (fit surface & predict)", value=False, key=f"{key}_prog")
-            tk_query = st.text_input("Predict at TkB values (comma)", value="20,30,40,50", key=f"{key}_prog_tk")
+            tk_query = st.text_input("Predict at TkB values (comma)", value="0,5,10,20,30,40,50", key=f"{key}_prog_tk")
             ta_query = st.text_input("Predict at TauB values (comma)", value="30", key=f"{key}_prog_ta")
 
             show_locus = st.checkbox("Show locus (connect feature points)", value=True, key=f"{key}_show_locus")
@@ -1170,6 +1170,7 @@ def sidebar_runs_common_ui(
     # styling
     st.sidebar.header("Styling")
     legend_on = st.sidebar.checkbox("Show legend", value=True, key=f"{prefix}_legend_on")
+    show_taub_in_legend = st.sidebar.checkbox("Show TauB in legend", value=False, key="multi_show_taub")
     legend_fontsize = st.sidebar.number_input(
         "Legend font size", value=16, min_value=1, max_value=40, key=f"{prefix}_legend_fs"
     )
@@ -1212,8 +1213,8 @@ def sidebar_runs_common_ui(
     with c22:
         y_unit = st.text_input(
             "Unit label",
-            value="",
-            placeholder="e.g. a.u., mm, 1/s, …",
+            value="μm",
+            placeholder="μm, mm, 1/s, …",
             key=f"{prefix}_y_unit",
             help="This is only the label shown on the plot (does not change the data).",
         )
@@ -1244,6 +1245,7 @@ def sidebar_runs_common_ui(
         "cluster_min_samples": int(cluster_min_samples),
         "cluster_min_cluster_size": int(cluster_min_cluster_size),
         "legend_on": legend_on,
+        "show_taub_in_legend": show_taub_in_legend,
         "legend_fontsize": int(legend_fontsize),
         "axis_fontsize": int(axis_fontsize),
         "title_on": title_on,
@@ -1591,6 +1593,11 @@ def get_series_for_metric(
             if extra_kwargs:
                 kwargs_run.update(extra_kwargs)
 
+            # Bust the .metric_cache entry when export_data is ticked
+            if export_data:
+                p = metric_cache_path(base_dir, run_name, metric_func.__name__, kwargs_run)
+                if p.exists():
+                    p.unlink(missing_ok=True)
 
             t, y_calc = load_or_compute_metric_cached(
                 base_dir=base_dir,
@@ -1704,9 +1711,9 @@ def metric_cache_path(base_dir: str, run_folder: str, metric_name: str, metric_k
     key = _stable_hash({"run": run_folder, "metric": metric_name, "kwargs": metric_kwargs})
     return cache_dir / f"{key}.npz"
 
-def load_or_compute_metric_cached(base_dir: str, run_folder: str, fx: str, fy: str, metric_func, metric_kwargs: dict):
+def load_or_compute_metric_cached(base_dir: str, run_folder: str, fx: str, fy: str, metric_func, metric_kwargs: dict, *, force_recompute=False):
     p = metric_cache_path(base_dir, run_folder, metric_func.__name__, metric_kwargs)
-    if p.exists():
+    if p.exists() and not force_recompute:
         z = np.load(p)
         return z["t"], z["y"]
     t, y = metric_func(fx, fy, **metric_kwargs)
@@ -2455,6 +2462,7 @@ elif plot_mode == "Multiple plots":
     cluster_min_samples_multi = ui["cluster_min_samples"]
     cluster_min_cluster_size_multi = ui["cluster_min_cluster_size"]
     legend_on_multi = ui["legend_on"]
+    show_taub_in_legend = ui["show_taub_in_legend"]
     legend_fontsize_multi = ui["legend_fontsize"]
     axis_fontsize_multi = ui["axis_fontsize"]
     title_on_multi = ui["title_on"]
@@ -2560,6 +2568,10 @@ elif plot_mode == "Multiple plots":
                     kwargs_run = dict(skip=int(skip), normY=int(normY), TauB=float(tau_val))
                     kwargs_run["type"] = kind  # <-- use this instead if your function param is named type
 
+                    p = metric_cache_path(base_dir, run_name, detect_crystals_over_time.__name__, kwargs_run)
+                    if export_data and p.exists():
+                        p.unlink(missing_ok=True)  # force recompute when export_data is ticked
+
                     t, y = load_or_compute_metric_cached(
                         base_dir=base_dir,
                         run_folder=run_name,
@@ -2567,6 +2579,7 @@ elif plot_mode == "Multiple plots":
                         fy=fy,
                         metric_func=detect_crystals_over_time,
                         metric_kwargs=kwargs_run,
+                        force_recompute=export_data,
                     )
 
                     series_kind.append({
@@ -2592,7 +2605,7 @@ elif plot_mode == "Multiple plots":
                         ax.plot(
                             x,
                             y_grid,
-                            label=f"{s['tkb']:g} Tkb (TauB {taub:g}) — {kind}",
+                            label = f"{s['tkb']:g} Tkb (TauB {taub:g}) — {kind}" if show_taub_in_legend else f"{s['tkb']:g} Tkb — {kind}"
                         )
                         # collect for post-analysis
 
@@ -2611,7 +2624,7 @@ elif plot_mode == "Multiple plots":
             st.session_state["multi_cached"] = True
 
             ax.set_title("Crystal metric")
-            ax.set_ylabel("Fraction")
+            ax.set_ylabel(f"{', '.join(crystal_types_multi)} Crystal Fraction")
             ax.set_xlabel("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")
             ax.grid(True, alpha=0.3)
             ax.legend()
@@ -2660,7 +2673,7 @@ elif plot_mode == "Multiple plots":
                         continue
 
                     kwargs_run = dict(skip=int(skip), normY=int(normY), TauB=float(tau_val))
-                    if metric_label in ["Number of clusters", "Average cluster size"]:
+                    if metric_label in ["Number of clusters", "Average cluster size","Area fraction","Bond orientational order", "Detect crystals", "Radius of gyration"]:
                         kwargs_run["eps"] = float(cluster_eps_multi)
                         kwargs_run["min_samples"] = int(cluster_min_samples_multi)
                         kwargs_run["min_cluster_size"] = int(cluster_min_cluster_size_multi)
@@ -2671,6 +2684,7 @@ elif plot_mode == "Multiple plots":
                         fy=fy,
                         metric_func=metric_func,
                         metric_kwargs=kwargs_run,
+                        force_recompute=export_data,
                     )
 
                     # Save just y (no time)
@@ -2714,7 +2728,7 @@ elif plot_mode == "Multiple plots":
             for c in post_curves:
                 ax.plot(
                     c["x"], c["y"],
-                    label=f"{c['tkb']:g} Tkb (TauB {c['taub']:g}) — {c.get('kind', '')}"
+                    label=f"{c['tkb']:g} Tkb (TauB {c['taub']:g})" if show_taub_in_legend else f"{c['tkb']:g} Tkb"
                 )
 
             ax.relim()
@@ -2722,7 +2736,7 @@ elif plot_mode == "Multiple plots":
             ax.set_title(default_ylabel)
             ylabel_plot = default_ylabel
             if y_unit_multi.strip():
-                ylabel_plot = f"{default_ylabel} [{y_unit_multi.strip()}]"
+                ylabel_plot = f"{y_unit_multi.strip()}"
             ax.set_ylabel(ylabel_plot)
             # log/linear scale
             if y_scale_multi == "Log":
@@ -2824,7 +2838,7 @@ elif plot_mode == "Multiple plots":
                 ax.plot(
                     x,
                     y_grid,
-                    label=f"{s['tkb']:g} Tkb (TauB {taub:g})",
+                    label = f"{s['tkb']:g} Tkb (TauB {taub:g})" if show_taub_in_legend else f"{s['tkb']:g} Tkb",
                     color=color_for_tkb(s["tkb"]),
                 )
                 # collect for post-analysis
@@ -2845,7 +2859,7 @@ elif plot_mode == "Multiple plots":
         ax.set_title(default_ylabel)
         ylabel_plot = default_ylabel
         if y_unit_multi.strip():
-            ylabel_plot = f"{default_ylabel} [{y_unit_multi.strip()}]"
+            ylabel_plot = f"{y_unit_multi.strip()}"
         # log/linear scale
         if y_scale_multi == "Log":
             # guard: log needs y>0
@@ -2923,6 +2937,7 @@ elif plot_mode == "Function mixer":
     cluster_min_samples_multi = ui["cluster_min_samples"]
     cluster_min_cluster_size_multi = ui["cluster_min_cluster_size"]
     legend_on_multi = ui["legend_on"]
+    show_taub_in_legend = ui["show_taub_in_legend"]
     legend_fontsize_multi = ui["legend_fontsize"]
     axis_fontsize_multi = ui["axis_fontsize"]
     title_on_multi = ui["title_on"]
@@ -2995,7 +3010,7 @@ elif plot_mode == "Function mixer":
         key="expr_calc_title",
     )
 
-    plot_expr = st.button("Plot derived (auto-load/compute)", key="expr_calc_plot")
+    plot_expr = st.button("Plot", key="expr_calc_plot")
 
     st.caption("Allowed functions: " + ", ".join(sorted(_ALLOWED_FUNCS.keys())))
 
@@ -3011,6 +3026,11 @@ elif plot_mode == "Function mixer":
             ax.plot(c["x"], c["y"], label=c["run"])
 
         ax.set_title(meta.get("title", "Derived expression"))
+        title = meta.get("title", "Derived expression")
+        ylabel_plot = title
+        if y_unit_multi.strip():
+            ylabel_plot = f"{title} [{y_unit_multi.strip()}]"
+        ax.set_ylabel(ylabel_plot)
 
         if meta.get("plot_fft", False):
             ax.set_xlabel("Frequency (Hz)")
@@ -3064,7 +3084,7 @@ elif plot_mode == "Function mixer":
         funcB, _ = metric_map[mB_label]
 
         extraA = {}
-        if mA_label in ["Number of clusters", "Average cluster size"]:
+        if mA_label in ["Number of clusters", "Average cluster size","Bond orientational order", "Detect crystals", "Radius of gyration"]:
             extraA.update({
                 "eps": float(cluster_eps_multi),
                 "min_samples": int(cluster_min_samples_multi),
@@ -3074,7 +3094,7 @@ elif plot_mode == "Function mixer":
             extraA["type"] = crystal_type_A
 
         extraB = {}
-        if mB_label in ["Number of clusters", "Average cluster size"]:
+        if mB_label in ["Number of clusters", "Average cluster size","Bond orientational order", "Detect crystals", "Radius of gyration"]:
             extraB.update({
                 "eps": float(cluster_eps_multi),
                 "min_samples": int(cluster_min_samples_multi),
@@ -3197,7 +3217,7 @@ elif plot_mode == "Function mixer":
             else:
                 x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
 
-            ax.plot(x, y_out, label=run_name)
+            ax.plot(x, y_out, label = f"{a_run['tkb']:g} Tkb (TauB {taub_a:g})" if show_taub_in_legend else f"{a_run['tkb']:g} Tkb")
 
             post_curves.append({
                 "run": run_name,
@@ -3218,7 +3238,11 @@ elif plot_mode == "Function mixer":
             })
 
         ax.set_title(calc_title)
-
+        # y-label for mixer (expression)
+        ylabel_plot = calc_title
+        if y_unit_multi.strip():
+            ylabel_plot = f"{y_unit_multi.strip()}"
+        ax.set_ylabel(ylabel_plot)
 
         # ✅ overwrite cache with ALL curves
         st.session_state["post_curves_mixer"] = post_curves
@@ -3872,7 +3896,7 @@ elif plot_mode == "Summary plots":
 
     # if metric is cluster-based, force recompute branch params (same idea as calculator fix)
     # easiest: just overwrite series by recomputing with params if needed
-    if metric_label in ["Number of clusters", "Average cluster size"]:
+    if metric_label in ["Number of clusters", "Average cluster size","Area fraction","Bond orientational order", "Detect crystals", "Radius of gyration"]:
         # recompute with params (and ignore old cached, per your earlier choice)
         series = []
         for folder_path, tkb_val, tau_val in selected_runs:
@@ -3896,6 +3920,7 @@ elif plot_mode == "Summary plots":
                 fy=fy,
                 metric_func=metric_func,
                 metric_kwargs=kwargs_run,
+                force_recompute=export_data,
             )
             series.append({"run": run_name, "tkb": float(tkb_val), "taub": float(tau_val), "y": np.asarray(y, float)})
 

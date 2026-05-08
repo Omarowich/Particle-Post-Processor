@@ -4,9 +4,12 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="aded post analyiss for summary plots.&#10;&#10;need to fix the locust function drawer">
+    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="rearanged some UI stuff">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/app.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/area_fraction_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/area_fraction_over_time.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/rg_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/rg_over_time.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/track_crystal_formation_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/track_crystal_formation_over_time.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -51,6 +54,7 @@
   &quot;keyToString&quot;: {
     &quot;Python.area_fraction_over_time.executor&quot;: &quot;Run&quot;,
     &quot;Python.cluster_post_processor.executor&quot;: &quot;Run&quot;,
+    &quot;Python.track_crystal_formation_over_time.executor&quot;: &quot;Run&quot;,
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;main&quot;,
@@ -64,7 +68,7 @@
     &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
 }</component>
-  <component name="RunManager" selected="Python.area_fraction_over_time">
+  <component name="RunManager" selected="Python.track_crystal_formation_over_time">
     <configuration name="area_fraction_over_time" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="Particle Post Processor and Analyzer" />
       <option name="ENV_FILES" value="" />
@@ -111,8 +115,32 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
+    <configuration name="track_crystal_formation_over_time" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="Particle Post Processor and Analyzer" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/track_crystal_formation_over_time.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="Python.track_crystal_formation_over_time" />
         <item itemvalue="Python.area_fraction_over_time" />
         <item itemvalue="Python.cluster_post_processor" />
       </list>
@@ -150,7 +178,17 @@
       <workItem from="1766503830284" duration="12244000" />
       <workItem from="1766523758876" duration="1743000" />
       <workItem from="1766529491452" duration="5161000" />
-      <workItem from="1766535879691" duration="24523000" />
+      <workItem from="1766535879691" duration="25835000" />
+      <workItem from="1766739579216" duration="1866000" />
+      <workItem from="1768393863741" duration="412000" />
+      <workItem from="1768706976531" duration="614000" />
+      <workItem from="1768775579048" duration="2417000" />
+      <workItem from="1771349535075" duration="141000" />
+      <workItem from="1774452989756" duration="123000" />
+      <workItem from="1777995934774" duration="955000" />
+      <workItem from="1777996970747" duration="611000" />
+      <workItem from="1777998043736" duration="7616000" />
+      <workItem from="1778197769640" duration="1958000" />
     </task>
     <task id="LOCAL-00001" summary="fixed some import errors">
       <option name="closed" value="true" />
@@ -256,7 +294,15 @@
       <option name="project" value="LOCAL" />
       <updated>1766691163094</updated>
     </task>
-    <option name="localTasksCounter" value="14" />
+    <task id="LOCAL-00014" summary="rearanged some UI stuff">
+      <option name="closed" value="true" />
+      <created>1766693866229</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1766693866229</updated>
+    </task>
+    <option name="localTasksCounter" value="15" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -285,7 +331,8 @@
     <MESSAGE value="fixed some color issues" />
     <MESSAGE value="Major Bug fixes for crystal.&#10;&#10;and Also startedto clean up the code.&#10;&#10;put function mixer in seperate window apart from multi plot." />
     <MESSAGE value="aded post analyiss for summary plots.&#10;&#10;need to fix the locust function drawer" />
-    <option name="LAST_COMMIT_MESSAGE" value="aded post analyiss for summary plots.&#10;&#10;need to fix the locust function drawer" />
+    <MESSAGE value="rearanged some UI stuff" />
+    <option name="LAST_COMMIT_MESSAGE" value="rearanged some UI stuff" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -299,6 +346,7 @@
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/Particle_Post_Processor_and_Analyzer$cluster_post_processor.coverage" NAME="cluster_post_processor Coverage Results" MODIFIED="1766535949214" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/Particle_Post_Processor_and_Analyzer$area_fraction_over_time.coverage" NAME="area_fraction_over_time Coverage Results" MODIFIED="1766536333367" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/Particle_Post_Processor_and_Analyzer$area_fraction_over_time.coverage" NAME="area_fraction_over_time Coverage Results" MODIFIED="1766740705164" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/Particle_Post_Processor_and_Analyzer$track_crystal_formation_over_time.coverage" NAME="track_crystal_formation_over_time Coverage Results" MODIFIED="1778000602758" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>
