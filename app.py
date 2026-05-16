@@ -31,6 +31,7 @@ from plot_bond_orientation_at_time_step import (
 from plot_crystal_at_timestep import plot_crystals_at_timestep
 from plot_fourier_analysis import fourier_of_metric
 from plot_together_tkb_func import plots_together
+from radial_distribution_function import rdf_over_time
 from rg_over_time import average_rg_over_time
 from track_cluster_movement import track_cluster_centroids
 from track_crystal_formation_over_time import (
@@ -1145,6 +1146,14 @@ def sidebar_runs_common_ui(
 
         # cluster params
         st.subheader("Cluster metrics parameters")
+
+        area_fraction_mode = st.selectbox(
+            "Cluster detection mode",
+            ["per cluster", "global"],
+            index=0,
+            key=f"{prefix}_area_fraction_mode",
+        )
+
         cluster_eps = st.number_input(
             "DBSCAN eps",
             value=3.5,
@@ -1164,6 +1173,15 @@ def sidebar_runs_common_ui(
             step=1,
             min_value=1,
             key=f"{prefix}_cluster_min_cluster_size",
+        )
+
+
+        st.subheader("RDF parameters")
+        rdf_r_max = st.number_input(
+            "RDF r_max (µm)", value=10.0, step=0.5, key=f"{prefix}_rdf_rmax"
+        )
+        rdf_dr = st.number_input(
+            "RDF dr (bin width, µm)", value=0.1, step=0.05, format="%.3f", key=f"{prefix}_rdf_dr"
         )
 
 
@@ -1213,11 +1231,13 @@ def sidebar_runs_common_ui(
     with c22:
         y_unit = st.text_input(
             "Unit label",
-            value="μm",
             placeholder="μm, mm, 1/s, …",
             key=f"{prefix}_y_unit",
             help="This is only the label shown on the plot (does not change the data).",
         )
+    y_range_custom = st.sidebar.checkbox("Custom Y range", value=False, key=f"{prefix}_y_range_custom")
+    y_range_min = st.sidebar.number_input("Y min", value=0.0, key=f"{prefix}_y_range_min") if y_range_custom else None
+    y_range_max = st.sidebar.number_input("Y max", value=1.0, key=f"{prefix}_y_range_max") if y_range_custom else None
 
     # export / recompute
     st.sidebar.header("Caching / export")
@@ -1257,6 +1277,12 @@ def sidebar_runs_common_ui(
         "metrics_selected": metrics_selected,
         "y_scale": y_scale,
         "y_unit": y_unit,
+        "rdf_r_max": float(rdf_r_max),
+        "rdf_dr": float(rdf_dr),
+        "y_range_custom": y_range_custom,
+        "y_range_min": y_range_min,
+        "y_range_max": y_range_max,
+        "area_fraction_mode": area_fraction_mode,
 
     }
     return out
@@ -2026,6 +2052,7 @@ def make_snapshot_phase_panel(
                 label = rf"{int(tkb) if tkb.is_integer() else tkb}$T_{{kB}}$"
                 ax.set_ylabel(label, fontsize=14)
 
+
     # --- optional shared colorbar on the side ---
     if colorbar_cmap is not None:
         from matplotlib.cm import ScalarMappable
@@ -2131,6 +2158,7 @@ metric_options = [
     "Bond orientational order",
     "Detect crystals",
     "Particle distance",
+    "Radial distribution function",
     "Median total path distance",
     "Particle displacement (over time)",
     "Particle displacement (from initial)",
@@ -2149,6 +2177,7 @@ metric_map = {
     "Bond orientational order": (bond_orientational_order_over_time,"Bond orientational order",),
     "Detect crystals": (detect_crystals_over_time, "Crystal metric"),
     "Particle distance": (particle_distance_over_time, "Particle distance"),
+    "Radial distribution function":(rdf_over_time, "Radial distribution g(r)"),
     "Median total path distance": (median_total_path_distance_over_time,"Median path distance",),
     "Particle displacement (over time)": (particle_displacement_over_time,"Displacement"),
     "Particle displacement (from initial)": (particle_displacement_from_inintal_position_over_time,"Displacement from initial",),
@@ -2473,6 +2502,12 @@ elif plot_mode == "Multiple plots":
     export_data = ui["export_data"]
     export_dir = ui["export_dir"]
     TauB = ui["TauB"]
+    rdf_r_max = ui.get("rdf_r_max", 10.0)
+    rdf_dr = ui.get("rdf_dr", 0.1)
+    y_range_custom = ui.get("y_range_custom", False)
+    y_range_min = ui.get("y_range_min", None)
+    y_range_max = ui.get("y_range_max", None)
+    area_fraction_mode = ui["area_fraction_mode"]
 
 
 
@@ -2625,7 +2660,11 @@ elif plot_mode == "Multiple plots":
 
             ax.set_title("Crystal metric")
             ax.set_ylabel(f"{', '.join(crystal_types_multi)} Crystal Fraction")
-            ax.set_xlabel("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")
+            if y_range_custom and y_range_min is not None and y_range_max is not None:
+                ax.set_ylim(float(y_range_min), float(y_range_max))
+            ax.set_xlabel("r (µm)" if metric_label == "Radial distribution function" else (
+                "Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)"
+            ))
             ax.grid(True, alpha=0.3)
             ax.legend()
 
@@ -2677,6 +2716,10 @@ elif plot_mode == "Multiple plots":
                         kwargs_run["eps"] = float(cluster_eps_multi)
                         kwargs_run["min_samples"] = int(cluster_min_samples_multi)
                         kwargs_run["min_cluster_size"] = int(cluster_min_cluster_size_multi)
+                        kwargs_run["cluster_mode"] = area_fraction_mode
+                    if metric_label == "Radial distribution function":
+                        kwargs_run["r_max"] = float(rdf_r_max)
+                        kwargs_run["dr"] = float(rdf_dr)
                     t, y = load_or_compute_metric_cached(
                         base_dir=base_dir,
                         run_folder=run_name,
@@ -2749,8 +2792,12 @@ elif plot_mode == "Multiple plots":
                     ax.set_yscale("log")
             else:
                 ax.set_yscale("linear")
+            if y_range_custom and y_range_min is not None and y_range_max is not None:
+                ax.set_ylim(float(y_range_min), float(y_range_max))
 
-            ax.set_xlabel("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")
+            ax.set_xlabel("r (µm)" if metric_label == "Radial distribution function" else (
+                "Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)"
+            ))
             ax.grid(True, alpha=0.3)
             ax.legend()
 
@@ -2819,40 +2866,58 @@ elif plot_mode == "Multiple plots":
 
         post_curves = []  # define this once before the TauB grouping loop
         # Group by TauB so same-TauB runs share identical x-axis length
-        for taub in sorted({s["taub"] for s in series}):
-            group = [s for s in series if s["taub"] == taub]
-
-            # same-TauB runs should have same x-length:
-            n_points = max(len(s["y"]) for s in group)
-
-            # Create x grid (seconds)
-            t_end_sec = taub * 13.513
-            t_grid_sec = np.linspace(0.0, t_end_sec, n_points)
-
-            for s in group:
-                # resample y onto common length grid using index-based interpolation
-                y_raw = s["y"]
-                x_raw = np.linspace(0.0, t_end_sec, len(y_raw))
-                y_grid = np.interp(t_grid_sec, x_raw, y_raw, left=y_raw[0], right=y_raw[-1])
-
-                x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
+        if metric_label == "Radial distribution function":
+            for s in series:
+                x = np.linspace(0.0, rdf_r_max, len(s["y"]))
                 ax.plot(
-                    x,
-                    y_grid,
-                    label = f"{s['tkb']:g} Tkb (TauB {taub:g})" if show_taub_in_legend else f"{s['tkb']:g} Tkb",
+                    x, s["y"],
+                    label=f"{s['tkb']:g} Tkb (TauB {s['taub']:g})" if show_taub_in_legend else f"{s['tkb']:g} Tkb",
                     color=color_for_tkb(s["tkb"]),
                 )
-                # collect for post-analysis
-
-
-                # inside the loop where you have x and y_grid:
                 post_curves.append({
                     "run": s["run"],
                     "tkb": s["tkb"],
-                    "taub": taub,
+                    "taub": s["taub"],
                     "x": np.asarray(x, float),
-                    "y": np.asarray(y_grid, float),
+                    "y": np.asarray(s["y"], float),
                 })
+            st.session_state[f"post_curves_{metric_label}"] = post_curves
+            st.session_state["multi_cached"] = True
+        else:
+            for taub in sorted({s["taub"] for s in series}):
+                group = [s for s in series if s["taub"] == taub]
+
+                # same-TauB runs should have same x-length:
+                n_points = max(len(s["y"]) for s in group)
+
+                # Create x grid (seconds)
+                t_end_sec = taub * 13.513
+                t_grid_sec = np.linspace(0.0, t_end_sec, n_points)
+
+                for s in group:
+                    # resample y onto common length grid using index-based interpolation
+                    y_raw = s["y"]
+                    x_raw = np.linspace(0.0, t_end_sec, len(y_raw))
+                    y_grid = np.interp(t_grid_sec, x_raw, y_raw, left=y_raw[0], right=y_raw[-1])
+
+                    x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
+                    ax.plot(
+                        x,
+                        y_grid,
+                        label = f"{s['tkb']:g} Tkb (TauB {taub:g})" if show_taub_in_legend else f"{s['tkb']:g} Tkb",
+                        color=color_for_tkb(s["tkb"]),
+                    )
+                    # collect for post-analysis
+
+
+                    # inside the loop where you have x and y_grid:
+                    post_curves.append({
+                        "run": s["run"],
+                        "tkb": s["tkb"],
+                        "taub": taub,
+                        "x": np.asarray(x, float),
+                        "y": np.asarray(y_grid, float),
+                    })
 
         # after plotting + after post_curves is populated
         st.session_state[f"post_curves_{metric_label}"] = post_curves
@@ -2872,7 +2937,11 @@ elif plot_mode == "Multiple plots":
         else:
             ax.set_yscale("linear")
         ax.set_ylabel(ylabel_plot)
-        ax.set_xlabel("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")
+        if y_range_custom and y_range_min is not None and y_range_max is not None:
+            ax.set_ylim(float(y_range_min), float(y_range_max))
+        ax.set_xlabel("r (µm)" if metric_label == "Radial distribution function" else (
+            "Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)"
+        ))
         ax.grid(True, alpha=0.3)
         ax.legend()
 
@@ -2948,6 +3017,12 @@ elif plot_mode == "Function mixer":
     y_unit_multi = ui.get("y_unit", "")
     export_data = ui["export_data"]
     export_dir = ui["export_dir"]
+    rdf_r_max = ui.get("rdf_r_max", 10.0)
+    rdf_dr = ui.get("rdf_dr", 0.1)
+    y_range_custom = ui.get("y_range_custom", False)
+    y_range_min = ui.get("y_range_min", None)
+    y_range_max = ui.get("y_range_max", None)
+    area_fraction_mode = ui["area_fraction_mode"]
 
     st.markdown("---")
     st.subheader("🧮 Function Mixer")
@@ -3094,6 +3169,11 @@ elif plot_mode == "Function mixer":
         if mA_label == "Detect crystals" and crystal_type_A is not None:
             extraA["type"] = crystal_type_A
 
+        if mA_label == "Area fraction":
+            extraA["cluster_mode"] = area_fraction_mode
+
+
+
         extraB = {}
         if mB_label in ["Number of clusters", "Average cluster size","Bond orientational order", "Detect crystals", "Radius of gyration"]:
             extraB.update({
@@ -3103,6 +3183,9 @@ elif plot_mode == "Function mixer":
             })
         if mB_label == "Detect crystals" and crystal_type_B is not None:
             extraB["type"] = crystal_type_B
+
+        if mB_label == "Area fraction":
+            extraB["cluster_mode"] = area_fraction_mode
 
         metric_label_A = mA_label
         if mA_label == "Detect crystals" and crystal_type_A:

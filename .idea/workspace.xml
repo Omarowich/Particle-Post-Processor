@@ -4,12 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="rearanged some UI stuff">
+    <list default="true" id="e6fc9473-b69e-4a57-b568-5964a4826d16" name="Changes" comment="some base functions updated and legend">
+      <change afterPath="$PROJECT_DIR$/radial_distribution_function.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/app.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/area_fraction_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/area_fraction_over_time.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/rg_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/rg_over_time.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/track_crystal_formation_over_time.py" beforeDir="false" afterPath="$PROJECT_DIR$/track_crystal_formation_over_time.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -188,7 +186,10 @@
       <workItem from="1777995934774" duration="955000" />
       <workItem from="1777996970747" duration="611000" />
       <workItem from="1777998043736" duration="7616000" />
-      <workItem from="1778197769640" duration="1958000" />
+      <workItem from="1778197769640" duration="2142000" />
+      <workItem from="1778933189230" duration="2396000" />
+      <workItem from="1778937669918" duration="1648000" />
+      <workItem from="1778941830227" duration="3291000" />
     </task>
     <task id="LOCAL-00001" summary="fixed some import errors">
       <option name="closed" value="true" />
@@ -302,7 +303,23 @@
       <option name="project" value="LOCAL" />
       <updated>1766693866229</updated>
     </task>
-    <option name="localTasksCounter" value="15" />
+    <task id="LOCAL-00015" summary="some base functions updated and legend">
+      <option name="closed" value="true" />
+      <created>1778199845037</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1778199845037</updated>
+    </task>
+    <task id="LOCAL-00016" summary="some base functions updated and legend">
+      <option name="closed" value="true" />
+      <created>1778199910100</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1778199910100</updated>
+    </task>
+    <option name="localTasksCounter" value="17" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -332,7 +349,8 @@
     <MESSAGE value="Major Bug fixes for crystal.&#10;&#10;and Also startedto clean up the code.&#10;&#10;put function mixer in seperate window apart from multi plot." />
     <MESSAGE value="aded post analyiss for summary plots.&#10;&#10;need to fix the locust function drawer" />
     <MESSAGE value="rearanged some UI stuff" />
-    <option name="LAST_COMMIT_MESSAGE" value="rearanged some UI stuff" />
+    <MESSAGE value="some base functions updated and legend" />
+    <option name="LAST_COMMIT_MESSAGE" value="some base functions updated and legend" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
