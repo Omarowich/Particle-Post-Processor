@@ -1187,19 +1187,21 @@ def sidebar_runs_common_ui(
 
     # styling
     st.sidebar.header("Styling")
-    legend_on = st.sidebar.checkbox("Show legend", value=True, key=f"{prefix}_legend_on")
-    show_taub_in_legend = st.sidebar.checkbox("Show TauB in legend", value=False, key="multi_show_taub")
-    legend_fontsize = st.sidebar.number_input(
-        "Legend font size", value=16, min_value=1, max_value=40, key=f"{prefix}_legend_fs"
-    )
-    axis_fontsize = st.sidebar.number_input(
-        "Axis label/tick font size", value=18, min_value=1, max_value=40, key=f"{prefix}_axis_fs"
-    )
-    title_on = st.sidebar.checkbox("Show title", value=True, key=f"{prefix}_title_on")
-    title_fontsize = st.sidebar.number_input(
-        "Title font size", value=20, min_value=1, max_value=60, key=f"{prefix}_title_fs"
-    )
-
+    c_left, c_right = st.sidebar.columns([1, 1])
+    with c_left:
+        legend_on = st.checkbox("Show legend", value=True, key=f"{prefix}_legend_on")
+        show_taub_in_legend = st.checkbox("Show TauB in legend", value=False, key="multi_show_taub")
+        title_on = st.checkbox("Show title", value=False, key=f"{prefix}_title_on")
+    with c_right:
+        legend_fontsize = st.number_input(
+            "Legend font size", value=16, min_value=1, max_value=40, key=f"{prefix}_legend_fs"
+        )
+        axis_fontsize = st.number_input(
+            "Axis font size", value=18, min_value=1, max_value=40, key=f"{prefix}_axis_fs"
+        )
+        title_fontsize = st.number_input(
+            "Title font size", value=20, min_value=1, max_value=60, key=f"{prefix}_title_fs"
+        )
 
     # x-axis mode
     st.sidebar.subheader("X-Axis")
@@ -1207,7 +1209,7 @@ def sidebar_runs_common_ui(
     with c11:
         x_axis_mode = st.radio(
             "X-axis units",
-            ["Seconds", "Brownian time τ_B"],
+            ["Brownian time τ_B", "Seconds"],
             key=f"{prefix}_xaxis_mode",
         )
     with c12:
@@ -2093,63 +2095,63 @@ source_root = st.sidebar.text_input(
 source_root = source_root.strip().strip('"').strip("'")
 
 # ========== STEP 0.5: Global saving options ==========
-st.sidebar.header("0.5 Output saving")
-save_plots = st.sidebar.checkbox(
-    "Save all generated plots to folder", value=False, key="save_plots"
-)
-output_dir = st.sidebar.text_input(
-    "Output folder path (for saving plots):",
-    value="",
-    key="output_dir",
-)
-
-# ========== EXTRA: PowerPoint export (collapsible, runs before st.stop) ==========
-with st.sidebar.expander("📊 PowerPoint export (from existing PNGs)", expanded=False):
-    images_root_str = st.text_input(
-        "Image root (folder with Tkb_* subfolders & .png plots):",
+with st.sidebar.expander("0.5 Output saving", expanded=False):
+    save_plots = st.checkbox(
+        "Save all generated plots to folder", value=False, key="save_plots"
+    )
+    output_dir = st.text_input(
+        "Output folder path (for saving plots):",
         value="",
-        key="pptx_images_root",
+        key="output_dir",
     )
 
-    cols_pptx = st.number_input(
-        "Number of columns per slide",
-        value=4,
-        min_value=1,
-        max_value=10,
-        step=1,
-        key="pptx_cols",
-    )
+    # ========== EXTRA: PowerPoint export (collapsible, nested inside the above) ==========
+    with st.expander("📊 PowerPoint export (from existing PNGs)", expanded=False):
+        images_root_str = st.text_input(
+            "Image root (folder with Tkb_* subfolders & .png plots):",
+            value="",
+            key="pptx_images_root",
+        )
 
-    custom_pptx_name = st.text_input(
-        "Output PPTX file name:",
-        value="plots_by_type_Tkb.pptx",
-        key="pptx_name",
-    )
+        cols_pptx = st.number_input(
+            "Number of columns per slide",
+            value=4,
+            min_value=1,
+            max_value=10,
+            step=1,
+            key="pptx_cols",
+        )
 
-    run_pptx = st.button("Build PPTX", key="run_pptx")
+        custom_pptx_name = st.text_input(
+            "Output PPTX file name:",
+            value="plots_by_type_Tkb.pptx",
+            key="pptx_name",
+        )
 
-    if run_pptx:
-        try:
-            img_root = Path(images_root_str.strip().strip('"').strip("'"))
-            if not img_root.is_dir():
-                st.error(f"Image root is not a folder: {img_root}")
-            else:
-                out_path = img_root / custom_pptx_name if custom_pptx_name else None
-                result_path = build_pptx_from_images(
-                    images_root=img_root,
-                    output_pptx=out_path,
-                    cols=int(cols_pptx),
-                )
-                st.success(f"✅ PPTX created: `{result_path}`")
-        except Exception as e:
-            st.error(f"Error while building PPTX: {e}")
+        run_pptx = st.button("Build PPTX", key="run_pptx")
 
+        if run_pptx:
+            try:
+                img_root = Path(images_root_str.strip().strip('"').strip("'"))
+                if not img_root.is_dir():
+                    st.error(f"Image root is not a folder: {img_root}")
+                else:
+                    out_path = img_root / custom_pptx_name if custom_pptx_name else None
+                    result_path = build_pptx_from_images(
+                        images_root=img_root,
+                        output_pptx=out_path,
+                        cols=int(cols_pptx),
+                    )
+                    st.success(f"✅ PPTX created: `{result_path}`")
+            except Exception as e:
+                st.error(f"Error while building PPTX: {e}")
 # ========== STEP 1: Output type ==========
 st.sidebar.header("1. Output type")
 plot_mode = st.sidebar.radio(
     "Select output type:",
     ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram"],
     key="plot_mode",
+    index=1,
 )
 
 metric_options = [
@@ -2267,7 +2269,7 @@ if plot_mode == "Single plot":
         key="axis_fs_single",
     )
     title_on_single = st.sidebar.checkbox(
-        "Show title", value=True, key="title_on_single"
+        "Show title", value=False, key="title_on_single"
     )
     title_fontsize_single = st.sidebar.number_input(
         "Title font size", value=20, min_value=1, max_value=60, key="title_fs_single"
