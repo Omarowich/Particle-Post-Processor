@@ -292,7 +292,7 @@ def post_analysis_block_generic(
         ax2.set_title("Post-analysis (summary sweep)")
         ax2.set_ylabel(ylabel)
         ax2.set_xlabel(xlabel)
-        ax2.grid(True, alpha=0.3)
+        apply_grid(ax2, show_grid)
         ax2.legend()
 
         fig2 = plt.gcf()
@@ -322,6 +322,7 @@ def post_analysis_block(
     axis_fontsize=16,
     title_on=True,
     title_fontsize=18,
+    show_grid=False,
 ):
     """
     curves: list of dicts with at least:
@@ -498,7 +499,7 @@ def post_analysis_block(
         ax2.set_title(f"")
         ax2.set_ylabel(ylabel)
         ax2.set_xlabel("Time (τB)" if x_axis_mode == "Brownian time τ_B" else "Time (s)")
-        ax2.grid(True, alpha=0.3)
+        apply_grid(ax2, show_grid)
         ax2.legend()
 
         fig2 = plt.gcf()
@@ -1149,7 +1150,7 @@ def sidebar_runs_common_ui(
 
         area_fraction_mode = st.selectbox(
             "Cluster detection mode",
-            ["per cluster", "global"],
+            ["per_cluster", "global"],
             index=0,
             key=f"{prefix}_area_fraction_mode",
         )
@@ -1192,6 +1193,9 @@ def sidebar_runs_common_ui(
         legend_on = st.checkbox("Show legend", value=True, key=f"{prefix}_legend_on")
         show_taub_in_legend = st.checkbox("Show TauB in legend", value=False, key="multi_show_taub")
         title_on = st.checkbox("Show title", value=False, key=f"{prefix}_title_on")
+        show_ylabel = st.checkbox("Show Y axis label", value=False, key=f"{prefix}_show_ylabel")
+        show_xlabel = st.checkbox("Show X axis label", value=False, key=f"{prefix}_show_xlabel")
+        show_grid = st.checkbox("Show grid", value=False, key=f"{prefix}_show_grid")
     with c_right:
         legend_fontsize = st.number_input(
             "Legend font size", value=16, min_value=1, max_value=40, key=f"{prefix}_legend_fs"
@@ -1285,6 +1289,9 @@ def sidebar_runs_common_ui(
         "y_range_min": y_range_min,
         "y_range_max": y_range_max,
         "area_fraction_mode": area_fraction_mode,
+        "show_ylabel": show_ylabel,
+        "show_xlabel": show_xlabel,
+        "show_grid": show_grid,
 
     }
     return out
@@ -1821,6 +1828,13 @@ def apply_global_styling(
                     text.set_fontsize(legend_fontsize)
 
 
+
+def apply_grid(ax, show_grid: bool):
+    if show_grid:
+        ax.grid(True, which="major", alpha=0.3)
+    else:
+        ax.grid(False, which="both")
+        ax.minorticks_off()
 # ---------------------------------------------------------------------
 # Helper: slugify for filenames + save figure if requested
 # ---------------------------------------------------------------------
@@ -2510,6 +2524,9 @@ elif plot_mode == "Multiple plots":
     y_range_min = ui.get("y_range_min", None)
     y_range_max = ui.get("y_range_max", None)
     area_fraction_mode = ui["area_fraction_mode"]
+    show_ylabel = ui.get("show_ylabel", False)
+    show_xlabel = ui.get("show_xlabel", True)
+    show_grid = ui.get("show_grid", True)
 
 
 
@@ -2528,18 +2545,18 @@ elif plot_mode == "Multiple plots":
         with col1:
             color_start_multi = st.sidebar.color_picker(
                 "Start",
-                value="#000000",
+                value="#D3D3D3",
                 key="multi_color_start",
             )
         with col2:
             color_end_multi = st.sidebar.color_picker(
                 "End",
-                value="#CCCCCC",
+                value="#000000",
                 key="multi_color_end",
             )
     else:
-        color_start_multi = "#000000"
-        color_end_multi = "#CCCCCC"
+        color_start_multi = "#D3D3D3"
+        color_end_multi = "#000000"
 
 
     run = st.sidebar.button("▶ Run multiple-plot routine", key="run_multi")
@@ -2574,6 +2591,34 @@ elif plot_mode == "Multiple plots":
         st.write(f"- {txt}")
 
     metric_kwargs = dict(TauB=TauB, skip=skip, normY=int(normY))
+
+    # Color handling (optional): gradient over selected-run order, NOT TkB value
+    use_gradient = (color_mode_multi == "Gradient over TkB")
+    cmap = None
+    tkb_to_color = {}
+
+    if use_gradient:
+        import matplotlib.colors as mcolors
+
+        cmap = mcolors.LinearSegmentedColormap.from_list(
+            "tkb_grad", [color_start_multi, color_end_multi]
+        )
+
+        # Sort selected TkB values, then space colors evenly by index
+        tkbs_sorted = sorted({float(r[1]) for r in selected_runs})
+
+        if len(tkbs_sorted) == 1:
+            tkb_to_color[tkbs_sorted[0]] = cmap(0.5)
+        else:
+            for i, tkb in enumerate(tkbs_sorted):
+                frac = i / (len(tkbs_sorted) - 1)
+                tkb_to_color[tkb] = cmap(frac)
+
+
+    def color_for_tkb(tkb):
+        if not use_gradient:
+            return None
+        return tkb_to_color.get(float(tkb), None)
 
     # ----- RUN ALL SELECTED METRICS -----
     for metric_label in metrics_selected:
@@ -2642,7 +2687,8 @@ elif plot_mode == "Multiple plots":
                         ax.plot(
                             x,
                             y_grid,
-                            label = f"{s['tkb']:g} Tkb (TauB {taub:g}) — {kind}" if show_taub_in_legend else f"{s['tkb']:g} Tkb — {kind}"
+                            label = f"{s['tkb']:g} Tkb (TauB {taub:g}) — {kind}" if show_taub_in_legend else f"{s['tkb']:g} Tkb — {kind}",
+                            color = color_for_tkb(s["tkb"]),
                         )
                         # collect for post-analysis
 
@@ -2661,13 +2707,13 @@ elif plot_mode == "Multiple plots":
             st.session_state["multi_cached"] = True
 
             ax.set_title("Crystal metric")
-            ax.set_ylabel(f"{', '.join(crystal_types_multi)} Crystal Fraction")
+            ax.set_ylabel(f"{', '.join(crystal_types_multi)} Crystal Fraction" if show_ylabel else "")
             if y_range_custom and y_range_min is not None and y_range_max is not None:
                 ax.set_ylim(float(y_range_min), float(y_range_max))
-            ax.set_xlabel("r (µm)" if metric_label == "Radial distribution function" else (
+            ax.set_xlabel(("r (µm)" if metric_label == "Radial distribution function" else (
                 "Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)"
-            ))
-            ax.grid(True, alpha=0.3)
+            ))if show_xlabel else "")
+            apply_grid(ax, show_grid)
             ax.legend()
 
             fig = plt.gcf()
@@ -2783,7 +2829,7 @@ elif plot_mode == "Multiple plots":
             ylabel_plot = default_ylabel
             if y_unit_multi.strip():
                 ylabel_plot = f"{y_unit_multi.strip()}"
-            ax.set_ylabel(ylabel_plot)
+            ax.set_ylabel(ylabel_plot if show_ylabel else "")
             # log/linear scale
             if y_scale_multi == "Log":
                 # guard: log needs y>0
@@ -2797,10 +2843,10 @@ elif plot_mode == "Multiple plots":
             if y_range_custom and y_range_min is not None and y_range_max is not None:
                 ax.set_ylim(float(y_range_min), float(y_range_max))
 
-            ax.set_xlabel("r (µm)" if metric_label == "Radial distribution function" else (
+            ax.set_xlabel(("r (µm)" if metric_label == "Radial distribution function" else (
                 "Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)"
-            ))
-            ax.grid(True, alpha=0.3)
+            ))if show_xlabel else "")
+            apply_grid(ax, show_grid)
             ax.legend()
 
             fig = plt.gcf()
@@ -2826,6 +2872,7 @@ elif plot_mode == "Multiple plots":
                 axis_fontsize=axis_fontsize_multi,
                 title_on=title_on_multi,
                 title_fontsize=title_fontsize_multi,
+                show_grid=show_grid,
 )
             continue  # <-- skip compute/export/plot path when using cached curves
 
@@ -2846,24 +2893,7 @@ elif plot_mode == "Multiple plots":
         plt.figure()
         ax = plt.gca()
 
-        # Color handling (optional): gradient over TkB
-        use_gradient = (color_mode_multi == "Gradient over TkB")
-        if use_gradient:
-            import matplotlib.colors as mcolors
 
-            tkbs = np.array([s["tkb"] for s in series], dtype=float)
-            tmin, tmax = float(np.min(tkbs)), float(np.max(tkbs))
-            cmap = mcolors.LinearSegmentedColormap.from_list(
-                "tkb_grad", [color_start_multi, color_end_multi]
-            )
-
-
-        def color_for_tkb(tkb):
-            if not use_gradient:
-                return None
-            if tmax <= tmin:
-                return cmap(0.5)
-            return cmap((tkb - tmin) / (tmax - tmin))
 
 
         post_curves = []  # define this once before the TauB grouping loop
@@ -2938,13 +2968,15 @@ elif plot_mode == "Multiple plots":
                 ax.set_yscale("log")
         else:
             ax.set_yscale("linear")
-        ax.set_ylabel(ylabel_plot)
+        ax.set_ylabel(ylabel_plot if show_ylabel else "")
         if y_range_custom and y_range_min is not None and y_range_max is not None:
             ax.set_ylim(float(y_range_min), float(y_range_max))
-        ax.set_xlabel("r (µm)" if metric_label == "Radial distribution function" else (
-            "Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)"
-        ))
-        ax.grid(True, alpha=0.3)
+        ax.set_xlabel(
+            ("r (µm)" if metric_label == "Radial distribution function" else
+             ("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)"))
+            if show_xlabel else ""
+        )
+        apply_grid(ax, show_grid)
         ax.legend()
 
 
@@ -2974,6 +3006,7 @@ elif plot_mode == "Multiple plots":
             axis_fontsize=axis_fontsize_multi,
             title_on=title_on_multi,
             title_fontsize=title_fontsize_multi,
+            show_grid=show_grid,
         )
 
     st.success("Multiple-plot figure(s) done ✅")
@@ -3025,6 +3058,9 @@ elif plot_mode == "Function mixer":
     y_range_min = ui.get("y_range_min", None)
     y_range_max = ui.get("y_range_max", None)
     area_fraction_mode = ui["area_fraction_mode"]
+    show_ylabel = ui.get("show_ylabel", False)
+    show_xlabel = ui.get("show_xlabel", True)
+    show_grid = ui.get("show_grid", True)
 
     st.markdown("---")
     st.subheader("🧮 Function Mixer")
@@ -3108,14 +3144,14 @@ elif plot_mode == "Function mixer":
         ylabel_plot = title
         if y_unit_multi.strip():
             ylabel_plot = f"{title} [{y_unit_multi.strip()}]"
-        ax.set_ylabel(ylabel_plot)
+        ax.set_ylabel(ylabel_plot if show_ylabel else "")
 
         if meta.get("plot_fft", False):
-            ax.set_xlabel("Frequency (Hz)")
+            ax.set_xlabel("Frequency (Hz)" if show_xlabel else "")
         else:
-            ax.set_xlabel("Time (τB)" if meta.get("x_axis_mode") == "Brownian time τ_B" else "Time (s)")
+            ax.set_xlabel(("Time (τB)" if meta.get("x_axis_mode") == "Brownian time τ_B" else "Time (s)")if show_xlabel else "")
 
-        ax.grid(True, alpha=0.3)
+        apply_grid(ax, show_grid)
         ax.legend()
 
         fig = plt.gcf()
@@ -3126,6 +3162,7 @@ elif plot_mode == "Function mixer":
             axis_fontsize=axis_fontsize_multi,
             title_on=title_on_multi,
             title_fontsize=title_fontsize_multi,
+            show_grid=show_grid,
         )
         st.pyplot(fig)
 
@@ -3139,6 +3176,7 @@ elif plot_mode == "Function mixer":
             axis_fontsize=axis_fontsize_multi,
             title_on=title_on_multi,
             title_fontsize=title_fontsize_multi,
+            show_grid=show_grid,
         )
 
         st.stop()
@@ -3328,7 +3366,7 @@ elif plot_mode == "Function mixer":
         ylabel_plot = calc_title
         if y_unit_multi.strip():
             ylabel_plot = f"{y_unit_multi.strip()}"
-        ax.set_ylabel(ylabel_plot)
+        ax.set_ylabel(ylabel_plot if show_ylabel else "")
 
         # ✅ overwrite cache with ALL curves
         st.session_state["post_curves_mixer"] = post_curves
@@ -3340,11 +3378,11 @@ elif plot_mode == "Function mixer":
 
         # ✅ label axis correctly
         if plot_fft:
-            ax.set_xlabel("Frequency (Hz)")
+            ax.set_xlabel("Frequency (Hz)" if show_xlabel else "")
         else:
-            ax.set_xlabel("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")
+            ax.set_xlabel(("Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)")if show_xlabel else "")
 
-        ax.grid(True, alpha=0.3)
+        apply_grid(ax, show_grid)
         ax.legend()
 
         fig = plt.gcf()
@@ -3369,6 +3407,7 @@ elif plot_mode == "Function mixer":
             axis_fontsize=axis_fontsize_multi,
             title_on=title_on_multi,
             title_fontsize=title_fontsize_multi,
+            show_grid=show_grid,
         )
 
 
@@ -3842,6 +3881,12 @@ elif plot_mode == "Summary plots":
     # ---- common params ----
     with st.sidebar.expander("5. Common parameters", expanded=False):
 
+        cluster_mode_summary = st.selectbox(
+            "Cluster detection mode",
+            ["per_cluster", "global"],
+            index=0,
+            key="summary_cluster_mode",
+        )
         # cluster params
         st.subheader("Cluster metrics parameters")
         cluster_eps_summary = st.number_input(
@@ -3875,6 +3920,70 @@ elif plot_mode == "Summary plots":
     st.sidebar.header("7. Plot against")
     x_choice = st.sidebar.selectbox("X-axis:", ["TkB", "TauB"], key="summary_x_choice")
 
+
+    # ✅ ADD: Plot style and fitting options
+    st.sidebar.subheader("Plot style & fitting")
+
+    show_grid = st.sidebar.checkbox(
+        "Show grid",
+        value=False,
+        key="summary_show_grid",
+    )
+
+    plot_style = st.sidebar.radio(
+        "Plot style:",
+        ["Connected (lines + dots)", "Scatter only"],
+        key="summary_plot_style",
+    )
+
+    fit_function = st.sidebar.selectbox(
+        "Fit curve (optional):",
+        [
+            "None",
+            "Linear trend",
+            "Polynomial degree n",
+            "Robust linear trend",
+            "Saturating exponential decay",
+            "Inverse decay to plateau",
+            "Logarithmic decay",
+            "PCHIP smooth trend",
+            "Smoothing spline",
+        ],
+        key="summary_fit_func",
+    )
+    fit_scope = st.sidebar.radio(
+        "Fit scope:",
+        ["Fit each group separately", "Fit all points together"],
+        key="summary_fit_scope",
+    )
+
+    poly_degree = None
+    if fit_function == "Polynomial degree n":
+        poly_degree = st.sidebar.slider(
+            "Polynomial degree n:",
+            min_value=1,
+            max_value=8,
+            value=2,
+            step=1,
+            key="summary_poly_degree",
+        )
+
+    show_fit_quality = st.sidebar.checkbox(
+        "Show fit quality (R²)",
+        value=True,
+        key="summary_show_fit_quality",
+    )
+
+
+
+    if fit_function != "None":
+        fit_color = st.sidebar.color_picker(
+            "Fit curve color:",
+            value="#FF0000",
+            key="summary_fit_color",
+        )
+
+
     # caching behavior
     export_data = st.sidebar.checkbox("Recompute + overwrite saved run data", value=False, key="summary_recompute")
     export_dir = st.sidebar.text_input("Optional export folder (CSV of scalars)", value="", key="summary_export_dir")
@@ -3897,9 +4006,11 @@ elif plot_mode == "Summary plots":
     if (not run_summary) and have_cached:
         cache = cache_map[pa_key]
         curves = cache["curves"]
-        rows = cache.get("rows", None)  # we will store rows in cache (next step)
+        rows = cache.get("rows", None)
         x_choice = cache["x_choice"]
         xlabel_pa = cache["pa_xlabel"]
+        plot_style = cache.get("plot_style", "Connected (lines + dots)")
+        fit_function = cache.get("fit_function", "None")
 
         if cache is None:
             st.info("No cached summary yet. Click Run summary plot once.")
@@ -3907,7 +4018,6 @@ elif plot_mode == "Summary plots":
 
         label_mode = cache["label_mode"]
         label_fmt = (lambda ta: f"TauB {ta:g}") if label_mode == "TauB" else (lambda tk: f"TkB {tk:g}")
-
 
         plt.close("all")
         plt.figure()
@@ -3919,33 +4029,24 @@ elif plot_mode == "Summary plots":
 
         for g in sorted(set(group_key)):
             mask = group_key == g
-            ax.plot(xvals[mask], yvals[mask], marker="o", linestyle="-", label=label_fmt(g))
+            x_group = xvals[mask]
+            y_group = yvals[mask]
+
+            if plot_style == "Connected (lines + dots)":
+                ax.plot(x_group, y_group, marker="o", linestyle="-", label=label_fmt(g), linewidth=2, markersize=8)
+            else:
+                ax.scatter(x_group, y_group, label=label_fmt(g), s=50, alpha=1)
 
         ax.set_title(cache["title"])
         ax.set_xlabel(cache["xlabel"])
         ax.set_ylabel(cache["ylabel"])
-        ax.grid(True, alpha=0.3)
+        apply_grid(ax, show_grid)
         ax.legend()
 
         fig = plt.gcf()
         apply_global_styling(fig, legend_on=True, legend_fontsize=14, axis_fontsize=16, title_on=True,
                              title_fontsize=18)
         st.pyplot(fig)
-
-        post_analysis_block_generic(
-            key=pa_key,
-            curves=curves,
-            ylabel=f"{reducer}({metric_label})",
-            xlabel=xlabel_pa,
-            legend_on=True,
-            legend_fontsize=14,
-            axis_fontsize=16,
-            title_on=True,
-            title_fontsize=18,
-            sweep_rows=rows,
-            x_choice=x_choice,
-        )
-
         st.stop()
 
     # nothing cached and button not pressed → stop
@@ -3998,6 +4099,7 @@ elif plot_mode == "Summary plots":
                 eps=float(cluster_eps_summary),
                 min_samples=int(cluster_min_samples_summary),
                 min_cluster_size=int(cluster_min_cluster_size_summary),
+                cluster_mode=cluster_mode_summary,
             )
             t, y = load_or_compute_metric_cached(
                 base_dir=base_dir,
@@ -4081,6 +4183,7 @@ elif plot_mode == "Summary plots":
 
     yvals = np.array([r[3] for r in rows], float)
 
+
     # build curves (needed for knee + post-analysis)
     curves = []
     for g in sorted(set(group_key)):
@@ -4097,11 +4200,13 @@ elif plot_mode == "Summary plots":
         "title": f"{reducer}({metric_label}) vs {xlabel}",
         "label_mode": "TauB" if x_choice == "TkB" else "TkB",
         "curves": curves,
-        "rows": rows,  # ✅ ADD THIS
-        "x_choice": x_choice,  # ✅ ADD THIS
+        "rows": rows,
+        "x_choice": x_choice,
         "pa_key": pa_key,
         "pa_xlabel": xlabel_pa,
         "pa_ylabel": f"{reducer}({metric_label})",
+        "plot_style": plot_style,
+        "fit_function": fit_function,
     }
 
     # ----------------------------
@@ -4111,22 +4216,311 @@ elif plot_mode == "Summary plots":
     plt.figure()
     ax = plt.gca()
 
+
+    # ✅ Helper function for fitting
+    from scipy.optimize import curve_fit
+    from scipy.interpolate import UnivariateSpline
+    from scipy.stats import theilslopes
+    import numpy as np
+    from scipy.optimize import curve_fit
+    from scipy.interpolate import PchipInterpolator, UnivariateSpline
+
+
+
+
+
+    from scipy.optimize import curve_fit
+    from scipy.interpolate import PchipInterpolator, UnivariateSpline
+    from scipy.stats import theilslopes
+    import numpy as np
+
+
+    def _prepare_fit_xy(x_data, y_data):
+        x = np.asarray(x_data, float)
+        y = np.asarray(y_data, float)
+
+        valid = np.isfinite(x) & np.isfinite(y)
+
+
+        x = x[valid]
+        y = y[valid]
+
+        if len(x) < 2:
+            return None, None
+
+        order = np.argsort(x)
+        x = x[order]
+        y = y[order]
+
+        # Merge repeated x-values by averaging y-values
+        unique_x = []
+        unique_y = []
+
+        for xv in np.unique(x):
+            mask = x == xv
+            unique_x.append(xv)
+            unique_y.append(np.nanmean(y[mask]))
+
+        return np.asarray(unique_x, float), np.asarray(unique_y, float)
+
+
+    def _r2_score(y_true, y_pred):
+        y_true = np.asarray(y_true, float)
+        y_pred = np.asarray(y_pred, float)
+
+        ss_res = np.nansum((y_true - y_pred) ** 2)
+        ss_tot = np.nansum((y_true - np.nanmean(y_true)) ** 2)
+
+        if ss_tot == 0:
+            return np.nan
+
+        return 1.0 - ss_res / ss_tot
+
+
+    def fit_and_plot(
+            x_data,
+            y_data,
+            fit_type,
+            color,
+            ax,
+            label_suffix="",
+            poly_degree=None,
+            show_fit_quality=True,
+    ):
+        if fit_type == "None":
+            return
+
+        x_clean, y_clean = _prepare_fit_xy(
+            x_data,
+            y_data,
+        )
+
+        if x_clean is None or len(x_clean) < 2:
+            st.info(f"{fit_type} skipped {label_suffix}: not enough valid points.")
+            return
+
+        n_points = len(x_clean)
+
+        if np.min(x_clean) == np.max(x_clean):
+            st.info(f"{fit_type} skipped {label_suffix}: all x-values are identical.")
+            return
+
+        x_smooth = np.linspace(np.min(x_clean), np.max(x_clean), 300)
+
+        try:
+            if fit_type == "Linear trend":
+                coeffs = np.polyfit(x_clean, y_clean, 1)
+                y_fit = np.polyval(coeffs, x_smooth)
+                y_pred = np.polyval(coeffs, x_clean)
+                fit_name = "Linear"
+
+            elif fit_type == "Polynomial degree n":
+                degree = int(poly_degree or 2)
+
+                max_safe_degree = n_points - 2
+
+                if degree >= n_points:
+                    st.warning(
+                        f"Polynomial degree {degree} skipped {label_suffix}: "
+                        f"degree must be smaller than number of points ({n_points})."
+                    )
+                    return
+
+                if degree > max_safe_degree:
+                    st.warning(
+                        f"Polynomial degree {degree} may overfit {label_suffix}. "
+                        f"You have {n_points} points; safer degree is ≤ {max_safe_degree}."
+                    )
+
+                coeffs = np.polyfit(x_clean, y_clean, degree)
+                y_fit = np.polyval(coeffs, x_smooth)
+                y_pred = np.polyval(coeffs, x_clean)
+                fit_name = f"Poly n={degree}"
+
+            elif fit_type == "Robust linear trend":
+                if n_points < 3:
+                    st.info(f"{fit_type} skipped {label_suffix}: needs at least 3 points.")
+                    return
+
+                slope, intercept, _, _ = theilslopes(y_clean, x_clean)
+                y_fit = intercept + slope * x_smooth
+                y_pred = intercept + slope * x_clean
+                fit_name = "Robust linear"
+
+            elif fit_type == "Saturating exponential decay":
+                if n_points < 3:
+                    st.info(f"{fit_type} skipped {label_suffix}: needs at least 3 points.")
+                    return
+
+                def model(x, y_inf, A, k):
+                    return y_inf + A * np.exp(-k * x)
+
+                y_inf0 = float(np.nanmin(y_clean))
+                A0 = float(np.nanmax(y_clean) - np.nanmin(y_clean))
+                k0 = 1.0
+
+                popt, _ = curve_fit(
+                    model,
+                    x_clean,
+                    y_clean,
+                    p0=[y_inf0, A0, k0],
+                    bounds=([-np.inf, -np.inf, 0.0], [np.inf, np.inf, np.inf]),
+                    maxfev=50000,
+                )
+
+                y_fit = model(x_smooth, *popt)
+                y_pred = model(x_clean, *popt)
+                fit_name = "Saturating exp."
+
+            elif fit_type == "Inverse decay to plateau":
+                if n_points < 3:
+                    st.info(f"{fit_type} skipped {label_suffix}: needs at least 3 points.")
+                    return
+
+                def model(x, y_inf, A, x0):
+                    return y_inf + A / (x + x0)
+
+                y_inf0 = float(np.nanmin(y_clean))
+                A0 = float((np.nanmax(y_clean) - np.nanmin(y_clean)) * (np.nanmax(x_clean) + 1.0))
+                x0_0 = 1.0
+
+                popt, _ = curve_fit(
+                    model,
+                    x_clean,
+                    y_clean,
+                    p0=[y_inf0, A0, x0_0],
+                    bounds=([-np.inf, -np.inf, 1e-9], [np.inf, np.inf, np.inf]),
+                    maxfev=50000,
+                )
+
+                y_fit = model(x_smooth, *popt)
+                y_pred = model(x_clean, *popt)
+                fit_name = "Inverse decay"
+
+            elif fit_type == "Logarithmic decay":
+                if n_points < 3:
+                    st.info(f"{fit_type} skipped {label_suffix}: needs at least 3 points.")
+                    return
+
+                x_shift = x_clean - np.min(x_clean) + 1.0
+                x_smooth_shift = x_smooth - np.min(x_clean) + 1.0
+
+                coeffs = np.polyfit(np.log(x_shift), y_clean, 1)
+                y_fit = coeffs[1] + coeffs[0] * np.log(x_smooth_shift)
+                y_pred = coeffs[1] + coeffs[0] * np.log(x_shift)
+                fit_name = "Log decay"
+
+            elif fit_type == "PCHIP smooth trend":
+                if n_points < 2:
+                    st.info(f"{fit_type} skipped {label_suffix}: needs at least 2 points.")
+                    return
+
+                interpolator = PchipInterpolator(x_clean, y_clean)
+                y_fit = interpolator(x_smooth)
+                y_pred = interpolator(x_clean)
+                fit_name = "PCHIP"
+
+            elif fit_type == "Smoothing spline":
+                if n_points < 4:
+                    st.info(f"{fit_type} skipped {label_suffix}: needs at least 4 points.")
+                    return
+
+                s_val = 0.2 * n_points * np.nanvar(y_clean)
+                spline = UnivariateSpline(x_clean, y_clean, s=s_val)
+                y_fit = spline(x_smooth)
+                y_pred = spline(x_clean)
+                fit_name = "Spline"
+
+            else:
+                return
+
+            r2 = _r2_score(y_clean, y_pred)
+
+            if show_fit_quality and np.isfinite(r2):
+                label = f"{fit_name} {label_suffix}, R²={r2:.3f}"
+            else:
+                label = f"{fit_name} {label_suffix}"
+
+            ax.plot(
+                x_smooth,
+                y_fit,
+                color=color,
+                linestyle="--",
+                linewidth=2.5,
+                label=label,
+                alpha=0.9,
+            )
+
+        except Exception as e:
+            st.warning(f"{fit_type} failed {label_suffix}: {e}")
+
     # measured curves
     for g in sorted(set(group_key)):
         mask = group_key == g
-        ax.plot(xvals[mask], yvals[mask], marker="o", linestyle="-", label=label_fmt(g))
+        x_group = xvals[mask]
+        y_group = yvals[mask]
+        label_group = label_fmt(g)
 
+        order = np.argsort(x_group)
+        x_group = x_group[order]
+        y_group = y_group[order]
 
+        if plot_style == "Connected (lines + dots)":
+            ax.plot(
+                x_group,
+                y_group,
+                marker="o",
+                linestyle="-",
+                label=label_group,
+                linewidth=2,
+                markersize=8,
+            )
+        else:
+            ax.scatter(
+                x_group,
+                y_group,
+                label=label_group,
+                s=50,
+                alpha=1,
+            )
+
+        # fit each TauB / TkB group separately
+        if fit_function != "None" and fit_scope == "Fit each group separately":
+            fit_and_plot(
+                x_group,
+                y_group,
+                fit_function,
+                fit_color,
+                ax,
+                label_suffix=f"({label_group})",
+                poly_degree=poly_degree,
+                show_fit_quality=show_fit_quality,
+            )
+
+    # ✅ ADD THIS HERE: after the group loop, before finalize
+    if fit_function != "None" and fit_scope == "Fit all points together":
+        fit_and_plot(
+            xvals,
+            yvals,
+            fit_function,
+            fit_color,
+            ax,
+            label_suffix="(all data)",
+            poly_degree=poly_degree,
+            show_fit_quality=show_fit_quality,
+        )
 
     # finalize
     ax.set_title(f"{reducer}({metric_label}) vs {xlabel}")
     ax.set_xlabel(xlabel)
     ax.set_ylabel(f"{reducer}({metric_label})")
-    ax.grid(True, alpha=0.3)
+    apply_grid(ax, show_grid)
     ax.legend()
 
+
     fig = plt.gcf()
-    apply_global_styling(fig, legend_on=True, legend_fontsize=14, axis_fontsize=16, title_on=True, title_fontsize=18)
+    apply_global_styling(fig, legend_on=True, legend_fontsize=14, axis_fontsize=16, title_on=True,
+                         title_fontsize=18)
 
     # render plot at the TOP placeholder
     st.pyplot(fig)
@@ -4144,6 +4538,8 @@ elif plot_mode == "Summary plots":
         sweep_rows=rows,
         x_choice=x_choice,
     )
+
+    st.stop()
 
 # TODO: add plotly toogle
 # TODO: Fix  ########### LOCUS PLOT ######### in Phase-transition detection

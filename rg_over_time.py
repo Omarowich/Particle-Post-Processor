@@ -20,7 +20,7 @@ def get_clusters_dbscan(positions, eps=3.5, min_samples=3):
         clusters.append(cluster_indices)
     return clusters
 
-def average_rg_over_time(coordDynX, coordDynY, eps=10,min_samples=3,min_cluster_size=3, TauB=2.5, skip=1, normY=0):
+def average_rg_over_time(coordDynX, coordDynY, eps=10,min_samples=3,min_cluster_size=3, cluster_mode="per cluster", TauB=2.5, skip=1, normY=0):
     # Read particle data
     coordDynX = read_particle_data_csv(coordDynX)[skip::2, 1:][1:, :]
     coordDynY = read_particle_data_csv(coordDynY)[skip::2, 1:][1:, :]

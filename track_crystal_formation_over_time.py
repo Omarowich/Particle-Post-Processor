@@ -74,11 +74,11 @@ def detect_crystals_over_time(coordDynX, coordDynY, eps=3.043, min_samples=5,
         crystalline_fraction = np.sum(crystalline_types != "Other") / len(positions)
         other_fraction = np.sum(crystalline_types == "Other") / len(positions)
 
-        hexagonal_fractions.append(hexagonal_fraction)
-        square_fractions.append(square_fraction)
-        triangular_fractions.append(triangular_fraction)
-        crystalline_fractions.append(crystalline_fraction)
-        other_fractions.append(other_fraction)
+        hexagonal_fractions.append(hexagonal_fraction * 100)
+        square_fractions.append(square_fraction * 100)
+        triangular_fractions.append(triangular_fraction * 100)
+        crystalline_fractions.append(crystalline_fraction * 100)
+        other_fractions.append(other_fraction * 100)
 
         hexagonal_counts.append(np.sum(crystalline_types == "Hexagonal"))
         square_counts.append(np.sum(crystalline_types == "Square"))
@@ -111,7 +111,7 @@ def detect_crystals_over_time(coordDynX, coordDynY, eps=3.043, min_samples=5,
         plt.grid()
 
         if normY == 1:
-            plt.ylim(0, 1)
+            plt.ylim(0, 100)
 
         plt.show()
 
