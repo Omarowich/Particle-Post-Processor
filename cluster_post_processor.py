@@ -136,7 +136,7 @@ def analyze_clusters_over_time(
     return time_axis, n_clusters, avg_cluster_size, cluster_sizes_per_t
 
 
-def num_clusters_over_time(coordDynX, coordDynY, eps=3.5, min_samples=3, min_cluster_size=3, TauB=25, skip=1, normY=0):
+def num_clusters_over_time(coordDynX, coordDynY, eps=3.5, min_samples=3, min_cluster_size=3, TauB=25, skip=1, normY=0, **_extra_kwargs):
     time_axis, n_clusters, avg_cluster_sizes, cluster_sizes = analyze_clusters_over_time(
         coordDynX, coordDynY,
         eps=eps, min_samples=min_samples, min_cluster_size=min_cluster_size,
@@ -146,7 +146,7 @@ def num_clusters_over_time(coordDynX, coordDynY, eps=3.5, min_samples=3, min_clu
     return time_axis, np.asarray(n_clusters, float)
 
 
-def avg_cluster_size_over_time(coordDynX, coordDynY, eps=3.5, min_samples=3, min_cluster_size=3, TauB=25, skip=1, normY=0):
+def avg_cluster_size_over_time(coordDynX, coordDynY, eps=3.5, min_samples=3, min_cluster_size=3, TauB=25, skip=1, normY=0, **_extra_kwargs):
     time_axis, n_clusters, avg_cluster_sizes, cluster_sizes = analyze_clusters_over_time(
         coordDynX, coordDynY,
         eps=eps, min_samples=min_samples, min_cluster_size=min_cluster_size,

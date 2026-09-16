@@ -14,7 +14,7 @@ from data_reader_csv import read_particle_data_csv
 # from Visualise_Crystals import visualize_crystals
 
 
-def particle_displacement_over_time(coordDynX, coordDynY, TauB=25,skip=0, normY=0):
+def particle_displacement_over_time(coordDynX, coordDynY, TauB=25,skip=0, normY=0, **_extra_kwargs):
     coordDynX = read_particle_data_csv(coordDynX)[skip::2,1:][1:,:]  # Read x-coordinates
     coordDynY = read_particle_data_csv(coordDynY)[skip::2,1:][1:,:]  # Read y-coordinates
 
@@ -96,7 +96,7 @@ def particle_displacement_over_time(coordDynX, coordDynY, TauB=25,skip=0, normY=
     # plt.grid()
     # plt.show()
 
-def particle_displacement_from_inintal_position_over_time(coordDynX, coordDynY, TauB=25, skip=0, normY=False):
+def particle_displacement_from_inintal_position_over_time(coordDynX, coordDynY, TauB=25, skip=0, normY=False, **_extra_kwargs):
     # Load the X/Y arrays exactly as before
     x = read_particle_data_csv(coordDynX)[skip::2, 1:][1:, :]
     y = read_particle_data_csv(coordDynY)[skip::2, 1:][1:, :]
@@ -134,7 +134,7 @@ def particle_displacement_from_inintal_position_over_time(coordDynX, coordDynY, 
 
 
 
-def median_total_path_distance_over_time(coordDynX, coordDynY, TauB=25, skip=0, normY=False):
+def median_total_path_distance_over_time(coordDynX, coordDynY, TauB=25, skip=0, normY=False, **_extra_kwargs):
     # Load the X/Y arrays exactly as before
     x = read_particle_data_csv(coordDynX)[skip::2, 1:][1:, :]
     y = read_particle_data_csv(coordDynY)[skip::2, 1:][1:, :]

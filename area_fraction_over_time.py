@@ -188,6 +188,7 @@ def area_fraction_over_time(
 
     visualize_clusters=False,
     visualize_timesteps=("first", "middle", "last"),
+    **_extra_kwargs,
 ):
     """
     Calculate particle area fraction over time.

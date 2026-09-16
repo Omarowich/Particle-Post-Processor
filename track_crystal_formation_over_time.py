@@ -8,7 +8,7 @@ from scipy.spatial import cKDTree
 
 def detect_crystals_over_time(coordDynX, coordDynY, eps=3.043, min_samples=5,
                               TauB=1, skip=1, normY=0, plot=False,
-                              plot_types=None, type="Hexagonal"):
+                              plot_types=None, type="Hexagonal", **_extra_kwargs):
     """Detect crystalline particles over time using eps as bond cutoff + local orientational order."""
 
     coordDynX = read_particle_data_csv(coordDynX)[skip::2, 1:][1:, :]

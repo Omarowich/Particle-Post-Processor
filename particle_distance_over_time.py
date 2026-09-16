@@ -5,7 +5,7 @@ from scipy.spatial import cKDTree
 from data_reader_csv import read_particle_data_csv
 
 
-def particle_distance_over_time(coordDynX, coordDynY, eps=10, min_samples=2, TauB=25, skip=0, normY=0):
+def particle_distance_over_time(coordDynX, coordDynY, eps=10, min_samples=2, TauB=25, skip=0, normY=0, **_extra_kwargs):
     coordDynX = read_particle_data_csv(coordDynX)[skip::2, 1:][1:, :]
     coordDynY = read_particle_data_csv(coordDynY)[skip::2, 1:][1:, :]
 
