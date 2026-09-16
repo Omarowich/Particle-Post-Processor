@@ -44,17 +44,9 @@ from phase_snapshot_fields import (
 
 from stats_detectors import (
     _overlay_feature_locus,
-    _feature_xy_from_detector,
     _clamp_smooth_win,
     _overlay_prognosis_surface,
-    first_sustained_crossing,
-    simple_peaks,
-    piecewise_linear_breakpoint,
-    _label_vline,
-    _moving_average,
-    detect_flattening_point,
-    detect_knee_point_triangle,
-    detect_turning_point_curvature,
+    apply_curve_detectors,
     slice_by_time_window,
 )
 from math_expr import (
@@ -81,6 +73,7 @@ from metric_caching import (
 )
 from pptx_export import build_pptx_from_images
 from phase_panel import make_snapshot_phase_panel
+from sidebar_widgets import render_cluster_params_widgets
 
 
 def post_analysis_block_generic(
@@ -164,8 +157,6 @@ def post_analysis_block_generic(
         ax2 = plt.gca()
 
 
-
-
         # plot selected curves
         ################
         #NOT DUPLICATE: JUST PLOTTING FIRST FOR OVERLAY##########
@@ -191,9 +182,6 @@ def post_analysis_block_generic(
         sustain_frac = float(sustain) / 100.0
 
         results = []
-        turn_pts = []
-        knee_pts = []
-        flat_pts = []
 
         y_level = 0
 
@@ -214,96 +202,32 @@ def post_analysis_block_generic(
 
             row = {"curve": c["run"]}
 
-            if do_knee:
-                xk_val, ik = detect_knee_point_triangle(x, y, smooth_win=smooth_win)
-                xk, yk = _feature_xy_from_detector(x, y, xk_val, ik)
-
-                row["x_knee"] = xk
-                if np.isfinite(xk):
-                    ax2.axvline(xk, linestyle="--", linewidth=1.5)
-                    if label_markers:
-                        _label_vline(ax2, xk, "knee", y_level=y_level);
-                        y_level += 1
-                    knee_pts.append((xk, yk))
-
-            if do_turn:
-                xt_val, it = detect_turning_point_curvature(x, y, smooth_win=smooth_win)
-                xt, yt = _feature_xy_from_detector(x, y, xt_val, it)
-
-                row["x_turn"] = xt
-                if np.isfinite(xt):
-                    ax2.axvline(xt, linestyle=":", linewidth=1.5)
-                    if label_markers:
-                        _label_vline(ax2, xt, "turn", y_level=y_level);
-                        y_level += 1
-                    turn_pts.append((xt, yt))
-
-            if do_flat:
-                xf_val, iflat = detect_flattening_point(
-                    x, y, smooth_win=smooth_win, slope_eps=slope_eps, sustain_frac=sustain_frac
-                )
-                xf, yf = _feature_xy_from_detector(x, y, xf_val, iflat)
-
-                row["x_flat"] = xf
-                if np.isfinite(xf):
-                    ax2.axvline(xf, linestyle="-.", linewidth=1.5)
-                    if label_markers:
-                        _label_vline(ax2, xf, "flat", y_level=y_level);
-                        y_level += 1
-                    flat_pts.append((xf, yf))
-
-            if do_thr:
-                if "max" in thr_mode:
-                    yref = np.nanmax(y)
-                    thr = float(thr_val) * yref
-                else:
-                    thr = float(thr_val)
-
-                xthr, _ = first_sustained_crossing(x, y, thr, direction=thr_dir, sustain=int(thr_sustain))
-                row["thr"] = thr
-                row["x_thr"] = xthr
-                if np.isfinite(xthr):
-                    ax2.axvline(xthr, linestyle="-", linewidth=2.0)
-                    if label_markers:
-                        _label_vline(ax2, xthr, "thr", y_level=y_level); y_level += 1
-
-            if do_auc:
-                ok = np.isfinite(x) & np.isfinite(y)
-                if np.sum(ok) >= 2:
-                    auc = float(np.trapz(y[ok], x[ok]))
-                    span = float(x[ok][-1] - x[ok][0])
-                    mean = auc / span if span != 0 else np.nan
-                else:
-                    auc, mean = np.nan, np.nan
-                row["auc"] = auc
-                row["mean"] = mean
-
-            if do_maxslope:
-                dy = np.gradient(_moving_average(y, sw), x)
-                i = int(np.nanargmax(np.abs(dy)))
-                row["x_maxabs_slope"] = float(x[i])
-                row["maxabs_slope"] = float(dy[i])
-                ax2.axvline(x[i], linestyle="--", linewidth=1.2)
-                if label_markers:
-                    _label_vline(ax2, x[i], "max|slope|", y_level=y_level); y_level += 1
-
-            if do_peaks:
-                idxs = simple_peaks(y, min_prom=float(peak_min_prom), min_dist=int(peak_min_dist))
-                row["n_peaks"] = len(idxs)
-                for j, i in enumerate(idxs[:10]):
-                    ax2.axvline(x[i], linestyle=":", linewidth=1.0)
-                    if label_markers and j == 0:
-                        _label_vline(ax2, x[i], "peaks", y_level=y_level); y_level += 1
-
-
-            if do_pwlin:
-                xb, _, sse = piecewise_linear_breakpoint(x, y, min_seg_frac=float(pw_min_seg))
-                row["x_break"] = xb
-                row["pw_sse"] = sse
-                if np.isfinite(xb):
-                    ax2.axvline(xb, linestyle="-", linewidth=2.5)
-                    if label_markers:
-                        _label_vline(ax2, xb, "break", y_level=y_level); y_level += 1
+            row_extra, y_level = apply_curve_detectors(
+                ax2, x, y,
+                smooth_win=smooth_win,
+                sustain_frac=sustain_frac,
+                slope_eps=slope_eps,
+                label_markers=label_markers,
+                y_level=y_level,
+                do_knee=do_knee,
+                do_turn=do_turn,
+                do_flat=do_flat,
+                do_thr=do_thr,
+                thr_mode=thr_mode,
+                thr_val=thr_val,
+                thr_dir=thr_dir,
+                thr_sustain=thr_sustain,
+                do_auc=do_auc,
+                do_maxslope=do_maxslope,
+                maxslope_smooth_win=sw,
+                do_peaks=do_peaks,
+                peak_min_prom=peak_min_prom,
+                peak_min_dist=peak_min_dist,
+                do_pwlin=do_pwlin,
+                pw_min_seg=pw_min_seg,
+                key_prefix="x_",
+            )
+            row.update(row_extra)
 
             results.append(row)
 
@@ -339,8 +263,6 @@ def post_analysis_block_generic(
 
         import pandas as pd
         st.dataframe(pd.DataFrame(results))
-
-
 
 
 def post_analysis_block(
@@ -450,80 +372,31 @@ def post_analysis_block(
                 "kind": c.get("kind"),
             }
 
-            if do_knee:
-                xk, _ = detect_knee_point_triangle(x, y, smooth_win=smooth_win)
-                row["t_knee"] = xk
-                if np.isfinite(xk):
-                    ax2.axvline(xk, linestyle="--", linewidth=1.5)
-                    if label_markers:
-                        _label_vline(ax2, xk, "knee", y_level=y_level); y_level += 1
-
-            if do_turn:
-                xt, _ = detect_turning_point_curvature(x, y, smooth_win=smooth_win)
-                row["t_turn"] = xt
-                if np.isfinite(xt):
-                    ax2.axvline(xt, linestyle=":", linewidth=1.5)
-                    if label_markers:
-                        _label_vline(ax2, xt, "turn", y_level=y_level); y_level += 1
-
-            if do_flat:
-                xf, _ = detect_flattening_point(x, y, smooth_win=smooth_win, slope_eps=slope_eps, sustain_frac=sustain_frac)
-                row["t_flat"] = xf
-                if np.isfinite(xf):
-                    ax2.axvline(xf, linestyle="-.", linewidth=1.5)
-                    if label_markers:
-                        _label_vline(ax2, xf, "flat", y_level=y_level); y_level += 1
-
-            if do_thr:
-                if "max" in thr_mode:
-                    thr = float(thr_val) * float(np.nanmax(y))
-                else:
-                    thr = float(thr_val)
-
-                xthr, _ = first_sustained_crossing(x, y, thr, direction=thr_dir, sustain=int(thr_sustain))
-                row["thr"] = thr
-                row["t_thr"] = xthr
-                if np.isfinite(xthr):
-                    ax2.axvline(xthr, linestyle="-", linewidth=2.0)
-                    if label_markers:
-                        _label_vline(ax2, xthr, "thr", y_level=y_level); y_level += 1
-
-            if do_auc:
-                m = np.isfinite(x) & np.isfinite(y)
-                if np.sum(m) >= 2:
-                    auc = float(np.trapz(y[m], x[m]))
-                    span = float(x[m][-1] - x[m][0])
-                    mean = auc / span if span != 0 else np.nan
-                else:
-                    auc, mean = np.nan, np.nan
-                row["auc"] = auc
-                row["mean"] = mean
-
-            if do_maxslope:
-                dy = np.gradient(_moving_average(y, smooth_win), x)
-                i = int(np.nanargmax(np.abs(dy)))
-                row["t_maxabs_slope"] = float(x[i])
-                row["maxabs_slope"] = float(dy[i])
-                ax2.axvline(x[i], linestyle="--", linewidth=1.2)
-                if label_markers:
-                    _label_vline(ax2, x[i], "max|slope|", y_level=y_level); y_level += 1
-
-            if do_peaks:
-                idxs = simple_peaks(y, min_prom=float(peak_min_prom), min_dist=int(peak_min_dist))
-                row["n_peaks"] = len(idxs)
-                for j, ii in enumerate(idxs[:10]):
-                    ax2.axvline(x[ii], linestyle=":", linewidth=1.0)
-                    if label_markers and j == 0:
-                        _label_vline(ax2, x[ii], "peaks", y_level=y_level); y_level += 1
-
-            if do_pwlin:
-                xb, _, sse = piecewise_linear_breakpoint(x, y, min_seg_frac=float(pw_min_seg))
-                row["t_break"] = xb
-                row["pw_sse"] = sse
-                if np.isfinite(xb):
-                    ax2.axvline(xb, linestyle="-", linewidth=2.5)
-                    if label_markers:
-                        _label_vline(ax2, xb, "break", y_level=y_level); y_level += 1
+            row_extra, y_level = apply_curve_detectors(
+                ax2, x, y,
+                smooth_win=smooth_win,
+                sustain_frac=sustain_frac,
+                slope_eps=slope_eps,
+                label_markers=label_markers,
+                y_level=y_level,
+                do_knee=do_knee,
+                do_turn=do_turn,
+                do_flat=do_flat,
+                do_thr=do_thr,
+                thr_mode=thr_mode,
+                thr_val=thr_val,
+                thr_dir=thr_dir,
+                thr_sustain=thr_sustain,
+                do_auc=do_auc,
+                do_maxslope=do_maxslope,
+                do_peaks=do_peaks,
+                peak_min_prom=peak_min_prom,
+                peak_min_dist=peak_min_dist,
+                do_pwlin=do_pwlin,
+                pw_min_seg=pw_min_seg,
+                key_prefix="t_",
+            )
+            row.update(row_extra)
 
             results.append(row)
 
@@ -546,36 +419,6 @@ def post_analysis_block(
 
         import pandas as pd
         st.dataframe(pd.DataFrame(results))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def sidebar_runs_common_ui(
@@ -741,7 +584,6 @@ def sidebar_runs_common_ui(
         st.sidebar.warning("No Tkb_*TauB* subfolders detected. Please check your base folder.")
 
 
-
     has_third = any(len(r) > 3 and r[3] is not None for r in available_runs)
     group_by_options = ["TkB", "TauB"]
     if has_third:
@@ -784,36 +626,11 @@ def sidebar_runs_common_ui(
     with st.sidebar.expander("Common parameters", expanded=False):
 
         # cluster params
-        st.subheader("Cluster metrics parameters")
-
-        area_fraction_mode = st.selectbox(
-            "Cluster detection mode",
-            ["per_cluster", "global"],
-            index=0,
-            key="multi_area_fraction_mode",
-        )
-
-        cluster_eps = st.number_input(
-            "DBSCAN eps",
-            value=3.5,
-            step=0.1,
-            key="multi_cluster_eps",
-        )
-        cluster_min_samples = st.number_input(
-            "DBSCAN min_samples",
-            value=3,
-            step=1,
-            min_value=1,
-            key="multi_cluster_min_samples",
-        )
-        cluster_min_cluster_size = st.number_input(
-            "Min cluster size",
-            value=3,
-            step=1,
-            min_value=1,
-            key="multi_cluster_min_cluster_size",
-        )
-
+        cluster_params = render_cluster_params_widgets("multi")
+        area_fraction_mode = cluster_params["mode"]
+        cluster_eps = cluster_params["eps"]
+        cluster_min_samples = cluster_params["min_samples"]
+        cluster_min_cluster_size = cluster_params["min_cluster_size"]
 
         st.subheader("RDF parameters")
         rdf_r_max = st.number_input(
@@ -950,57 +767,7 @@ def sidebar_runs_common_ui(
     return out
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # Allowed functions (vectorized via numpy)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ---------------------------------------------------------------------
@@ -1022,12 +789,9 @@ DEFAULT_SAVE_DIR = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Stude
 # ---------------------------------------------------------------------
 
 
-
 # ---------------------------------------------------------------------
 # Helper: slugify for filenames + save figure if requested
 # ---------------------------------------------------------------------
-
-
 
 
 # ---------------------------------------------------------------------
@@ -1040,11 +804,9 @@ DEFAULT_SAVE_DIR = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Stude
 # ---------------------------------------------------------------------
 
 
-
 # ---------------------------------------------------------------------
 # Streamlit layout
 # ---------------------------------------------------------------------
-
 
 
 st.set_page_config(page_title="Particle Post Processor and Analyzer", layout="wide")
@@ -1483,8 +1245,6 @@ elif plot_mode == "Multiple plots":
     x_range_max = ui.get("x_range_max", None)
 
 
-
-
     # ---- Color mode UI ----
     st.sidebar.header("Curve colors")
     color_mode_multi = st.sidebar.radio(
@@ -1554,8 +1314,6 @@ elif plot_mode == "Multiple plots":
         return None
 
 
-
-
     run = st.sidebar.button("▶ Run multiple-plot routine", key="run_multi")
     have_cached = st.session_state.get("multi_cached", False)
 
@@ -1588,8 +1346,6 @@ elif plot_mode == "Multiple plots":
         st.write(f"- {txt}")
 
     metric_kwargs = dict(TauB=TauB, skip=skip, normY=int(normY))
-
-
 
 
     def run_label(s, show_taub):
@@ -1813,7 +1569,6 @@ elif plot_mode == "Multiple plots":
                 })
 
 
-
         if missing:
             st.warning("Missing data files for: " + ", ".join(missing))
 
@@ -1881,7 +1636,6 @@ elif plot_mode == "Multiple plots":
             st.pyplot(fig)
 
 
-
             post_analysis_block(
                 key=f"multi_{metric_label}",
                 curves=st.session_state.get(f"post_curves_{metric_label}", []),
@@ -1908,12 +1662,9 @@ elif plot_mode == "Multiple plots":
         st.session_state["computed_metrics"][metric_label] = series
 
 
-
         # ---- Plot ----
         plt.figure()
         ax = plt.gca()
-
-
 
 
         post_curves = []  # define this once before the TauB grouping loop
@@ -2059,7 +1810,6 @@ elif plot_mode == "Multiple plots":
             title_fontsize=title_fontsize_multi,
             show_grid=show_grid,
         )
-
 
 
     # ---- Curve shape analysis ----
@@ -2224,12 +1974,6 @@ elif plot_mode == "Multiple plots":
     st.success("Multiple-plot figure(s) done ✅")
 
 
-
-
-
-
-
-
 ##########################################################
 # Function Mixer
 ##########################################################
@@ -2337,7 +2081,6 @@ elif plot_mode == "Function mixer":
         key="expr_calc_expr",
         help="Examples: A/B, (A/B)*100, log(A)/sqrt(B), A/(B+1e-9), deriv(A,t), integ(A,t), fft_amp(A)"
     )
-
 
 
     calc_title = st.text_input(
@@ -2516,7 +2259,6 @@ elif plot_mode == "Function mixer":
 
         if mA_label == "Area fraction":
             extraA["cluster_mode"] = area_fraction_mode
-
 
 
         extraB = {}
@@ -3077,23 +2819,6 @@ elif plot_mode == "Phase diagram":
     st.success("Phase-diagram snapshot panel done ✅")
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ---------------------------------------------------------------------
 # SUMMARY PLOT MODE  (folder-based)
 # ---------------------------------------------------------------------
@@ -3199,42 +2924,17 @@ elif plot_mode == "Summary plots":
     )
 
 
-
-
     st.sidebar.header("4. Metric curve to summarize")
     metric_label = st.sidebar.selectbox("Metric:", metric_options, key="summary_metric_label")
 
     # ---- common params ----
     with st.sidebar.expander("5. Common parameters", expanded=False):
 
-        cluster_mode_summary = st.selectbox(
-            "Cluster detection mode",
-            ["per_cluster", "global"],
-            index=0,
-            key="summary_cluster_mode",
-        )
-        # cluster params
-        st.subheader("Cluster metrics parameters")
-        cluster_eps_summary = st.number_input(
-            "DBSCAN eps",
-            value=3.5,
-            step=0.1,
-            key=f"summary_cluster_eps",
-        )
-        cluster_min_samples_summary = st.number_input(
-            "DBSCAN min_samples",
-            value=3,
-            step=1,
-            min_value=1,
-            key=f"summary_cluster_min_samples",
-        )
-        cluster_min_cluster_size_summary = st.number_input(
-            "Min cluster size",
-            value=3,
-            step=1,
-            min_value=1,
-            key=f"summary_cluster_min_cluster_size",
-        )
+        cluster_params = render_cluster_params_widgets("summary")
+        cluster_mode_summary = cluster_params["mode"]
+        cluster_eps_summary = cluster_params["eps"]
+        cluster_min_samples_summary = cluster_params["min_samples"]
+        cluster_min_cluster_size_summary = cluster_params["min_cluster_size"]
 
     st.sidebar.header("6. Reduction (scalar from curve)")
     reducer = st.sidebar.selectbox(
@@ -3299,7 +2999,6 @@ elif plot_mode == "Summary plots":
         value=True,
         key="summary_show_fit_quality",
     )
-
 
 
     if fit_function != "None":
@@ -3555,9 +3254,6 @@ elif plot_mode == "Summary plots":
     import numpy as np
     from scipy.optimize import curve_fit
     from scipy.interpolate import PchipInterpolator, UnivariateSpline
-
-
-
 
 
     from scipy.optimize import curve_fit

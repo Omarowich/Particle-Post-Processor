@@ -435,6 +435,131 @@ def detect_turning_point_curvature(x, y, *, smooth_win=9):
     idx = int(np.nanargmax(np.abs(d2)))
     return float(x[idx]), idx
 
+
+def apply_curve_detectors(
+    ax,
+    x,
+    y,
+    *,
+    smooth_win,
+    sustain_frac,
+    slope_eps,
+    label_markers,
+    y_level,
+    do_knee=True,
+    do_turn=True,
+    do_flat=True,
+    do_thr=False,
+    thr_mode="% of max (per curve)",
+    thr_val=0.6,
+    thr_dir="rising",
+    thr_sustain=3,
+    do_auc=False,
+    do_maxslope=False,
+    maxslope_smooth_win=None,
+    do_peaks=False,
+    peak_min_prom=0.0,
+    peak_min_dist=5,
+    do_pwlin=False,
+    pw_min_seg=0.1,
+    key_prefix="t_",
+):
+    """
+    Run the shared post-analysis detector suite (knee / turning point /
+    flattening / threshold crossing / AUC+mean / max-slope / peaks /
+    piecewise-linear breakpoint) against one already-cleaned (x, y) curve,
+    drawing vertical marker lines (+ optional text labels) on `ax`.
+
+    Returns (row, y_level): `row` is a dict of result fields (prefixed with
+    `key_prefix` for the per-feature x-locations, unprefixed for shared
+    scalar fields like "thr"/"auc"/"mean"/"n_peaks"/"pw_sse") and `y_level`
+    is the updated marker-label stack offset to pass into the next curve.
+
+    `maxslope_smooth_win` lets a caller pass a (possibly clamped) smoothing
+    window specifically for the max-|slope| marker, independent of the
+    window used by the other detectors; it defaults to `smooth_win`.
+    """
+    row = {}
+
+    if do_knee:
+        xk, _ = detect_knee_point_triangle(x, y, smooth_win=smooth_win)
+        row[f"{key_prefix}knee"] = xk
+        if np.isfinite(xk):
+            ax.axvline(xk, linestyle="--", linewidth=1.5)
+            if label_markers:
+                _label_vline(ax, xk, "knee", y_level=y_level); y_level += 1
+
+    if do_turn:
+        xt, _ = detect_turning_point_curvature(x, y, smooth_win=smooth_win)
+        row[f"{key_prefix}turn"] = xt
+        if np.isfinite(xt):
+            ax.axvline(xt, linestyle=":", linewidth=1.5)
+            if label_markers:
+                _label_vline(ax, xt, "turn", y_level=y_level); y_level += 1
+
+    if do_flat:
+        xf, _ = detect_flattening_point(x, y, smooth_win=smooth_win, slope_eps=slope_eps, sustain_frac=sustain_frac)
+        row[f"{key_prefix}flat"] = xf
+        if np.isfinite(xf):
+            ax.axvline(xf, linestyle="-.", linewidth=1.5)
+            if label_markers:
+                _label_vline(ax, xf, "flat", y_level=y_level); y_level += 1
+
+    if do_thr:
+        if "max" in thr_mode:
+            thr = float(thr_val) * float(np.nanmax(y))
+        else:
+            thr = float(thr_val)
+
+        xthr, _ = first_sustained_crossing(x, y, thr, direction=thr_dir, sustain=int(thr_sustain))
+        row["thr"] = thr
+        row[f"{key_prefix}thr"] = xthr
+        if np.isfinite(xthr):
+            ax.axvline(xthr, linestyle="-", linewidth=2.0)
+            if label_markers:
+                _label_vline(ax, xthr, "thr", y_level=y_level); y_level += 1
+
+    if do_auc:
+        m = np.isfinite(x) & np.isfinite(y)
+        if np.sum(m) >= 2:
+            auc = float(np.trapz(y[m], x[m]))
+            span = float(x[m][-1] - x[m][0])
+            mean = auc / span if span != 0 else np.nan
+        else:
+            auc, mean = np.nan, np.nan
+        row["auc"] = auc
+        row["mean"] = mean
+
+    if do_maxslope:
+        sw = maxslope_smooth_win if maxslope_smooth_win is not None else smooth_win
+        dy = np.gradient(_moving_average(y, sw), x)
+        i = int(np.nanargmax(np.abs(dy)))
+        row[f"{key_prefix}maxabs_slope"] = float(x[i])
+        row["maxabs_slope"] = float(dy[i])
+        ax.axvline(x[i], linestyle="--", linewidth=1.2)
+        if label_markers:
+            _label_vline(ax, x[i], "max|slope|", y_level=y_level); y_level += 1
+
+    if do_peaks:
+        idxs = simple_peaks(y, min_prom=float(peak_min_prom), min_dist=int(peak_min_dist))
+        row["n_peaks"] = len(idxs)
+        for j, i in enumerate(idxs[:10]):
+            ax.axvline(x[i], linestyle=":", linewidth=1.0)
+            if label_markers and j == 0:
+                _label_vline(ax, x[i], "peaks", y_level=y_level); y_level += 1
+
+    if do_pwlin:
+        xb, _, sse = piecewise_linear_breakpoint(x, y, min_seg_frac=float(pw_min_seg))
+        row[f"{key_prefix}break"] = xb
+        row["pw_sse"] = sse
+        if np.isfinite(xb):
+            ax.axvline(xb, linestyle="-", linewidth=2.5)
+            if label_markers:
+                _label_vline(ax, xb, "break", y_level=y_level); y_level += 1
+
+    return row, y_level
+
+
 def slice_by_time_window(t: np.ndarray, y: np.ndarray, start_frac: float, end_frac: float):
     t = np.asarray(t, float)
     y = np.asarray(y, float)
