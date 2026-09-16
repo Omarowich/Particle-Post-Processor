@@ -1401,12 +1401,6 @@ elif plot_mode == "Multiple plots":
                         force_recompute=export_data,
                     )
 
-                    st.write(
-                        f"[debug] kind={kind} run={run_name} "
-                        f"len(y)={len(y)} nan_count={int(np.sum(~np.isfinite(y)))} "
-                        f"y_min={np.nanmin(y) if len(y) else 'n/a'} y_max={np.nanmax(y) if len(y) else 'n/a'}"
-                    )
-
                     series_kind.append({
                         "run": run_name,
                         "tkb": float(tkb_val),
@@ -1428,13 +1422,6 @@ elif plot_mode == "Multiple plots":
                         y_grid = np.interp(t_grid_sec, x_raw, y_raw, left=y_raw[0], right=y_raw[-1])
 
                         x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
-
-                        st.write(
-                            f"[debug] plotting kind={kind} run={s['run']} "
-                            f"len(x)={len(x)} len(y_grid)={len(y_grid)} "
-                            f"y_grid_min={np.nanmin(y_grid) if len(y_grid) else 'n/a'} "
-                            f"y_grid_max={np.nanmax(y_grid) if len(y_grid) else 'n/a'}"
-                        )
 
                         ax.plot(
                             x,
@@ -1497,6 +1484,24 @@ elif plot_mode == "Multiple plots":
                                  axis_fontsize=axis_fontsize_multi, title_on=title_on_multi,
                                  title_fontsize=title_fontsize_multi)
             st.pyplot(fig)
+            save_figure_if_requested(
+                fig,
+                base_name=f"multi_{metric_label}",
+                save_enabled=save_plots,
+                output_dir=output_dir,
+            )
+            post_analysis_block(
+                key=f"multi_{metric_label}",
+                curves=st.session_state.get(f"post_curves_{metric_label}", []),
+                ylabel=f"{', '.join(crystal_types_multi)} Crystal Fraction",
+                x_axis_mode=x_axis_mode_multi,
+                legend_on=legend_on_multi,
+                legend_fontsize=legend_fontsize_multi,
+                axis_fontsize=axis_fontsize_multi,
+                title_on=title_on_multi,
+                title_fontsize=title_fontsize_multi,
+                show_grid=show_grid,
+            )
 
             continue  # <-- IMPORTANT: skip the normal metric plotting below
 
