@@ -1401,6 +1401,12 @@ elif plot_mode == "Multiple plots":
                         force_recompute=export_data,
                     )
 
+                    st.write(
+                        f"[debug] kind={kind} run={run_name} "
+                        f"len(y)={len(y)} nan_count={int(np.sum(~np.isfinite(y)))} "
+                        f"y_min={np.nanmin(y) if len(y) else 'n/a'} y_max={np.nanmax(y) if len(y) else 'n/a'}"
+                    )
+
                     series_kind.append({
                         "run": run_name,
                         "tkb": float(tkb_val),
@@ -1422,6 +1428,13 @@ elif plot_mode == "Multiple plots":
                         y_grid = np.interp(t_grid_sec, x_raw, y_raw, left=y_raw[0], right=y_raw[-1])
 
                         x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
+
+                        st.write(
+                            f"[debug] plotting kind={kind} run={s['run']} "
+                            f"len(x)={len(x)} len(y_grid)={len(y_grid)} "
+                            f"y_grid_min={np.nanmin(y_grid) if len(y_grid) else 'n/a'} "
+                            f"y_grid_max={np.nanmax(y_grid) if len(y_grid) else 'n/a'}"
+                        )
 
                         ax.plot(
                             x,
