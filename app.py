@@ -546,17 +546,20 @@ def sidebar_runs_common_ui(
         all_units = sorted({r[4] for r in available_runs if r[4] is not None})
 
         st.sidebar.markdown("**Filter runs:**")
+        # Widget keys are namespaced by dataset_tag so switching data folders
+        # always starts with everything selected instead of carrying over the
+        # previous folder's (likely mismatched) TkB/TauB/run selections.
         filter_tkbs = st.sidebar.multiselect(
-            "TkB values", all_tkbs, default=all_tkbs, key="multi_filter_tkb"
+            "TkB values", all_tkbs, default=all_tkbs, key=f"multi_filter_tkb__{dataset_tag}"
         )
         filter_taus = st.sidebar.multiselect(
-            "TauB values", all_taus, default=all_taus, key="multi_filter_tau"
+            "TauB values", all_taus, default=all_taus, key=f"multi_filter_tau__{dataset_tag}"
         )
         if all_thirds:
             unit_label = "/".join(all_units) if all_units else "3rd param"
             filter_thirds = st.sidebar.multiselect(
                 f"{unit_label} values", all_thirds, default=all_thirds,
-                key="multi_filter_third"
+                key=f"multi_filter_third__{dataset_tag}"
             )
         else:
             filter_thirds = []
@@ -576,7 +579,7 @@ def sidebar_runs_common_ui(
             "Select runs (from filtered):",
             options=filtered_runs,
             default=filtered_runs,
-            key="multi_runs",
+            key=f"multi_runs__{dataset_tag}",
             format_func=format_run_option,
         )
     else:
