@@ -1,23 +1,15 @@
 # app.py
 
-import math
 import os
-import pathlib
 import re
-import tempfile
 from pathlib import Path
-from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
 import streamlit as st
-from pptx import Presentation
-from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches, Pt
 
 from area_fraction_over_time import area_fraction_over_time
 from bond_orientation_over_time import bond_orientational_order_over_time
-from data_reader_csv import read_particle_data_csv
 from movement_change_calculator_time_study import (
     particle_displacement_from_inintal_position_over_time,
     particle_displacement_over_time,
@@ -49,8 +41,47 @@ from phase_snapshot_fields import (
     snapshot_displacement_vectors_voronoi
 )
 
-import ast
-import operator as op
+
+from stats_detectors import (
+    _overlay_feature_locus,
+    _feature_xy_from_detector,
+    _clamp_smooth_win,
+    _overlay_prognosis_surface,
+    first_sustained_crossing,
+    simple_peaks,
+    piecewise_linear_breakpoint,
+    _label_vline,
+    _moving_average,
+    detect_flattening_point,
+    detect_knee_point_triangle,
+    detect_turning_point_curvature,
+    slice_by_time_window,
+)
+from math_expr import (
+    fft_freqs,
+    safe_eval_expr,
+    _ALLOWED_FUNCS,
+)
+from plot_utils import (
+    save_uploaded_file,
+    apply_global_styling,
+    apply_grid,
+    save_figure_if_requested,
+)
+from metric_caching import (
+    rundata_npz_path,
+    save_rundata_npz,
+    load_rundata_npz,
+    export_rundata_csv,
+    get_series_for_metric,
+    export_series_to_csv,
+    align_y_by_taub_length,
+    metric_cache_path,
+    load_or_compute_metric_cached,
+)
+from pptx_export import build_pptx_from_images
+from phase_panel import make_snapshot_phase_panel
+
 
 def post_analysis_block_generic(
     key: str,
@@ -516,484 +547,36 @@ def post_analysis_block(
         import pandas as pd
         st.dataframe(pd.DataFrame(results))
 
-_num_re = re.compile(r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)")
-
-def _try_float_from_label(s: str):
-    m = _num_re.search(str(s))
-    return float(m.group(1)) if m else None
-
-def _overlay_feature_locus(ax, curves, feature: str, smooth_win: int, label: str):
-    pts = []
-    for c in curves:
-        x = np.asarray(c["x"], float)
-        y = np.asarray(c["y"], float)
-        m = np.isfinite(x) & np.isfinite(y)
-        x, y = x[m], y[m]
-        if x.size < 3:
-            continue
-        o = np.argsort(x)
-        x, y = x[o], y[o]
-
-        if feature == "turn":
-            xf, _ = detect_turning_point_curvature(x, y, smooth_win=smooth_win)
-        elif feature == "knee":
-            xf, _ = detect_knee_point_triangle(x, y, smooth_win=smooth_win)
-        elif feature == "flat":
-            xf, _ = detect_flattening_point(x, y, smooth_win=smooth_win, slope_eps=None, sustain_frac=0.08)
-        else:
-            continue
-
-        if not np.isfinite(xf):
-            continue
-
-        # SNAP: use nearest sampled point, not interpolation
-        i = int(np.nanargmin(np.abs(x - xf)))
-        pts.append({
-            "x": float(x[i]),
-            "y": float(y[i]),
-            "order": _try_float_from_label(c.get("run", "")),
-        })
-
-    if len(pts) < 2:
-        return
-
-    # Connect in parameter order if possible (TauB 2, TauB 10, ...)
-    if all(p["order"] is not None for p in pts):
-        pts.sort(key=lambda p: p["order"])
-    else:
-        # fallback: connect left-to-right
-        pts.sort(key=lambda p: p["x"])
-
-    ax.plot([p["x"] for p in pts], [p["y"] for p in pts],
-            linestyle="--", marker="x", linewidth=2, label=label)
-
-def _feature_xy_from_detector(x, y, x_or_idx, idx):
-    """
-    Many detectors return (x_value, idx) or (idx, something).
-    We accept both and try to produce a valid (xf, yf) on the curve.
-    """
-    # prefer index if provided
-    if idx is not None and np.isfinite(idx):
-        i = int(np.clip(int(idx), 0, len(x) - 1))
-        return float(x[i]), float(y[i])
-
-    # otherwise treat first output as x-value
-    xv = float(x_or_idx)
-    if not np.isfinite(xv):
-        return np.nan, np.nan
-
-    return xv, float(np.interp(xv, x, y))
-
-def _clamp_smooth_win(n: int, w: int) -> int:
-    w = int(w)
-
-    # must be at least 3 if possible
-    if n >= 3:
-        w = max(3, w)
-    else:
-        return max(1, min(w, n))
-
-    # can't exceed n (and prefer odd <= n)
-    w = min(w, n)
-
-    # force odd
-    if w % 2 == 0:
-        w -= 1
-
-    # if we accidentally dropped below 3, bump back (only happens for very small n)
-    if w < 3 and n >= 3:
-        w = 3
-
-    return w
-
-
-
-def _overlay_feature_locus(ax, curves, *, feature="turn", smooth_win=9, label=None):
-    pts = []
-
-    for c in curves:
-        x = np.asarray(c["x"], float)
-        y = np.asarray(c["y"], float)
-
-        m = np.isfinite(x) & np.isfinite(y)
-        x, y = x[m], y[m]
-        if x.size < 3:
-            continue
-
-        o = np.argsort(x)
-        x, y = x[o], y[o]
-
-        # detect feature x-position
-        if feature == "turn":
-            xf, _ = detect_turning_point_curvature(x, y, smooth_win=smooth_win)
-        elif feature == "flat":
-            xf, _ = detect_flattening_point(x, y, smooth_win=smooth_win)
-        else:  # "knee"
-            xf, _ = detect_knee_point_triangle(x, y, smooth_win=smooth_win)
-
-        if not np.isfinite(xf):
-            continue
-
-        # IMPORTANT: y value at that x, not y[idx]
-        yf = float(np.interp(xf, x, y))
-        pts.append((float(xf), float(yf)))
-
-    if len(pts) >= 2:
-        pts.sort(key=lambda p: p[0])
-        if label is None:
-            label = f"{feature} locus"
-
-        ax.plot(
-            [p[0] for p in pts],
-            [p[1] for p in pts],
-            linestyle="--",
-            marker="x",
-            linewidth=2,
-            label=label,
-        )
-
-
-def _overlay_prognosis_surface(
-    ax,
-    *,
-    sweep_rows,
-    x_choice,
-    tk_query,
-    ta_query,
-    min_points=6,
-):
-    """
-    Fit a quadratic surface y = f(TkB, TauB) to summary sweep rows,
-    then overlay predicted curves on the current axes.
-
-    sweep_rows: [(run, tkb, taub, scalar), ...]
-    x_choice: "TkB" or "TauB"  (this is what the current plot uses on x-axis)
-    tk_query/ta_query: comma-separated strings of query points.
-    """
-    if not sweep_rows or x_choice not in ("TkB", "TauB"):
-        return
-
-    tk = np.array([r[1] for r in sweep_rows], float)
-    ta = np.array([r[2] for r in sweep_rows], float)
-    yy = np.array([r[3] for r in sweep_rows], float)
-
-    m = np.isfinite(tk) & np.isfinite(ta) & np.isfinite(yy)
-    tk, ta, yy = tk[m], ta[m], yy[m]
-
-    if tk.size < int(min_points):
-        return  # not enough data to fit
-
-    # quadratic surface in (tk, ta)
-    X = np.column_stack([np.ones_like(tk), tk, ta, tk**2, ta**2, tk * ta])
-    coef, *_ = np.linalg.lstsq(X, yy, rcond=None)
-
-    def predict(tk_new, ta_new):
-        tk_new = np.asarray(tk_new, float)
-        ta_new = np.asarray(ta_new, float)
-        Xn = np.column_stack([np.ones_like(tk_new), tk_new, ta_new, tk_new**2, ta_new**2, tk_new * ta_new])
-        return Xn @ coef
-
-    # parse queries safely
-    try:
-        tk_list = [float(s.strip()) for s in str(tk_query).split(",") if s.strip()]
-    except Exception:
-        tk_list = []
-    try:
-        ta_list = [float(s.strip()) for s in str(ta_query).split(",") if s.strip()]
-    except Exception:
-        ta_list = []
-
-    if x_choice == "TkB":
-        if not tk_list or not ta_list:
-            return
-        # y vs TkB for each requested TauB
-        for taub_val in ta_list:
-            yhat = predict(tk_list, [taub_val] * len(tk_list))
-            order = np.argsort(tk_list)
-            xs = np.asarray(tk_list, float)[order]
-            ys = np.asarray(yhat, float)[order]
-            ax.plot(xs, ys, linestyle="--", marker=".", label=f"pred TauB {taub_val:g}")
-
-    else:  # x_choice == "TauB"
-        if not ta_list or not tk_list:
-            return
-        # y vs TauB for each requested TkB
-        for tkb_val in tk_list:
-            yhat = predict([tkb_val] * len(ta_list), ta_list)
-            order = np.argsort(ta_list)
-            xs = np.asarray(ta_list, float)[order]
-            ys = np.asarray(yhat, float)[order]
-            ax.plot(xs, ys, linestyle="--", marker=".", label=f"pred TkB {tkb_val:g}")
-
-
-def first_sustained_crossing(x, y, thr, direction="rising", sustain=3):
-    x = np.asarray(x, float)
-    y = np.asarray(y, float)
-    m = np.isfinite(x) & np.isfinite(y)
-    x, y = x[m], y[m]
-    if x.size < sustain:
-        return np.nan, None
-
-    if direction == "rising":
-        ok = y >= thr
-    else:
-        ok = y <= thr
-
-    for i in range(0, len(ok) - sustain + 1):
-        if np.all(ok[i:i+sustain]):
-            return float(x[i]), i
-    return np.nan, None
-
-
-
-
-def simple_peaks(y, min_prom=0.0, min_dist=5):
-    """
-    Simple peak detector.
-    Returns indices of peaks.
-    """
-    y = np.asarray(y, float)
-    n = len(y)
-    if n < 3:
-        return []
-
-    # find local maxima
-    cand = []
-    for i in range(1, n - 1):
-        if np.isfinite(y[i-1]) and np.isfinite(y[i]) and np.isfinite(y[i+1]):
-            if y[i] > y[i-1] and y[i] > y[i+1]:
-                cand.append(i)
-
-    # prominence filter
-    def prominence(i):
-        left = np.nanmin(y[max(0, i - min_dist): i + 1])
-        right = np.nanmin(y[i: min(n, i + min_dist + 1)])
-        return y[i] - max(left, right)
-
-    cand = [i for i in cand if prominence(i) >= min_prom]
-
-    # enforce minimum distance
-    kept = []
-    for i in sorted(cand, key=lambda j: y[j], reverse=True):
-        if all(abs(i - k) >= min_dist for k in kept):
-            kept.append(i)
-
-    return sorted(kept)
-
-def first_threshold_crossing(x, y, thr, *, direction="rising", sustain_pts=1):
-    """
-    Return (x_cross, idx_cross) of first sustained threshold crossing.
-    direction: "rising" -> y >= thr, "falling" -> y <= thr
-    sustain_pts: must hold condition for this many consecutive points
-    """
-    x = np.asarray(x, float)
-    y = np.asarray(y, float)
-    ok = np.isfinite(x) & np.isfinite(y)
-    x = x[ok]; y = y[ok]
-    if x.size < 2:
-        return np.nan, None
-
-    sustain_pts = int(max(1, sustain_pts))
-    if direction == "falling":
-        cond = (y <= thr)
-    else:
-        cond = (y >= thr)
-
-    for i in range(0, len(cond) - sustain_pts + 1):
-        if np.all(cond[i:i+sustain_pts]):
-            return float(x[i]), int(i)
-    return np.nan, None
-
-
-def auc_and_mean(x, y):
-    """Return (auc, mean) over x using trapezoid AUC and time-average."""
-    x = np.asarray(x, float)
-    y = np.asarray(y, float)
-    ok = np.isfinite(x) & np.isfinite(y)
-    x = x[ok]; y = y[ok]
-    if x.size < 2:
-        return np.nan, np.nan
-
-    auc = float(np.trapz(y, x))
-    dt = float(x[-1] - x[0])
-    mean = float(auc / dt) if dt != 0 else np.nan
-    return auc, mean
-
-
-def max_slope_time(x, y, *, smooth_win=9):
-    """
-    Return (x_at_max_abs_slope, idx, slope_value) using smoothed derivative.
-    """
-    x = np.asarray(x, float)
-    y = np.asarray(y, float)
-    ok = np.isfinite(x) & np.isfinite(y)
-    x = x[ok]; y = y[ok]
-    if x.size < 3:
-        return np.nan, None, np.nan
-
-    ys = _moving_average(y, smooth_win)
-    dy = np.gradient(ys, x)
-    idx = int(np.nanargmax(np.abs(dy)))
-    return float(x[idx]), idx, float(dy[idx])
-
-
-
-
-def piecewise_linear_breakpoint(x, y, min_seg_frac=0.1):
-    """
-    Fit two line segments with a breakpoint k and choose k minimizing SSE.
-    Returns (x_break, idx_break, sse).
-    """
-    x = np.asarray(x, float)
-    y = np.asarray(y, float)
-    m = np.isfinite(x) & np.isfinite(y)
-    x, y = x[m], y[m]
-    n = x.size
-
-    if n < 10:
-        return np.nan, None, np.nan
-
-    min_seg = max(3, int(round(min_seg_frac * n)))
-    best_sse = np.inf
-    best_k = None
-
-    for k in range(min_seg, n - min_seg):
-        p1 = np.polyfit(x[:k], y[:k], 1)
-        p2 = np.polyfit(x[k:], y[k:], 1)
-
-        y1 = np.polyval(p1, x[:k])
-        y2 = np.polyval(p2, x[k:])
-
-        sse = np.nansum((y[:k] - y1) ** 2) + np.nansum((y[k:] - y2) ** 2)
-
-        if sse < best_sse:
-            best_sse = sse
-            best_k = k
-
-    if best_k is None:
-        return np.nan, None, np.nan
-
-    return float(x[best_k]), int(best_k), float(best_sse)
-
-def _label_vline(ax, x, text, *, rotation=90, fontsize=10, pad_frac=0.02, y_level=0):
-    """
-    Put a small label near the top of the axes at x.
-    y_level lets you stagger labels (0,1,2...) to reduce overlap.
-    """
-    y0, y1 = ax.get_ylim()
-    yr = (y1 - y0) if (y1 != y0) else 1.0
-    y = y1 - (pad_frac + 0.06 * y_level) * yr
-    ax.text(x, y, text, rotation=rotation, va="top", ha="left", fontsize=fontsize)
-
-
-def _moving_average(y, win: int):
-    y = np.asarray(y, float)
-    win = int(max(1, win))
-    if win <= 1 or y.size < 3:
-        return y
-    # pad edges to avoid shrinking
-    pad = win // 2
-    ypad = np.pad(y, (pad, pad), mode="edge")
-    k = np.ones(win, float) / win
-    return np.convolve(ypad, k, mode="valid")
-
-def detect_flattening_point(x, y, *, smooth_win=9, slope_eps=None, sustain_frac=0.08):
-    """
-    Flattening = first time where |dy/dx| stays below slope_eps for a sustained window.
-    If slope_eps is None, it is set relative to typical slope magnitude.
-    Returns (x_flat, idx_flat) or (np.nan, None).
-    """
-    x = np.asarray(x, float)
-    y = np.asarray(y, float)
-    if x.size < 3:
-        return np.nan, None
-
-    ys = _moving_average(y, smooth_win)
-    dy = np.gradient(ys, x)
-
-    if slope_eps is None:
-        # relative threshold: small fraction of typical slope
-        ref = np.nanmedian(np.abs(dy))
-        slope_eps = 0.08 * ref if np.isfinite(ref) and ref > 0 else 1e-12
-
-    sustain = int(max(2, round(sustain_frac * x.size)))
-    ok = np.abs(dy) <= slope_eps
-
-    # find first index i such that ok[i:i+sustain] all True
-    for i in range(0, len(ok) - sustain):
-        if np.all(ok[i:i + sustain]):
-            return float(x[i]), int(i)
-
-    return np.nan, None
-
-def detect_knee_point_triangle(x, y, *, smooth_win=9):
-    """
-    Knee/turning point via "triangle method":
-    Normalize curve, then find point with max distance to line from start->end.
-    Returns (x_knee, idx_knee) or (np.nan, None).
-    """
-    x = np.asarray(x, float)
-    y = np.asarray(y, float)
-
-    # keep only finite pairs
-    m = np.isfinite(x) & np.isfinite(y)
-    x = x[m]
-    y = y[m]
-    if x.size < 3:
-        return np.nan, None
-
-    ys = _moving_average(y, smooth_win)
-
-    # normalize x to [0,1]
-    x0, x1 = float(x[0]), float(x[-1])
-    if not np.isfinite(x0) or not np.isfinite(x1) or x1 == x0:
-        return np.nan, None
-    xn = (x - x0) / (x1 - x0)
-
-    # normalize y to [0,1]
-    y0, y1 = float(np.nanmin(ys)), float(np.nanmax(ys))
-    if not np.isfinite(y0) or not np.isfinite(y1) or y1 == y0:
-        return np.nan, None
-    yn = (ys - y0) / (y1 - y0)
-
-    # line from start to end
-    p0 = np.array([0.0, yn[0]])
-    p1 = np.array([1.0, yn[-1]])
-    v = p1 - p0
-    nv = np.linalg.norm(v)
-    if not np.isfinite(nv) or nv == 0:
-        return np.nan, None
-
-    pts = np.column_stack([xn, yn])
-    cross = np.abs((pts[:, 0] - p0[0]) * v[1] - (pts[:, 1] - p0[1]) * v[0])
-    dist = cross / nv
-
-    # NEW: guard against all-NaN dist
-    if not np.any(np.isfinite(dist)):
-        return np.nan, None
-
-    idx = int(np.nanargmax(dist))
-    return float(x[idx]), idx
-
-def detect_turning_point_curvature(x, y, *, smooth_win=9):
-    x = np.asarray(x, float)
-    y = np.asarray(y, float)
-
-    m = np.isfinite(x) & np.isfinite(y)
-    x = x[m]
-    y = y[m]
-    if x.size < 3:
-        return np.nan, None
-
-    ys = _moving_average(y, smooth_win)
-    d1 = np.gradient(ys, x)
-    d2 = np.gradient(d1, x)
-
-    if not np.any(np.isfinite(d2)):
-        return np.nan, None
-
-    idx = int(np.nanargmax(np.abs(d2)))
-    return float(x[idx]), idx
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def sidebar_runs_common_ui(
     prefix: str,
@@ -1368,505 +951,55 @@ def sidebar_runs_common_ui(
 
 
 
-def slice_by_time_window(t: np.ndarray, y: np.ndarray, start_frac: float, end_frac: float):
-    t = np.asarray(t, float)
-    y = np.asarray(y, float)
-    m = np.isfinite(t) & np.isfinite(y)
-    t = t[m]
-    y = y[m]
-    if t.size < 2:
-        return t, y
-
-    t0, t1 = float(t.min()), float(t.max())
-    a = t0 + (t1 - t0) * float(start_frac)
-    b = t0 + (t1 - t0) * float(end_frac)
-
-    sel = (t >= a) & (t <= b)
-    return t[sel], y[sel]
-
-
-def avg_slope_linear_fit(t: np.ndarray, y: np.ndarray, t_start_frac=0.0, t_end_frac=1.0) -> float:
-    """
-    Returns slope dy/dt from a least-squares linear fit of y(t)
-    between fractions of the time span.
-    """
-    t = np.asarray(t, float)
-    y = np.asarray(y, float)
-
-    # finite mask
-    m = np.isfinite(t) & np.isfinite(y)
-    t = t[m]
-    y = y[m]
-    if t.size < 2:
-        return float("nan")
-
-    t0, t1 = float(t.min()), float(t.max())
-    if t1 <= t0:
-        return float("nan")
-
-    a = t0 + (t1 - t0) * float(t_start_frac)
-    b = t0 + (t1 - t0) * float(t_end_frac)
-
-    sel = (t >= a) & (t <= b)
-    t_fit = t[sel]
-    y_fit = y[sel]
-
-    if t_fit.size < 2:
-        return float("nan")
-
-    # slope from polyfit (degree 1)
-    slope, intercept = np.polyfit(t_fit, y_fit, 1)
-    return float(slope)
-
-
-def _safe_dt(t):
-    t = np.asarray(t, float)
-    if len(t) < 2:
-        return 1.0
-    dt = float(t[1] - t[0])
-    return dt if dt != 0 else 1.0
-
-def deriv(y, t=None):
-    """Numerical derivative dy/dt using numpy gradient on uniform grid."""
-    y = np.asarray(y, float)
-    if t is None:
-        return np.gradient(y)
-    dt = _safe_dt(t)
-    return np.gradient(y, dt)
-
-def integ(y, t=None):
-    """Cumulative integral ∫ y dt using cumulative trapezoid (no scipy)."""
-    y = np.asarray(y, float)
-    if len(y) < 2:
-        return np.zeros_like(y)
-    if t is None:
-        # assume dt=1
-        return np.cumsum((y[:-1] + y[1:]) * 0.5)  # length n-1
-    t = np.asarray(t, float)
-    dt = _safe_dt(t)
-    out = np.zeros_like(y)
-    out[1:] = np.cumsum((y[:-1] + y[1:]) * 0.5 * dt)
-    return out
-
-def fft_amp(y):
-    """One-sided FFT amplitude spectrum (positive frequencies)."""
-    y = np.asarray(y, float)
-    n = len(y)
-    if n < 2:
-        return y
-    Y = np.fft.rfft(y - np.nanmean(y))
-    return np.abs(Y)
-
-def fft_power(y):
-    """One-sided FFT power spectrum."""
-    y = np.asarray(y, float)
-    n = len(y)
-    if n < 2:
-        return y
-    Y = np.fft.rfft(y - np.nanmean(y))
-    return (np.abs(Y) ** 2)
-
-def fft_freqs(t):
-    """FFT frequency axis (Hz) for rfft based on time grid t (seconds)."""
-    t = np.asarray(t, float)
-    n = len(t)
-    dt = _safe_dt(t)
-    return np.fft.rfftfreq(n, d=dt)
-
-def norm_minmax(y):
-    y = np.asarray(y, float)
-    lo, hi = np.nanmin(y), np.nanmax(y)
-    return (y - lo) / (hi - lo) if hi != lo else np.zeros_like(y)
-
-def norm_max(y):
-    y = np.asarray(y, float)
-    m = np.nanmax(np.abs(y))
-    return y / m if m != 0 else y
-
-def norm_amplitude(y):
-    y = np.asarray(y, float)
-    amp = np.nanmax(y) - np.nanmin(y)
-    return y / amp if amp != 0 else y
-
-def norm_zscore(y):
-    y = np.asarray(y, float)
-    s = np.nanstd(y)
-    return (y - np.nanmean(y)) / s if s != 0 else np.zeros_like(y)
-
-def norm_mean(y):
-    y = np.asarray(y, float)
-    m = np.nanmean(y)
-    return y / m if m != 0 else y
-
-_ALLOWED_BINOPS = {
-    ast.Add: op.add,
-    ast.Sub: op.sub,
-    ast.Mult: op.mul,
-    ast.Div: op.truediv,
-    ast.Pow: op.pow,
-    ast.Mod: op.mod,
-}
-_ALLOWED_UNARYOPS = {
-    ast.UAdd: op.pos,
-    ast.USub: op.neg,
-}
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Allowed functions (vectorized via numpy)
-_ALLOWED_FUNCS = {
-    "log": np.log,
-    "log10": np.log10,
-    "sqrt": np.sqrt,
-    "abs": np.abs,
-    "exp": np.exp,
-    "sin": np.sin,
-    "cos": np.cos,
-    "tan": np.tan,
-    "tanh": np.tanh,
-    "clip": np.clip,
-    "where": np.where,
-    "min": np.minimum,
-    "max": np.maximum,
-    "deriv": deriv,  # deriv(A) or deriv(A, t)
-    "integ": integ,  # integ(A) or integ(A, t)
-    "fft_amp": fft_amp,  # fft_amp(A)
-    "fft_power": fft_power,
-    "amax": np.max,
-    "amin": np.min,
-    "mean": np.mean,
-    "median": np.median,
-    "norm_minmax": norm_minmax,
-    "norm_max": norm_max,
-    "norm_amplitude": norm_amplitude,
-    "norm_zscore": norm_zscore,
-    "norm_mean": norm_mean,
-}
-
-_ALLOWED_NAMES = {"A", "B", "pi", "e", "t"}
-
-def safe_eval_expr(expr: str, env: dict):
-    """
-    Safely evaluate a math expression using AST.
-    env must provide A and B as numpy arrays, plus optional constants.
-    """
-    def _eval(node):
-        if isinstance(node, ast.Expression):
-            return _eval(node.body)
-
-        # numbers
-        if isinstance(node, ast.Constant):
-            if isinstance(node.value, (int, float)):
-                return float(node.value)
-            raise ValueError("Only numeric constants are allowed.")
-
-        # names
-        if isinstance(node, ast.Name):
-            if node.id not in _ALLOWED_NAMES:
-                raise ValueError(f"Unknown variable '{node.id}'. Allowed: A, B.")
-            return env[node.id]
-
-        # binary ops
-        if isinstance(node, ast.BinOp):
-            if type(node.op) not in _ALLOWED_BINOPS:
-                raise ValueError("Operator not allowed.")
-            return _ALLOWED_BINOPS[type(node.op)](_eval(node.left), _eval(node.right))
-
-        # unary ops
-        if isinstance(node, ast.UnaryOp):
-            if type(node.op) not in _ALLOWED_UNARYOPS:
-                raise ValueError("Unary operator not allowed.")
-            return _ALLOWED_UNARYOPS[type(node.op)](_eval(node.operand))
-
-        # function calls
-        if isinstance(node, ast.Call):
-            if not isinstance(node.func, ast.Name):
-                raise ValueError("Only simple function calls allowed.")
-            fname = node.func.id
-            if fname not in _ALLOWED_FUNCS:
-                raise ValueError(
-                    f"Function '{fname}' not allowed. Allowed: {', '.join(sorted(_ALLOWED_FUNCS.keys()))}"
-                )
-            args = [_eval(a) for a in node.args]
-            return _ALLOWED_FUNCS[fname](*args)
-
-        raise ValueError("Expression contains unsupported syntax.")
-
-    tree = ast.parse(expr, mode="eval")
-    return _eval(tree)
-
-
-
-import json, hashlib
-from pathlib import Path
-
-RUN_DATA_DIRNAME = ".run_data"  # where saved per-run metric arrays live
-
-def rundata_dir(base_dir: str) -> Path:
-    d = Path(base_dir) / RUN_DATA_DIRNAME
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-def make_rundata_stem(dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None) -> str:
-    third_part = f"_{third_val:g}{third_unit}" if third_val is not None and third_unit else ""
-    return slugify(f"{dataset_tag}_{tkb:g}tkb_{taub:g}taub{third_part}_{metric_label}")
-
-def rundata_npz_path(base_dir: str, dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None) -> Path:
-    return rundata_dir(base_dir) / (make_rundata_stem(dataset_tag, tkb, taub, metric_label, third_val, third_unit) + ".npz")
-
-def save_rundata_npz(path: Path, y: np.ndarray):
-    y = np.asarray(y, float)
-    np.savez_compressed(path, y=y)
-
-def load_rundata_npz(path: Path) -> np.ndarray:
-    z = np.load(path)
-    return np.asarray(z["y"], float)
-
-def export_rundata_csv(path_csv: Path, y: np.ndarray):
-    # No time column, just index and y
-    import csv
-    y = np.asarray(y, float)
-    with open(path_csv, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["index", "y"])
-        for i, val in enumerate(y):
-            w.writerow([i, "" if not np.isfinite(val) else float(val)])
-
-
-DATASET_CACHE_DIRNAME = ".dataset_cache"   # separate from .metric_cache
-
-def _stable_hash(obj) -> str:
-    blob = json.dumps(obj, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha256(blob).hexdigest()[:16]
-
-def dataset_cache_path(base_dir: str, metric_label: str, metric_func_name: str, runs: list, x_name: str, y_name: str, metric_kwargs_base: dict) -> Path:
-    """
-    Cache key includes:
-      - metric identity
-      - exact selected runs (folder names + tkb + taub)
-      - file names (datax.csv, datay.csv)
-      - common kwargs (skip, normY, etc.)
-    """
-    cache_dir = Path(base_dir) / DATASET_CACHE_DIRNAME
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    runs_key = [
-        {"folder": os.path.basename(fp), "tkb": float(tkb), "taub": float(taub)}
-        for (fp, tkb, taub) in runs
-    ]
-
-    key_obj = {
-        "metric_label": metric_label,
-        "metric_func": metric_func_name,
-        "runs": runs_key,
-        "x_name": x_name,
-        "y_name": y_name,
-        "metric_kwargs_base": metric_kwargs_base,
-    }
-    key = _stable_hash(key_obj)
-    return cache_dir / f"{slugify(metric_label)}__{key}.npz"
-
-def save_dataset_npz(path: Path, series: list[dict]):
-    """
-    series entries must be dicts with keys: run, tkb, taub, t, y
-    Stored as arrays in NPZ (object arrays for variable-length t/y).
-    """
-    runs = np.array([s["run"] for s in series], dtype=object)
-    tkb  = np.array([float(s["tkb"]) for s in series], dtype=float)
-    taub = np.array([float(s["taub"]) for s in series], dtype=float)
-    t_arr = np.array([np.asarray(s["t"], float) for s in series], dtype=object)
-    y_arr = np.array([np.asarray(s["y"], float) for s in series], dtype=object)
-
-    np.savez_compressed(path, runs=runs, tkb=tkb, taub=taub, t=t_arr, y=y_arr)
-
-def get_series_for_metric(
-    metric_label: str,
-    metric_func,
-    selected_runs,
-    base_dir: str,
-    dataset_tag: str,
-    x_name: str,
-    y_name: str,
-    skip: int,
-    normY: int,
-    export_data: bool,
-    export_dir: str,
-    extra_kwargs= None,
-):
-    """
-    Returns series = [{"run","tkb","taub","y"}...] for one metric_label.
-    Uses NPZ cache if export_data is False and file exists.
-    Otherwise computes + saves NPZ (and optionally exports CSV).
-    """
-    series = []
-    missing = []
-
-    for run_tuple in selected_runs:
-        folder_path = run_tuple[0]
-        tkb_val = float(run_tuple[1])
-        tau_val = float(run_tuple[2])
-        third_val = run_tuple[3] if len(run_tuple) > 3 else None
-        third_unit = run_tuple[4] if len(run_tuple) > 4 else None
-        run_name = os.path.basename(folder_path)
-
-        npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label, third_val, third_unit)
-
-        y = None
-        loaded = False
-
-        if (not export_data) and npz_path.exists():
-            try:
-                y = load_rundata_npz(npz_path)
-                loaded = True
-            except Exception:
-                y = None
-
-        if y is None:
-            fx = os.path.join(folder_path, x_name)
-            fy = os.path.join(folder_path, y_name)
-            if not (os.path.isfile(fx) and os.path.isfile(fy)):
-                missing.append(run_name)
-                continue
-
-            kwargs_run = dict(skip=int(skip), normY=int(normY), TauB=float(tau_val))
-            if extra_kwargs:
-                kwargs_run.update(extra_kwargs)
-
-            # Bust the .metric_cache entry when export_data is ticked
-            if export_data:
-                p = metric_cache_path(base_dir, run_name, metric_func.__name__, kwargs_run)
-                if p.exists():
-                    p.unlink(missing_ok=True)
-
-            t, y_calc = load_or_compute_metric_cached(
-                base_dir=base_dir,
-                run_folder=run_name,
-                fx=fx,
-                fy=fy,
-                metric_func=metric_func,
-                metric_kwargs=kwargs_run,
-            )
-            y = np.asarray(y_calc, float)
-
-            try:
-                save_rundata_npz(npz_path, y)
-            except Exception as e:
-                st.warning(f"Could not save NPZ for {run_name}: {e}")
-
-            # Optional CSV export (index+y only)
-            if export_dir.strip():
-                try:
-                    out = Path(export_dir.strip())
-                    out.mkdir(parents=True, exist_ok=True)
-                    csv_path = out / (npz_path.stem + ".csv")
-                    export_rundata_csv(csv_path, y)
-                except Exception as e:
-                    st.warning(f"Could not export CSV for {run_name}: {e}")
-
-        series.append({"run": run_name, "tkb": tkb_val, "taub": tau_val, "third_val": third_val, "third_unit": third_unit, "y": np.asarray(y, float)})
-
-    return series, missing
-
-
-def load_dataset_npz(path: Path) -> list[dict]:
-    z = np.load(path, allow_pickle=True)
-    runs = z["runs"]
-    tkb  = z["tkb"]
-    taub = z["taub"]
-    t_arr = z["t"]
-    y_arr = z["y"]
-
-    series = []
-    for i in range(len(runs)):
-        series.append({
-            "run": str(runs[i]),
-            "tkb": float(tkb[i]),
-            "taub": float(taub[i]),
-            #"t": np.asarray(t_arr[i], float),
-            "y": np.asarray(y_arr[i], float),
-        })
-    return series
-
-
-
-def export_series_to_csv(out_dir: str, dataset_tag: str, metric_label: str, series: list[dict]):
-    import csv
-    os.makedirs(out_dir, exist_ok=True)
-
-    written_paths = []
-    for s in series:
-        tkb = float(s["tkb"])
-        taub = float(s["taub"])
-        run = s["run"]
-        y = np.asarray(s["y"], float)
-
-        filename = slugify(f"{dataset_tag}_{tkb:g}tkb_{taub:g}taub_{metric_label}") + ".csv"
-        path = os.path.join(out_dir, filename)
-
-        with open(path, "w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["index", "y", "run_folder"])
-            for i, val in enumerate(y):
-                w.writerow([i, "" if not np.isfinite(val) else float(val), run])
-
-        written_paths.append(path)
-
-    return written_paths
-
-def align_y_by_taub_length(y_a: np.ndarray, y_b: np.ndarray, taub: float):
-    """
-    Align two y arrays to same length by interpolating along a synthetic time axis
-    spanning [0, taub*13.513] seconds.
-    Returns (t_grid_sec, yA_grid, yB_grid).
-    """
-    y_a = np.asarray(y_a, float)
-    y_b = np.asarray(y_b, float)
-
-    n = max(len(y_a), len(y_b))
-    t_end_sec = float(taub) * 13.513
-    t_grid = np.linspace(0.0, t_end_sec, n)
-
-    # create each array's own x axis then interp onto grid
-    xa = np.linspace(0.0, t_end_sec, len(y_a))
-    xb = np.linspace(0.0, t_end_sec, len(y_b))
-
-    ya = np.interp(t_grid, xa, y_a, left=y_a[0], right=y_a[-1]) if len(y_a) > 1 else np.full(n, y_a[0] if len(y_a) else np.nan)
-    yb = np.interp(t_grid, xb, y_b, left=y_b[0], right=y_b[-1]) if len(y_b) > 1 else np.full(n, y_b[0] if len(y_b) else np.nan)
-
-    return t_grid, ya, yb
-
-
-
-
-CACHE_DIRNAME = ".metric_cache"
-
-def _stable_hash(obj) -> str:
-    blob = json.dumps(obj, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha256(blob).hexdigest()[:16]
-
-def metric_cache_path(base_dir: str, run_folder: str, metric_name: str, metric_kwargs: dict) -> Path:
-    cache_dir = Path(base_dir) / CACHE_DIRNAME
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    key = _stable_hash({"run": run_folder, "metric": metric_name, "kwargs": metric_kwargs})
-    return cache_dir / f"{key}.npz"
-
-def load_or_compute_metric_cached(base_dir: str, run_folder: str, fx: str, fy: str, metric_func, metric_kwargs: dict, *, force_recompute=False):
-    p = metric_cache_path(base_dir, run_folder, metric_func.__name__, metric_kwargs)
-    if p.exists() and not force_recompute:
-        z = np.load(p)
-        return z["t"], z["y"]
-    t, y = metric_func(fx, fy, **metric_kwargs)
-    t = np.asarray(t, float)
-    y = np.asarray(y, float)
-    np.savez_compressed(p, t=t, y=y)
-    return t, y
-
-def resample_to_grid(t, y, t_grid):
-    t = np.asarray(t, float)
-    y = np.asarray(y, float)
-    ok = np.isfinite(t) & np.isfinite(y)
-    t_ok, y_ok = t[ok], y[ok]
-    if len(t_ok) < 2:
-        return np.full_like(t_grid, np.nan, dtype=float)
-    return np.interp(t_grid, t_ok, y_ok, left=y_ok[0], right=y_ok[-1])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1882,313 +1015,29 @@ DEFAULT_SAVE_DIR = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Stude
 # ---------------------------------------------------------------------
 # Helper: save uploaded files
 # ---------------------------------------------------------------------
-def save_uploaded_file(uploaded_file, filename):
-    temp_dir = tempfile.gettempdir()
-    path = pathlib.Path(temp_dir) / filename
-    with open(path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    return str(path)
 
 
 # ---------------------------------------------------------------------
 # Helper: global styling for any matplotlib figure
 # ---------------------------------------------------------------------
-def apply_global_styling(
-    fig,
-    legend_on=True,
-    legend_fontsize=16,
-    axis_fontsize=18,
-    title_on=True,
-    title_fontsize=20,
-):
-    """
-    Apply legend / axis / title styling to all axes in a figure.
-    """
-    for ax in fig.get_axes():
-        # Axis tick font size
-        ax.tick_params(axis="both", labelsize=axis_fontsize)
-
-        # Axis labels
-        if ax.get_xlabel():
-            ax.set_xlabel(ax.get_xlabel(), fontsize=axis_fontsize)
-        if ax.get_ylabel():
-            ax.set_ylabel(ax.get_ylabel(), fontsize=axis_fontsize)
-
-        # Title
-        if not title_on:
-            ax.set_title("")
-        else:
-            if ax.get_title():
-                ax.set_title(ax.get_title(), fontsize=title_fontsize)
-
-        # Legend
-        leg = ax.get_legend()
-        if leg is not None:
-            leg.set_visible(legend_on)
-            if legend_on and legend_fontsize is not None:
-                for text in leg.get_texts():
-                    text.set_fontsize(legend_fontsize)
 
 
 
-def apply_grid(ax, show_grid: bool):
-    if show_grid:
-        ax.grid(True, which="major", alpha=0.3)
-    else:
-        ax.grid(False, which="both")
-        ax.minorticks_off()
 # ---------------------------------------------------------------------
 # Helper: slugify for filenames + save figure if requested
 # ---------------------------------------------------------------------
-def slugify(text: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_-]+", "_", text).strip("_")
 
 
-def save_figure_if_requested(fig, base_name: str, save_enabled: bool, output_dir: str):
-    if not save_enabled:
-        return
-    if not output_dir:
-        st.warning("Save enabled but no output folder provided.")
-        return
-
-    try:
-        os.makedirs(output_dir, exist_ok=True)
-        filename = slugify(base_name) or "plot"
-        path = os.path.join(output_dir, f"{filename}.png")
-        fig.savefig(path, dpi=300, bbox_inches="tight")
-        st.info(f"Saved plot to: `{path}`")
-    except Exception as e:
-        st.warning(f"Could not save figure to `{output_dir}`: {e}")
 
 
 # ---------------------------------------------------------------------
 # Helper: build PPTX from image folders
 # ---------------------------------------------------------------------
-def build_pptx_from_images(
-    images_root: Path,
-    output_pptx: Optional[Path] = None,
-    cols: int = 4,
-    margin_in=0.2,
-    title_h_in=0.5,
-    label_h_in=0.6,
-    row_gap_in=0.4,
-) -> Path:
-    """
-    Walk a folder structure like:
-        images_root/
-            0Tkb_.../
-                metric1.png
-                metric2.png
-            5Tkb_.../
-                metric1.png
-                metric2.png
-            ...
-
-    and build a PPTX where each slide is one 'metric' (stem name),
-    with columns = different Tkb folders.
-    """
-
-    margin  = Inches(margin_in)
-    title_h = Inches(title_h_in)
-    label_h = Inches(label_h_in)
-    row_gap = Inches(row_gap_in)
-
-    def parse_tkb(fn: str) -> float:
-        m = re.match(r"([\d\.]+)Tkb", fn)
-        return float(m.group(1)) if m else float("inf")
-
-    if output_pptx is None:
-        output_pptx = images_root / "plots_by_type_Tkb.pptx"
-
-    # 1) collect & sort your Tkb folders
-    param_dirs = sorted(
-        [d for d in images_root.iterdir() if d.is_dir()],
-        key=lambda d: parse_tkb(d.name),
-    )
-    if not param_dirs:
-        raise RuntimeError(f"No Tkb folders found inside: {images_root}")
-
-    # 2) collect all plot‐stems
-    plot_stems = sorted(
-        {
-            img.stem
-            for d in param_dirs
-            for img in d.glob("*.png")
-        }
-    )
-    if not plot_stems:
-        raise RuntimeError(f"No .png images found under: {images_root}")
-
-    n_params = len(param_dirs)
-    n_rows   = math.ceil(n_params / cols)
-
-    prs = Presentation()
-
-    usable_w = prs.slide_width - 2*margin
-    img_w    = (usable_w - (cols-1)*margin) / cols
-    img_h    = img_w
-
-    # total height = top margin + title + gap + rows*(label + plot + gap) + bottom margin
-    total_h = (
-        margin
-        + title_h
-        + margin
-        + n_rows * (label_h + img_h + row_gap)
-        + margin
-    )
-    prs.slide_height = int(round(total_h))
-
-    blank = prs.slide_layouts[6]
-
-    # 4) build slides
-    for stem in plot_stems:
-        slide = prs.slides.add_slide(blank)
-
-        # slide title
-        tb = slide.shapes.add_textbox(
-            margin,
-            margin / 2,
-            prs.slide_width - 2 * margin,
-            title_h,
-        )
-        p  = tb.text_frame.add_paragraph()
-        p.text      = stem.replace("_", " ").capitalize()
-        p.font.size = Pt(28)
-        p.alignment = PP_ALIGN.CENTER
-
-        # place each Tkb in ascending order
-        for idx, d in enumerate(param_dirs):
-            img_path = d / f"{stem}.png"
-            if not img_path.exists():
-                continue
-
-            row, col = divmod(idx, cols)
-            left     = margin + col * (img_w + margin)
-            top_base = margin + title_h + margin + row * (label_h + img_h + row_gap)
-
-            # label ABOVE the plot
-            lbl_tb = slide.shapes.add_textbox(left, top_base, img_w, label_h)
-            lbl_p  = lbl_tb.text_frame.add_paragraph()
-            lbl_p.text      = f"{parse_tkb(d.name)} Tkb"
-            lbl_p.font.size = Pt(12)
-            lbl_p.alignment = PP_ALIGN.LEFT
-
-            # picture immediately below that label
-            slide.shapes.add_picture(
-                str(img_path),
-                left,
-                top_base + label_h,
-                width=img_w,
-            )
-
-    prs.save(output_pptx)
-    return output_pptx
 
 
 # ---------------------------------------------------------------------
 # Phase-diagram snapshot panel
 # ---------------------------------------------------------------------
-def make_snapshot_phase_panel(
-    base_dir,
-    tkb_rows,
-    column_times_s,
-    taub,
-    x_name="datax.csv",
-    y_name="datay.csv",
-    figure_size=(12, 14),
-    dpi=200,
-    plot_func=None,
-    plot_kwargs=None,
-    show_xy_labels=False,
-    colorbar_cmap=None,   # NEW
-    colorbar_label=None,  # NEW
-):
-
-    if plot_kwargs is None:
-        plot_kwargs = {}
-    if plot_func is None:
-        raise ValueError("plot_func must be provided")
-
-    total_time_sec = taub * 13.514
-
-    folder_re = re.compile(r"^([0-9]+(?:\.[0-9]+)?)Tkb_")
-    tkb_rows = [float(t) for t in tkb_rows]
-    tkb_to_folder = {}
-    for fname in sorted(os.listdir(base_dir)):
-        m = folder_re.match(fname)
-        if m:
-            tkb = float(m.group(1))
-            if tkb in tkb_rows:
-                tkb_to_folder[tkb] = os.path.join(base_dir, fname)
-
-    nrows, ncols = len(tkb_rows), len(column_times_s)
-    fig, axes = plt.subplots(
-        nrows, ncols,
-        figsize=figure_size,
-        constrained_layout=True,
-        dpi=dpi
-    )
-    if nrows == 1 and ncols == 1:
-        axes = np.array([[axes]])
-    elif nrows == 1:
-        axes = axes[np.newaxis, :]
-    elif ncols == 1:
-        axes = axes[:, np.newaxis]
-
-    for r, tkb in enumerate(tkb_rows):
-        folder = tkb_to_folder.get(tkb)
-        for c, t_req in enumerate(column_times_s):
-            ax = axes[r, c]
-            ax.set_xticks([]); ax.set_yticks([])
-
-            if not folder:
-                ax.axis("off")
-                continue
-
-            fx = os.path.join(folder, x_name)
-            fy = os.path.join(folder, y_name)
-
-            skip = int(plot_kwargs.get("skip", 0))
-            X = read_particle_data_csv(fx)[skip::2, 1:][1:, :]
-            n_frames = X.shape[0]
-
-            t_sec = max(0.0, min(float(total_time_sec), float(t_req)))
-            dt = float(total_time_sec) / max(n_frames - 1, 1)
-            frame_idx = int(round(t_sec / dt))
-            frame_idx = max(0, min(n_frames - 1, frame_idx))
-
-            plot_func(fx, fy, timestep=frame_idx, ax=ax, **plot_kwargs)
-
-            if not show_xy_labels:
-                ax.set_xlabel("")
-                ax.set_ylabel("")
-
-            if r == 0:
-                ax.set_title(f"{t_sec:.1f} s", fontsize=14)
-
-            if c == 0:
-                label = rf"{int(tkb) if tkb.is_integer() else tkb}$T_{{kB}}$"
-                ax.set_ylabel(label, fontsize=14)
-
-
-    # --- optional shared colorbar on the side ---
-    if colorbar_cmap is not None:
-        from matplotlib.cm import ScalarMappable
-        from matplotlib.colors import Normalize
-
-        sm = ScalarMappable(norm=Normalize(vmin=0, vmax=1),
-                            cmap=plt.get_cmap(colorbar_cmap))
-        sm.set_array([])
-
-        fig.colorbar(
-            sm,
-            ax=axes.ravel().tolist(),
-            label=colorbar_label if colorbar_label else "",
-            fraction=0.03,
-            pad=0.02,
-        )
-
-    return fig, axes
 
 
 
