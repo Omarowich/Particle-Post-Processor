@@ -1673,6 +1673,15 @@ elif plot_mode == "Multiple plots":
             taubs_sorted = sorted({float(s["taub"]) for s in series})
             for s in series:
                 x = np.linspace(0.0, rdf_r_max, len(s["y"]))
+                y_vals = np.asarray(s["y"], float)
+
+                if x_range_custom and x_range_min is not None and x_range_max is not None:
+                    mask = (x >= float(x_range_min)) & (x <= float(x_range_max))
+                    x = x[mask]
+                    y_vals = y_vals[mask]
+                    if len(x) < 2:
+                        continue
+
                 if use_gradient and len({float(r["tkb"]) for r in series}) == 1:
                     # same TkB, differentiate by TauB index
                     idx = taubs_sorted.index(float(s["taub"]))
@@ -1681,7 +1690,7 @@ elif plot_mode == "Multiple plots":
                 else:
                     col = get_line_color(s)
                 ax.plot(
-                    x, s["y"],
+                    x, y_vals,
                     label=f"{s['tkb']:g} Tkb (TauB {s['taub']:g})" if show_taub_in_legend else f"{s['tkb']:g} Tkb",
                     color=col,
                 )
@@ -1692,7 +1701,7 @@ elif plot_mode == "Multiple plots":
                     "third_val": s.get("third_val"),
                     "third_unit": s.get("third_unit"),
                     "x": np.asarray(x, float),
-                    "y": np.asarray(s["y"], float),
+                    "y": np.asarray(y_vals, float),
                 })
             st.session_state[f"post_curves_{metric_label}"] = post_curves
             st.session_state["multi_cached"] = True
@@ -1714,6 +1723,14 @@ elif plot_mode == "Multiple plots":
                     y_grid = np.interp(t_grid_sec, x_raw, y_raw, left=y_raw[0], right=y_raw[-1])
 
                     x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
+
+                    if x_range_custom and x_range_min is not None and x_range_max is not None:
+                        mask = (x >= float(x_range_min)) & (x <= float(x_range_max))
+                        x = x[mask]
+                        y_grid = y_grid[mask]
+                        if len(x) < 2:
+                            continue
+
                     ax.plot(
                         x,
                         y_grid,
