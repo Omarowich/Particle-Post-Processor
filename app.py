@@ -1016,7 +1016,7 @@ def sidebar_runs_common_ui(
     folder_source = st.sidebar.radio(
         "Folder source:",
         ["HIWI root subfolder", "Custom path"],
-        key=f"{prefix}_folder_source",
+        key="multi_folder_source",
     )
 
     hiwi_subdirs = []
@@ -1033,14 +1033,14 @@ def sidebar_runs_common_ui(
         subchoice = st.sidebar.selectbox(
             "Choose subfolder under source root:",
             hiwi_subdirs,
-            key=f"{prefix}_hiwi_sub",
+            key="multi_hiwi_sub",
         )
         base_dir = os.path.join(source_root, subchoice) if subchoice else ""
     else:
         base_dir = st.sidebar.text_input(
             "Custom base folder path:",
             value="",
-            key=f"{prefix}_folder_custom",
+            key="multi_folder_custom",
         )
 
     base_dir = base_dir.strip().strip('"').strip("'")
@@ -1053,14 +1053,14 @@ def sidebar_runs_common_ui(
             x_name = st.text_input(
                 "X",
                 value="datax.csv",
-                key=f"{prefix}_xname",
+                key="multi_xname",
                 help="X filename inside each run folder",
             )
         with c2:
             y_name = st.text_input(
                 "Y",
                 value="datay.csv",
-                key=f"{prefix}_yname",
+                key="multi_yname",
                 help="Y filename inside each run folder",
             )
         c3, c4 = st.columns(2)
@@ -1070,13 +1070,13 @@ def sidebar_runs_common_ui(
                 value=1,
                 step=1,
                 min_value=0,
-                key=f"{prefix}_skip",
+                key="multi_skip",
             )
         with c4:
             normY = st.checkbox(
                 "Normalize Y axis",
                 value=True,
-                key=f"{prefix}_normY",
+                key="multi_normY",
             )
 
     # ---- runs detection ----
@@ -1086,7 +1086,7 @@ def sidebar_runs_common_ui(
     if base_dir and os.path.isdir(base_dir):
         try:
             folder_re = re.compile(
-                r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB$",
+                r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB(?:[ _]*([0-9]+(?:\.[0-9]+)?)(nm|dn))?$",
                 re.IGNORECASE,
             )
             for fn in os.listdir(base_dir):
@@ -1095,29 +1095,83 @@ def sidebar_runs_common_ui(
                     continue
                 tkb_val = float(m.group(1))
                 tau_val = float(m.group(2))
+                third_val = float(m.group(3)) if m.group(3) else None
+                third_unit = m.group(4).lower() if m.group(4) else None
                 folder_path = os.path.join(base_dir, fn)
-                available_runs.append((folder_path, tkb_val, tau_val))
+                available_runs.append((folder_path, tkb_val, tau_val, third_val, third_unit))
         except Exception as e:
             st.sidebar.error(f"Could not scan TkB/TauB folders in {base_dir}: {e}")
 
     available_runs = sorted(available_runs, key=lambda r: (r[1], r[2]))
 
     def format_run_option(run) -> str:
-        _, tkb, tau = run
-        return f"{tkb:g} Tkb (TauB: {tau:g})"
+        _, tkb, tau = run[:3]
+        third_val = run[3] if len(run) > 3 else None
+        third_unit = run[4] if len(run) > 4 else None
+        base = f"{tkb:g} Tkb (TauB: {tau:g})"
+        if third_val is not None and third_unit:
+            base += f" ({third_val:g} {third_unit})"
+        return base
 
     if available_runs:
+        all_tkbs = sorted({r[1] for r in available_runs})
+        all_taus = sorted({r[2] for r in available_runs})
+        all_thirds = sorted({r[3] for r in available_runs if r[3] is not None})
+        all_units = sorted({r[4] for r in available_runs if r[4] is not None})
+
+        st.sidebar.markdown("**Filter runs:**")
+        filter_tkbs = st.sidebar.multiselect(
+            "TkB values", all_tkbs, default=all_tkbs, key="multi_filter_tkb"
+        )
+        filter_taus = st.sidebar.multiselect(
+            "TauB values", all_taus, default=all_taus, key="multi_filter_tau"
+        )
+        if all_thirds:
+            unit_label = "/".join(all_units) if all_units else "3rd param"
+            filter_thirds = st.sidebar.multiselect(
+                f"{unit_label} values", all_thirds, default=all_thirds,
+                key="multi_filter_third"
+            )
+        else:
+            filter_thirds = []
+
+        def run_passes_filter(r):
+            if r[1] not in filter_tkbs:
+                return False
+            if r[2] not in filter_taus:
+                return False
+            if all_thirds and r[3] not in filter_thirds:
+                return False
+            return True
+
+        filtered_runs = [r for r in available_runs if run_passes_filter(r)]
+
         selected_runs = st.sidebar.multiselect(
-            "Select TkB / TauB combinations (from folders):",
-            options=available_runs,
-            default=available_runs,
-            key=f"{prefix}_runs",
+            "Select runs (from filtered):",
+            options=filtered_runs,
+            default=filtered_runs,
+            key="multi_runs",
             format_func=format_run_option,
         )
     else:
         selected_runs = []
         st.sidebar.warning("No Tkb_*TauB* subfolders detected. Please check your base folder.")
 
+
+
+    has_third = any(len(r) > 3 and r[3] is not None for r in available_runs)
+    group_by_options = ["TkB", "TauB"]
+    if has_third:
+        third_units = {r[4] for r in available_runs if len(r) > 4 and r[4]}
+        third_label = "/".join(sorted(third_units)) if third_units else "3rd param"
+        group_by_options.append(third_label)
+
+    group_by = st.sidebar.selectbox(
+        "Color/group curves by:",
+        group_by_options,
+        index=0,
+        key="multi_group_by",
+    )
     # ---- metrics selection (NOW right after run selection) ----
     metrics_selected = None
     if include_metric_select:
@@ -1128,8 +1182,9 @@ def sidebar_runs_common_ui(
             "Select metric function(s) (y-axis):",
             metric_options,
             default=default_metrics,
-            key=f"{prefix}_metric_select",
+            key="multi_metric_select",
         )
+
 
     # ---- Crystal metrics parameters (ONLY if Detect crystals selected) ----
     crystal_types = []
@@ -1139,7 +1194,7 @@ def sidebar_runs_common_ui(
             "Crystal types (Detect crystals)",
             ["Hexagonal", "Square", "Triangular", "All", "None"],
             default=["Hexagonal"],
-            key=f"{prefix}_crystal_types",
+            key="multi_crystal_types",
         )
 
     # ---- common params ----
@@ -1152,37 +1207,37 @@ def sidebar_runs_common_ui(
             "Cluster detection mode",
             ["per_cluster", "global"],
             index=0,
-            key=f"{prefix}_area_fraction_mode",
+            key="multi_area_fraction_mode",
         )
 
         cluster_eps = st.number_input(
             "DBSCAN eps",
             value=3.5,
             step=0.1,
-            key=f"{prefix}_cluster_eps",
+            key="multi_cluster_eps",
         )
         cluster_min_samples = st.number_input(
             "DBSCAN min_samples",
             value=3,
             step=1,
             min_value=1,
-            key=f"{prefix}_cluster_min_samples",
+            key="multi_cluster_min_samples",
         )
         cluster_min_cluster_size = st.number_input(
             "Min cluster size",
             value=3,
             step=1,
             min_value=1,
-            key=f"{prefix}_cluster_min_cluster_size",
+            key="multi_cluster_min_cluster_size",
         )
 
 
         st.subheader("RDF parameters")
         rdf_r_max = st.number_input(
-            "RDF r_max (µm)", value=10.0, step=0.5, key=f"{prefix}_rdf_rmax"
+            "RDF r_max (µm)", value=10.0, step=0.5, key="multi_rdf_rmax"
         )
         rdf_dr = st.number_input(
-            "RDF dr (bin width, µm)", value=0.1, step=0.05, format="%.3f", key=f"{prefix}_rdf_dr"
+            "RDF dr (bin width, µm)", value=0.1, step=0.05, format="%.3f", key="multi_rdf_dr"
         )
 
 
@@ -1190,21 +1245,21 @@ def sidebar_runs_common_ui(
     st.sidebar.header("Styling")
     c_left, c_right = st.sidebar.columns([1, 1])
     with c_left:
-        legend_on = st.checkbox("Show legend", value=True, key=f"{prefix}_legend_on")
+        legend_on = st.checkbox("Show legend", value=True, key="multi_legend_on")
         show_taub_in_legend = st.checkbox("Show TauB in legend", value=False, key="multi_show_taub")
-        title_on = st.checkbox("Show title", value=False, key=f"{prefix}_title_on")
-        show_ylabel = st.checkbox("Show Y axis label", value=False, key=f"{prefix}_show_ylabel")
-        show_xlabel = st.checkbox("Show X axis label", value=False, key=f"{prefix}_show_xlabel")
-        show_grid = st.checkbox("Show grid", value=False, key=f"{prefix}_show_grid")
+        title_on = st.checkbox("Show title", value=False, key="multi_title_on")
+        show_ylabel = st.checkbox("Show Y axis label", value=False, key="multi_show_ylabel")
+        show_xlabel = st.checkbox("Show X axis label", value=False, key="multi_show_xlabel")
+        show_grid = st.checkbox("Show grid", value=False, key="multi_show_grid")
     with c_right:
         legend_fontsize = st.number_input(
-            "Legend font size", value=16, min_value=1, max_value=40, key=f"{prefix}_legend_fs"
+            "Legend font size", value=16, min_value=1, max_value=40, key="multi_legend_fs"
         )
         axis_fontsize = st.number_input(
-            "Axis font size", value=18, min_value=1, max_value=40, key=f"{prefix}_axis_fs"
+            "Axis font size", value=18, min_value=1, max_value=40, key="multi_axis_fs"
         )
         title_fontsize = st.number_input(
-            "Title font size", value=20, min_value=1, max_value=60, key=f"{prefix}_title_fs"
+            "Title font size", value=20, min_value=1, max_value=60, key="multi_title_fs"
         )
 
     # x-axis mode
@@ -1214,15 +1269,26 @@ def sidebar_runs_common_ui(
         x_axis_mode = st.radio(
             "X-axis units",
             ["Brownian time τ_B", "Seconds"],
-            key=f"{prefix}_xaxis_mode",
+            key="multi_xaxis_mode",
         )
     with c12:
         TauB = st.number_input(
             "TauB (Brownian time)",
             value=2.0,
             step=0.5,
-            key=f"{prefix}_TauB",
+            key="multi_TauB",
         )
+    st.sidebar.subheader("X Range Slicer")
+    x_range_custom = st.sidebar.checkbox("Clip X range", value=False, key="multi_x_range_custom")
+    if x_range_custom:
+        xc1, xc2 = st.sidebar.columns(2)
+        with xc1:
+            x_range_min = st.sidebar.number_input("X min", value=0.0, step=0.01, format="%.3f", key="multi_x_range_min")
+        with xc2:
+            x_range_max = st.sidebar.number_input("X max", value=1.0, step=0.01, format="%.3f", key="multi_x_range_max")
+    else:
+        x_range_min = None
+        x_range_max = None
 
     # y-axis mode
     st.sidebar.subheader("Y-Axis")
@@ -1232,30 +1298,30 @@ def sidebar_runs_common_ui(
             "Scale",
             ["Linear", "Log"],
             index=0,
-            key=f"{prefix}_y_scale",
+            key="multi_y_scale",
         )
     with c22:
         y_unit = st.text_input(
             "Unit label",
             placeholder="μm, mm, 1/s, …",
-            key=f"{prefix}_y_unit",
+            key="multi_y_unit",
             help="This is only the label shown on the plot (does not change the data).",
         )
-    y_range_custom = st.sidebar.checkbox("Custom Y range", value=False, key=f"{prefix}_y_range_custom")
-    y_range_min = st.sidebar.number_input("Y min", value=0.0, key=f"{prefix}_y_range_min") if y_range_custom else None
-    y_range_max = st.sidebar.number_input("Y max", value=1.0, key=f"{prefix}_y_range_max") if y_range_custom else None
+    y_range_custom = st.sidebar.checkbox("Custom Y range", value=False, key="multi_y_range_custom")
+    y_range_min = st.sidebar.number_input("Y min", value=0.0, step=1.0, key="multi_y_range_min") if y_range_custom else None
+    y_range_max = st.sidebar.number_input("Y max", value=100.0, step=1.0, key="multi_y_range_max") if y_range_custom else None
 
     # export / recompute
     st.sidebar.header("Caching / export")
     export_data = st.sidebar.checkbox(
         "Export (recompute + overwrite saved run data)",
         value=False,
-        key=f"{prefix}_export_data",
+        key="multi_export_data",
     )
     export_dir = st.sidebar.text_input(
         "Optional CSV export folder (leave empty to skip CSV export):",
         value=DEFAULT_SAVE_DIR,
-        key=f"{prefix}_export_dir",
+        key="multi_export_dir",
     )
 
     out = {
@@ -1292,6 +1358,10 @@ def sidebar_runs_common_ui(
         "show_ylabel": show_ylabel,
         "show_xlabel": show_xlabel,
         "show_grid": show_grid,
+        "group_by": group_by,
+        "x_range_custom": x_range_custom,
+        "x_range_min": x_range_min,
+        "x_range_max": x_range_max,
 
     }
     return out
@@ -1403,6 +1473,31 @@ def fft_freqs(t):
     dt = _safe_dt(t)
     return np.fft.rfftfreq(n, d=dt)
 
+def norm_minmax(y):
+    y = np.asarray(y, float)
+    lo, hi = np.nanmin(y), np.nanmax(y)
+    return (y - lo) / (hi - lo) if hi != lo else np.zeros_like(y)
+
+def norm_max(y):
+    y = np.asarray(y, float)
+    m = np.nanmax(np.abs(y))
+    return y / m if m != 0 else y
+
+def norm_amplitude(y):
+    y = np.asarray(y, float)
+    amp = np.nanmax(y) - np.nanmin(y)
+    return y / amp if amp != 0 else y
+
+def norm_zscore(y):
+    y = np.asarray(y, float)
+    s = np.nanstd(y)
+    return (y - np.nanmean(y)) / s if s != 0 else np.zeros_like(y)
+
+def norm_mean(y):
+    y = np.asarray(y, float)
+    m = np.nanmean(y)
+    return y / m if m != 0 else y
+
 _ALLOWED_BINOPS = {
     ast.Add: op.add,
     ast.Sub: op.sub,
@@ -1439,6 +1534,11 @@ _ALLOWED_FUNCS = {
     "amin": np.min,
     "mean": np.mean,
     "median": np.median,
+    "norm_minmax": norm_minmax,
+    "norm_max": norm_max,
+    "norm_amplitude": norm_amplitude,
+    "norm_zscore": norm_zscore,
+    "norm_mean": norm_mean,
 }
 
 _ALLOWED_NAMES = {"A", "B", "pi", "e", "t"}
@@ -1505,13 +1605,12 @@ def rundata_dir(base_dir: str) -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
-def make_rundata_stem(dataset_tag: str, tkb: float, taub: float, metric_label: str) -> str:
-    # Your naming: NAF_tkb_taub_metric
-    # Add units text to avoid ambiguity and keep filenames safe
-    return slugify(f"{dataset_tag}_{tkb:g}tkb_{taub:g}taub_{metric_label}")
+def make_rundata_stem(dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None) -> str:
+    third_part = f"_{third_val:g}{third_unit}" if third_val is not None and third_unit else ""
+    return slugify(f"{dataset_tag}_{tkb:g}tkb_{taub:g}taub{third_part}_{metric_label}")
 
-def rundata_npz_path(base_dir: str, dataset_tag: str, tkb: float, taub: float, metric_label: str) -> Path:
-    return rundata_dir(base_dir) / (make_rundata_stem(dataset_tag, tkb, taub, metric_label) + ".npz")
+def rundata_npz_path(base_dir: str, dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None) -> Path:
+    return rundata_dir(base_dir) / (make_rundata_stem(dataset_tag, tkb, taub, metric_label, third_val, third_unit) + ".npz")
 
 def save_rundata_npz(path: Path, y: np.ndarray):
     y = np.asarray(y, float)
@@ -1600,12 +1699,15 @@ def get_series_for_metric(
     series = []
     missing = []
 
-    for folder_path, tkb_val, tau_val in selected_runs:
+    for run_tuple in selected_runs:
+        folder_path = run_tuple[0]
+        tkb_val = float(run_tuple[1])
+        tau_val = float(run_tuple[2])
+        third_val = run_tuple[3] if len(run_tuple) > 3 else None
+        third_unit = run_tuple[4] if len(run_tuple) > 4 else None
         run_name = os.path.basename(folder_path)
-        tkb_val = float(tkb_val)
-        tau_val = float(tau_val)
 
-        npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label)
+        npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label, third_val, third_unit)
 
         y = None
         loaded = False
@@ -1659,7 +1761,7 @@ def get_series_for_metric(
                 except Exception as e:
                     st.warning(f"Could not export CSV for {run_name}: {e}")
 
-        series.append({"run": run_name, "tkb": tkb_val, "taub": tau_val, "y": np.asarray(y, float)})
+        series.append({"run": run_name, "tkb": tkb_val, "taub": tau_val, "third_val": third_val, "third_unit": third_unit, "y": np.asarray(y, float)})
 
     return series, missing
 
@@ -2527,6 +2629,9 @@ elif plot_mode == "Multiple plots":
     show_ylabel = ui.get("show_ylabel", False)
     show_xlabel = ui.get("show_xlabel", True)
     show_grid = ui.get("show_grid", True)
+    x_range_custom = ui.get("x_range_custom", False)
+    x_range_min = ui.get("x_range_min", None)
+    x_range_max = ui.get("x_range_max", None)
 
 
 
@@ -2534,29 +2639,72 @@ elif plot_mode == "Multiple plots":
     # ---- Color mode UI ----
     st.sidebar.header("Curve colors")
     color_mode_multi = st.sidebar.radio(
-        "Curve colors",
-        ["Matplotlib default", "Gradient over TkB"],
-        key="multi_color_mode",  # unique key
+        "Color mode",
+        ["Single color", "Gradient over TkB", "Group by 3rd param", "Group by 3rd param + gradient over TkB"],
+        key="multi_color_mode"
     )
 
-    if color_mode_multi == "Gradient over TkB":
-        st.sidebar.write("Gradient colors:")
-        col1, col2 = st.sidebar.columns(2)
-        with col1:
-            color_start_multi = st.sidebar.color_picker(
-                "Start",
-                value="#D3D3D3",
-                key="multi_color_start",
-            )
-        with col2:
-            color_end_multi = st.sidebar.color_picker(
-                "End",
-                value="#000000",
-                key="multi_color_end",
-            )
-    else:
-        color_start_multi = "#D3D3D3"
-        color_end_multi = "#000000"
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        color_start_multi = st.color_picker("Start color", "#D3D3D3", key="multi_color_start")
+    with col2:
+        color_end_multi = st.color_picker("End color", "#000000", key="multi_color_end")
+
+    import matplotlib.colors as mcolors
+
+    # collect unique values
+    unique_tkbs = sorted({float(r[1]) for r in selected_runs})
+    unique_taus = sorted({float(r[2]) for r in selected_runs})
+    unique_thirds = sorted({r[3] for r in selected_runs if r[3] is not None})
+
+    # assign a base color per group (3rd param)
+    group_base_colors = {}
+    if unique_thirds:
+        group_palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
+        for i, v in enumerate(unique_thirds):
+            group_base_colors[v] = group_palette[i % len(group_palette)]
+
+    cmap_default = mcolors.LinearSegmentedColormap.from_list(
+        "default", [color_start_multi, color_end_multi]
+    )
+
+    def get_line_color(s):
+        tkb = float(s["tkb"])
+        third = s.get("third_val")
+
+        if color_mode_multi == "Single color":
+            return None
+
+        elif color_mode_multi == "Gradient over TkB":
+            if len(unique_tkbs) == 1:
+                return cmap_default(0.5)
+            idx = unique_tkbs.index(tkb)
+            return mcolors.LinearSegmentedColormap.from_list(
+                "g", [color_start_multi, color_end_multi]
+            )(idx / max(len(unique_tkbs) - 1, 1))
+
+        elif color_mode_multi == "Group by 3rd param":
+            if third is not None and third in group_base_colors:
+                return group_base_colors[third]
+            return None
+
+        elif color_mode_multi == "Group by 3rd param + gradient over TkB":
+            if third is None or third not in group_base_colors:
+                return None
+            base_hex = group_base_colors[third]
+            # make a light-to-dark gradient within the group color
+            base_rgb = mcolors.to_rgb(base_hex)
+            light = tuple(min(1.0, c * 1.0 + 0.5) for c in base_rgb)
+            dark  = tuple(max(0.0, c * 0.4) for c in base_rgb)
+            cmap_group = mcolors.LinearSegmentedColormap.from_list("grp", [dark, light])
+            if len(unique_tkbs) == 1:
+                return cmap_group(0.5)
+            idx = unique_tkbs.index(tkb)
+            return cmap_group(idx / max(len(unique_tkbs) - 1, 1))
+
+        return None
+
+
 
 
     run = st.sidebar.button("▶ Run multiple-plot routine", key="run_multi")
@@ -2582,8 +2730,8 @@ elif plot_mode == "Multiple plots":
 
 
     readable_runs = [
-        f"{tkb:g} Tkb  {tau:g} TauB"  # or f"{tkb:g}Tkb_{tau:g}TauB"
-        for _, tkb, tau in selected_runs
+        f"{tkb:g} Tkb  {tau:g} TauB"
+        for _, tkb, tau, *_ in selected_runs
     ]
 
     st.write("Selected runs:")
@@ -2592,33 +2740,17 @@ elif plot_mode == "Multiple plots":
 
     metric_kwargs = dict(TauB=TauB, skip=skip, normY=int(normY))
 
-    # Color handling (optional): gradient over selected-run order, NOT TkB value
-    use_gradient = (color_mode_multi == "Gradient over TkB")
-    cmap = None
-    tkb_to_color = {}
-
-    if use_gradient:
-        import matplotlib.colors as mcolors
-
-        cmap = mcolors.LinearSegmentedColormap.from_list(
-            "tkb_grad", [color_start_multi, color_end_multi]
-        )
-
-        # Sort selected TkB values, then space colors evenly by index
-        tkbs_sorted = sorted({float(r[1]) for r in selected_runs})
-
-        if len(tkbs_sorted) == 1:
-            tkb_to_color[tkbs_sorted[0]] = cmap(0.5)
-        else:
-            for i, tkb in enumerate(tkbs_sorted):
-                frac = i / (len(tkbs_sorted) - 1)
-                tkb_to_color[tkb] = cmap(frac)
 
 
-    def color_for_tkb(tkb):
-        if not use_gradient:
-            return None
-        return tkb_to_color.get(float(tkb), None)
+
+    def run_label(s, show_taub):
+        base = f"{s['tkb']:g} Tkb"
+        if show_taub:
+            base += f" (TauB {s['taub']:g})"
+        if s.get("third_val") is not None and s.get("third_unit"):
+            base += f" {s['third_val']:g}{s['third_unit']}"
+        return base
+
 
     # ----- RUN ALL SELECTED METRICS -----
     for metric_label in metrics_selected:
@@ -2637,7 +2769,7 @@ elif plot_mode == "Multiple plots":
                 series_kind = []
                 missing = []
 
-                for folder_path, tkb_val, tau_val in selected_runs:
+                for folder_path, tkb_val, tau_val, third_val, third_unit, *_ in [(r[0], r[1], r[2], r[3] if len(r)>3 else None, r[4] if len(r)>4 else None) for r in selected_runs]:
                     run_name = os.path.basename(folder_path)
 
                     fx = os.path.join(folder_path, x_name)
@@ -2668,6 +2800,8 @@ elif plot_mode == "Multiple plots":
                         "run": run_name,
                         "tkb": float(tkb_val),
                         "taub": float(tau_val),
+                        "third_val": third_val,
+                        "third_unit": third_unit,
                         "y": np.asarray(y, float),
                     })
                 # plot this kind across runs (your existing grouping-by-taub logic)
@@ -2688,7 +2822,7 @@ elif plot_mode == "Multiple plots":
                             x,
                             y_grid,
                             label = f"{s['tkb']:g} Tkb (TauB {taub:g}) — {kind}" if show_taub_in_legend else f"{s['tkb']:g} Tkb — {kind}",
-                            color = color_for_tkb(s["tkb"]),
+                            color = get_line_color(s),
                         )
                         # collect for post-analysis
 
@@ -2697,7 +2831,9 @@ elif plot_mode == "Multiple plots":
                             "run": s["run"],
                             "tkb": s["tkb"],
                             "taub": taub,
-                            "kind": kind,  # for crystal type
+                            "kind": kind,
+                            "third_val": s.get("third_val"),
+                            "third_unit": s.get("third_unit"),
                             "x": np.asarray(x, float),
                             "y": np.asarray(y_grid, float),
                         })
@@ -2714,7 +2850,29 @@ elif plot_mode == "Multiple plots":
                 "Time (τB)" if x_axis_mode_multi == "Brownian time τ_B" else "Time (s)"
             ))if show_xlabel else "")
             apply_grid(ax, show_grid)
-            ax.legend()
+            if color_mode_multi in ("Group by 3rd param", "Group by 3rd param + gradient over TkB"):
+                seen = {}
+                third_groups = {}
+                for r in selected_runs:
+                    v = r[3] if len(r) > 3 else None
+                    u = r[4] if len(r) > 4 else None
+                    tkb = float(r[1])
+                    if v is not None:
+                        third_groups.setdefault(v, []).append({"tkb": tkb, "third_val": v, "third_unit": u})
+                for v, group in third_groups.items():
+                    group_sorted = sorted(group, key=lambda s: s["tkb"])
+                    mid = group_sorted[len(group_sorted) // 2]
+                    u = mid.get("third_unit") or ""
+                    seen[v] = (f"{v:g}{u}", get_line_color(mid))
+                from matplotlib.lines import Line2D
+
+                legend_handles = [
+                    Line2D([0], [0], color=color, linewidth=2, label=label)
+                    for v, (label, color) in sorted(seen.items())
+                ]
+                ax.legend(handles=legend_handles)
+            else:
+                ax.legend()
 
             fig = plt.gcf()
             apply_global_styling(fig, legend_on=legend_on_multi, legend_fontsize=legend_fontsize_multi,
@@ -2739,12 +2897,12 @@ elif plot_mode == "Multiple plots":
         if run:
             dataset_tag = os.path.basename(base_dir.rstrip("\\/"))  # e.g. NAF, ASF, ARF
 
-            for folder_path, tkb_val, tau_val in selected_runs:
+            for folder_path, tkb_val, tau_val, third_val, third_unit, *_ in [(r[0], r[1], r[2], r[3] if len(r)>3 else None, r[4] if len(r)>4 else None) for r in selected_runs]:
                 run_name = os.path.basename(folder_path)
                 tkb_val = float(tkb_val)
                 tau_val = float(tau_val)
 
-                npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label)
+                npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label, third_val, third_unit)
                 #st.write(
                 #    f"🔎 {metric_label} | {run_name} -> saved file exists? {npz_path.exists()} | export_data={export_data}")
 
@@ -2800,6 +2958,8 @@ elif plot_mode == "Multiple plots":
                     "run": run_name,
                     "tkb": tkb_val,
                     "taub": tau_val,
+                    "third_val": third_val,
+                    "third_unit": third_unit,
                     "y": np.asarray(y, float),
                 })
 
@@ -2810,16 +2970,27 @@ elif plot_mode == "Multiple plots":
 
         if not run:
             post_curves = st.session_state.get(f"post_curves_{metric_label}", [])
+            if x_range_custom and x_range_min is not None and x_range_max is not None:
+                clipped = []
+                for c in post_curves:
+                    mask = (np.asarray(c["x"], float) >= float(x_range_min)) & (np.asarray(c["x"], float) <= float(x_range_max))
+                    cc = dict(c)
+                    cc["x"] = np.asarray(c["x"], float)[mask]
+                    cc["y"] = np.asarray(c["y"], float)[mask]
+                    if len(cc["x"]) >= 2:
+                        clipped.append(cc)
+                post_curves = clipped
             if not post_curves:
                 st.info(f"No cached curves for {metric_label}. Click Run once.")
-                continue
+                # still render shape expander below even if empty
 
             plt.figure()
             ax = plt.gca()
             for c in post_curves:
                 ax.plot(
                     c["x"], c["y"],
-                    label=f"{c['tkb']:g} Tkb (TauB {c['taub']:g})" if show_taub_in_legend else f"{c['tkb']:g} Tkb"
+                    label=run_label(c, show_taub_in_legend),
+                    color=get_line_color(c),
                 )
 
 
@@ -2899,17 +3070,27 @@ elif plot_mode == "Multiple plots":
         post_curves = []  # define this once before the TauB grouping loop
         # Group by TauB so same-TauB runs share identical x-axis length
         if metric_label == "Radial distribution function":
+            taubs_sorted = sorted({float(s["taub"]) for s in series})
             for s in series:
                 x = np.linspace(0.0, rdf_r_max, len(s["y"]))
+                if use_gradient and len({float(r["tkb"]) for r in series}) == 1:
+                    # same TkB, differentiate by TauB index
+                    idx = taubs_sorted.index(float(s["taub"]))
+                    frac = idx / max(len(taubs_sorted) - 1, 1)
+                    col = cmap(frac) if cmap else None
+                else:
+                    col = get_line_color(s)
                 ax.plot(
                     x, s["y"],
                     label=f"{s['tkb']:g} Tkb (TauB {s['taub']:g})" if show_taub_in_legend else f"{s['tkb']:g} Tkb",
-                    color=color_for_tkb(s["tkb"]),
+                    color=col,
                 )
                 post_curves.append({
                     "run": s["run"],
                     "tkb": s["tkb"],
                     "taub": s["taub"],
+                    "third_val": s.get("third_val"),
+                    "third_unit": s.get("third_unit"),
                     "x": np.asarray(x, float),
                     "y": np.asarray(s["y"], float),
                 })
@@ -2936,8 +3117,8 @@ elif plot_mode == "Multiple plots":
                     ax.plot(
                         x,
                         y_grid,
-                        label = f"{s['tkb']:g} Tkb (TauB {taub:g})" if show_taub_in_legend else f"{s['tkb']:g} Tkb",
-                        color=color_for_tkb(s["tkb"]),
+                        label = run_label(s, show_taub_in_legend),
+                        color=get_line_color(s),
                     )
                     # collect for post-analysis
 
@@ -2947,6 +3128,8 @@ elif plot_mode == "Multiple plots":
                         "run": s["run"],
                         "tkb": s["tkb"],
                         "taub": taub,
+                        "third_val": s.get("third_val"),
+                        "third_unit": s.get("third_unit"),
                         "x": np.asarray(x, float),
                         "y": np.asarray(y_grid, float),
                     })
@@ -2977,7 +3160,26 @@ elif plot_mode == "Multiple plots":
             if show_xlabel else ""
         )
         apply_grid(ax, show_grid)
-        ax.legend()
+        if color_mode_multi in ("Group by 3rd param", "Group by 3rd param + gradient over TkB"):
+            # one legend entry per third_val group
+            seen = {}
+            for s in sorted(series, key=lambda s: s["tkb"]):
+                v = s.get("third_val")
+                u = s.get("third_unit") or ""
+                key = f"{v:g}{u}" if v is not None else "unknown"
+                # always overwrite so last (highest TkB = darkest) wins
+                color = get_line_color(s)
+                if v is not None:
+                    seen[v] = (key, color)
+            from matplotlib.lines import Line2D
+            legend_handles = [
+                Line2D([0], [0], color=color, linewidth=2, label=label)
+                for v, (label, color) in sorted(seen.items())
+            ]
+            ax.legend(handles=legend_handles)
+        else:
+            handles, labels = ax.get_legend_handles_labels()
+            ax.legend(handles, labels)
 
 
         fig = plt.gcf()
@@ -3009,6 +3211,167 @@ elif plot_mode == "Multiple plots":
             show_grid=show_grid,
         )
 
+
+
+    # ---- Curve shape analysis ----
+    with st.expander(f"📐 Curve shape analysis — {metric_label}", expanded=False):
+        safe_key = metric_label.replace(" ", "_")
+        curves_for_shape = st.session_state.get(f"post_curves_{metric_label}", [])
+        if x_range_custom and x_range_min is not None and x_range_max is not None:
+            clipped_shape = []
+            for c in curves_for_shape:
+                x_c = np.asarray(c["x"], float)
+                y_c = np.asarray(c["y"], float)
+                mask = (x_c >= float(x_range_min)) & (x_c <= float(x_range_max))
+                if mask.sum() >= 2:
+                    cc = dict(c)
+                    cc["x"] = x_c[mask]
+                    cc["y"] = y_c[mask]
+                    clipped_shape.append(cc)
+            curves_for_shape = clipped_shape
+        if not curves_for_shape:
+            st.info("Run the plot first to populate curves.")
+        else:
+            from scipy.ndimage import uniform_filter1d
+            from collections import defaultdict
+            from matplotlib.lines import Line2D
+
+            unique_thirds_shape = sorted({c.get("third_val") for c in curves_for_shape if c.get("third_val") is not None})
+            shape_palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
+            third_color_map = {v: shape_palette[i % len(shape_palette)] for i, v in enumerate(unique_thirds_shape)}
+
+            col_sa, col_sb, col_sc, col_sd, col_se = st.columns(5)
+            safe_key = metric_label.replace(" ", "_")
+            with col_sa:
+                smooth_win_shape = st.slider("Smoothing window", 1, 51, 9, 2, key=f"shape_{safe_key}_smooth")
+            with col_sb:
+                connect_dots_row1 = st.checkbox("Connect dots (row 1)", value=True, key=f"shape_{safe_key}_connect_r1")
+            with col_sc:
+                connect_dots_row2 = st.checkbox("Connect dots (row 2)", value=False, key=f"shape_{safe_key}_connect_r2")
+            with col_sd:
+                early_pct = st.slider("Early segment (%)", 5, 49, 20, 5, key=f"shape_{safe_key}_early")
+            with col_se:
+                late_pct = st.slider("Late segment (%)", 5, 49, 20, 5, key=f"shape_{safe_key}_late")
+
+            # --- compute per-run metrics ---
+            results = []
+            for c in curves_for_shape:
+                y = np.asarray(c["y"], float)
+                x = np.asarray(c["x"], float)
+                if len(y) < 10:
+                    continue
+                y_sm = uniform_filter1d(y, size=smooth_win_shape)
+                n = len(y_sm)
+                early_seg = max(1, int(n * early_pct / 100))
+                late_seg  = max(1, int(n * late_pct  / 100))
+                early_slope = (y_sm[early_seg] - y_sm[0]) / (x[early_seg] - x[0] + 1e-12)
+                late_slope  = (y_sm[-1] - y_sm[-late_seg]) / (x[-1] - x[-late_seg] + 1e-12)
+                slope_ratio = abs(early_slope) / (abs(late_slope) + 1e-12)
+                half_max = (np.nanmax(y_sm) + np.nanmin(y_sm)) / 2.0
+                is_decreasing = y_sm[-1] < y_sm[0]
+                if is_decreasing:
+                    idx_half = np.where(y_sm <= half_max)[0]
+                else:
+                    idx_half = np.where(y_sm >= half_max)[0]
+                t_half = float(x[idx_half[0]]) if len(idx_half) > 0 else float(x[-1])
+                results.append({
+                    "run": c["run"],
+                    "tkb": float(c["tkb"]),
+                    "third_val": c.get("third_val"),
+                    "third_unit": c.get("third_unit") or "",
+                    "slope_ratio": slope_ratio,
+                    "t_half": t_half,
+                    "y_final": float(y_sm[-1]),
+                })
+
+            # --- aggregate per nm group ---
+            group_data = defaultdict(lambda: {"slope_ratios": [], "t_halfs": [], "y_finals": [], "unit": ""})
+            for r in results:
+                v = r["third_val"]
+                if v is not None:
+                    group_data[v]["slope_ratios"].append(r["slope_ratio"])
+                    group_data[v]["t_halfs"].append(r["t_half"])
+                    group_data[v]["y_finals"].append(r["y_final"])
+                    group_data[v]["unit"] = r["third_unit"]
+
+            group_summary = {}
+            for v, d in group_data.items():
+                group_summary[v] = {
+                    "slope_ratio_mean": np.mean(d["slope_ratios"]),
+                    "slope_ratio_std":  np.std(d["slope_ratios"]),
+                    "t_half_mean":      np.mean(d["t_halfs"]),
+                    "t_half_std":       np.std(d["t_halfs"]),
+                    "spread":           np.std(d["y_finals"]),
+                    "unit":             d["unit"],
+                }
+
+            # --- plot 2 rows x 3 cols ---
+            fig_shape, axes = plt.subplots(2, 3, figsize=(15, 8))
+
+            metric_keys = [
+                ("slope_ratio",  "Early/late slope ratio",     "Slope ratio (exp→linear)"),
+                ("t_half",       "Time to half-max",           "Time to 50% of final value"),
+                ("y_final",      "Final value",                 "Final value"),
+            ]
+
+            # Row 1: per-run, x = TkB
+            for col, (mk, ylabel, title) in enumerate(metric_keys):
+                ax = axes[0][col]
+                # group by third_val for connecting
+                by_third = defaultdict(list)
+                for r in sorted(results, key=lambda r: r["tkb"]):
+                    by_third[r["third_val"]].append(r)
+                for v, group in sorted(by_third.items()):
+                    col_c = third_color_map.get(v, "gray")
+                    xs_r = [r["tkb"] for r in group]
+                    ys_r = [r[mk] for r in group]
+                    ax.scatter(xs_r, ys_r, color=col_c, s=60, zorder=3)
+                    if connect_dots_row1:
+                        ax.plot(xs_r, ys_r, color=col_c, linewidth=1, alpha=0.6)
+                ax.set_xlabel("TkB")
+                ax.set_ylabel(ylabel)
+                ax.set_title(f"{title}\n(per run, colored by nm)")
+                apply_grid(ax, show_grid)
+
+            # Row 2: per nm group, x = third_val, with error bars = std across TkB
+            agg_metrics = [
+                ("slope_ratio_mean", "slope_ratio_std", "Early/late slope ratio",  "Slope ratio (exp→linear)"),
+                ("t_half_mean",      "t_half_std",      "Time to half-max",        "Time to 50% of final value"),
+                ("spread",           None,              "Spread (std of final val)","Spread across TkB values"),
+            ]
+            for col, (mk_mean, mk_std, ylabel, title) in enumerate(agg_metrics):
+                ax = axes[1][col]
+                xs = sorted(group_summary.keys())
+                ys = [group_summary[v][mk_mean] for v in xs]
+                errs = [group_summary[v][mk_std] for v in xs] if mk_std else None
+                cols_g = [third_color_map.get(v, "gray") for v in xs]
+                units = [group_summary[v]["unit"] for v in xs]
+                xlabels = [f"{v:g}{u}" for v, u in zip(xs, units)]
+                for i, (xv, yv, col_c) in enumerate(zip(range(len(xs)), ys, cols_g)):
+                    err = errs[i] if errs else None
+                    ax.errorbar(xv, yv, yerr=err, fmt='o', color=col_c, markersize=8,
+                                capsize=4, zorder=3)
+                if connect_dots_row2:
+                    ax.plot(range(len(xs)), ys, color="gray", linewidth=1, alpha=0.5, zorder=2)
+                ax.set_xticks(range(len(xs)))
+                ax.set_xticklabels(xlabels, rotation=45, ha="right")
+                ax.set_xlabel("dn value")
+                ax.set_ylabel(ylabel)
+                ax.set_title(f"{title}\n(per group ± std across TkB)")
+                apply_grid(ax, show_grid)
+
+            # shared legend
+            legend_els = [
+                Line2D([0], [0], marker='o', color='w',
+                       markerfacecolor=third_color_map[v],
+                       markersize=8, label=f"{v:g}{group_summary[v]['unit']}")
+                for v in sorted(group_summary.keys())
+            ]
+            axes[0][0].legend(handles=legend_els, fontsize=9)
+
+            plt.tight_layout()
+            st.pyplot(fig_shape)
+            plt.close(fig_shape)
     st.success("Multiple-plot figure(s) done ✅")
 
 
@@ -3061,6 +3424,9 @@ elif plot_mode == "Function mixer":
     show_ylabel = ui.get("show_ylabel", False)
     show_xlabel = ui.get("show_xlabel", True)
     show_grid = ui.get("show_grid", True)
+    x_range_custom = ui.get("x_range_custom", False)
+    x_range_min = ui.get("x_range_min", None)
+    x_range_max = ui.get("x_range_max", None)
 
     st.markdown("---")
     st.subheader("🧮 Function Mixer")
@@ -3087,29 +3453,34 @@ elif plot_mode == "Function mixer":
             key="mix_window_end",
         )
 
-    mA_label = st.selectbox("Metric A", calc_metric_options, key="expr_calc_A")
+    c1, c2 = st.columns(2)
 
-    crystal_type_A = None
-    if mA_label == "Detect crystals":
-        with st.expander("Crystal options for A", expanded=True):
-            crystal_type_A = st.selectbox(
-                "Crystal type for A:",
-                ["Hexagonal", "Square", "Triangular", "All", "None"],
-                index=0,
-                key="crystal_type_A",
-            )
+    with c1:
+        mA_label = st.selectbox("Metric A", calc_metric_options, key="expr_calc_A")
 
-    mB_label = st.selectbox("Metric B", calc_metric_options, key="expr_calc_B")
+        crystal_type_A = None
+        if mA_label == "Detect crystals":
+            with st.expander("Crystal options for A", expanded=True):
+                crystal_type_A = st.selectbox(
+                    "Crystal type for A:",
+                    ["Hexagonal", "Square", "Triangular", "All", "None"],
+                    index=0,
+                    key="crystal_type_A",
+                )
 
-    crystal_type_B = None
-    if mB_label == "Detect crystals":
-        with st.expander("Crystal options for B", expanded=True):
-            crystal_type_B = st.selectbox(
-                "Crystal type for B:",
-                ["Hexagonal", "Square", "Triangular", "All", "None"],
-                index=0,
-                key="crystal_type_B",
-            )
+    with c2:
+        mB_label = st.selectbox("Metric B", calc_metric_options, key="expr_calc_B")
+
+        crystal_type_B = None
+        if mB_label == "Detect crystals":
+            with st.expander("Crystal options for B", expanded=True):
+                crystal_type_B = st.selectbox(
+                    "Crystal type for B:",
+                    ["Hexagonal", "Square", "Triangular", "All", "None"],
+                    index=0,
+                    key="crystal_type_B",
+                )
+
 
     expr = st.text_input(
         "Expression (use A and B):",
@@ -3118,10 +3489,73 @@ elif plot_mode == "Function mixer":
         help="Examples: A/B, (A/B)*100, log(A)/sqrt(B), A/(B+1e-9), deriv(A,t), integ(A,t), fft_amp(A)"
     )
 
+
+
     calc_title = st.text_input(
         "Derived plot title",
-        value=f"{expr}  (A={mA_label}, B={mB_label})",
+        value=f"",
         key="expr_calc_title",
+    )
+
+    # ---- Color mode UI for Function Mixer ---
+
+    color_mode_mix = st.sidebar.radio(
+        "Curve colors",
+        ["Matplotlib default", "Gradient over TkB"],
+        key="mix_color_mode",
+    )
+
+    if color_mode_mix == "Gradient over TkB":
+        st.sidebar.write("Gradient colors:")
+        col1, col2 = st.sidebar.columns(2)
+
+        with col1:
+            color_start_mix = st.color_picker(
+                "Start",
+                value="#D3D3D3",
+                key="mix_color_start",
+            )
+
+        with col2:
+            color_end_mix = st.color_picker(
+                "End",
+                value="#000000",
+                key="mix_color_end",
+            )
+    else:
+        color_start_mix = "#D3D3D3"
+        color_end_mix = "#000000"
+
+    use_gradient = color_mode_mix == "Gradient over TkB"
+    tkb_to_color = {}
+
+    if use_gradient:
+        import matplotlib.colors as mcolors
+
+        cmap = mcolors.LinearSegmentedColormap.from_list(
+            "tkb_grad_mix",
+            [color_start_mix, color_end_mix],
+        )
+
+        tkbs_sorted = sorted({float(r[1]) for r in selected_runs})
+
+        if len (tkbs_sorted) == 1:
+            tkb_to_color[tkbs_sorted[0]] = cmap(0.5)
+        else:
+            for i, tkb in enumerate(tkbs_sorted):
+                frac = i / (len(tkbs_sorted) - 1)
+                tkb_to_color[tkb] = cmap(frac)
+
+
+    def get_line_color(tkb):
+        if not use_gradient:
+            return None
+        return tkb_to_color.get(float(tkb), None)
+
+    mix_norm_mode = st.selectbox(
+        "Normalize mixer output",
+        ["None", "norm_series_max"],
+        key="mix_norm_mode",
     )
 
     plot_expr = st.button("Plot", key="expr_calc_plot")
@@ -3130,14 +3564,36 @@ elif plot_mode == "Function mixer":
 
     # ✅ If user clicked Run post-analysis (or any rerun) and we already have cached curves, redraw from cache
     if (not plot_expr) and st.session_state.get("post_curves_mixer"):
-        curves = st.session_state["post_curves_mixer"]
+        curves = [dict(c, y=np.asarray(c["y"], float).copy()) for c in st.session_state["post_curves_mixer"]]
         meta = st.session_state.get("mixer_meta", {})
 
         plt.close("all")
         plt.figure()
         ax = plt.gca()
+
+        # normalize ALL mixer curves by one shared series max amplitude
+        if mix_norm_mode == "norm_series_max" and curves:
+            vals = []
+            for c in curves:
+                y_tmp = np.asarray(c["y"], float)
+                if y_tmp.size > 0 and np.any(np.isfinite(y_tmp)):
+                    amp = np.nanmax(y_tmp) - np.nanmin(y_tmp)
+                    vals.append(amp)
+
+            if vals:
+                series_amp = float(np.nanmax(vals))
+                if np.isfinite(series_amp) and series_amp != 0:
+                    for c in curves:
+                        c["y"] = np.asarray(c["y"], float) / series_amp
+
+        # plot ALL curves, not only the last one
         for c in curves:
-            ax.plot(c["x"], c["y"], label=c["run"])
+            ax.plot(
+                c["x"],
+                c["y"],
+                label=f"{c['tkb']:g} Tkb (TauB {c['taub']:g})" if show_taub_in_legend else f"{c['tkb']:g} Tkb",
+                color=(c["tkb"]),
+            )
 
         ax.set_title(meta.get("title", "Derived expression"))
         title = meta.get("title", "Derived expression")
@@ -3341,8 +3797,6 @@ elif plot_mode == "Function mixer":
             else:
                 x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
 
-            ax.plot(x, y_out, label = f"{a_run['tkb']:g} Tkb (TauB {taub_a:g})" if show_taub_in_legend else f"{a_run['tkb']:g} Tkb")
-
             post_curves.append({
                 "run": run_name,
                 "tkb": float(a_run["tkb"]),
@@ -3351,16 +3805,39 @@ elif plot_mode == "Function mixer":
                 "y": np.asarray(y_out, float),
             })
 
+            # # ✅ IMPORTANT: append INSIDE the loop (one entry per run)
+            # st.session_state["post_curves_mixer"].append({
+            #     "run": run_name,
+            #     "tkb": float(a_run["tkb"]),
+            #     "taub": float(a_run["taub"]),
+            #     "x": np.asarray(x, float),
+            #     "y": np.asarray(y_out, float),
+            # })
 
-            # ✅ IMPORTANT: append INSIDE the loop (one entry per run)
-            st.session_state["post_curves_mixer"].append({
-                "run": run_name,
-                "tkb": float(a_run["tkb"]),
-                "taub": float(a_run["taub"]),
-                "x": np.asarray(x, float),
-                "y": np.asarray(y_out, float),
-            })
+        if mix_norm_mode == "norm_series_max" and post_curves:
+            vals = []
 
+            for c in post_curves:
+                y_tmp = np.asarray(c["y"], float)
+                if y_tmp.size > 0 and np.any(np.isfinite(y_tmp)):
+                    vals.append(np.nanmax(y_tmp))
+
+            if vals:
+                series_max = np.nanmax(vals)
+
+                if np.isfinite(series_max) and series_max != 0:
+                    for c in post_curves:
+                        c["y"] = np.asarray(c["y"], float) / series_max
+
+        for c in post_curves:
+            ax.plot(
+                c["x"],
+                c["y"],
+                label=f"{c['tkb']:g} Tkb (TauB {c['taub']:g})"
+                if show_taub_in_legend
+                else f"{c['tkb']:g} Tkb",
+                color=(c["tkb"]),
+            )
         ax.set_title(calc_title)
         # y-label for mixer (expression)
         ylabel_plot = calc_title
@@ -3628,7 +4105,7 @@ elif plot_mode == "Phase diagram":
     # --- Styling options for phase diagram ---
     st.sidebar.header("8. Styling (phase diagram)")
     legend_on_phase = st.sidebar.checkbox(
-        "Show legends in cells", value=True, key="legend_on_phase"
+        "Show legends in cells", value=False, key="legend_on_phase"
     )
     legend_fontsize_phase = st.sidebar.number_input(
         "Legend font size",
@@ -4086,7 +4563,12 @@ elif plot_mode == "Summary plots":
     if metric_label in ["Number of clusters", "Average cluster size","Area fraction","Bond orientational order", "Detect crystals", "Radius of gyration"]:
         # recompute with params (and ignore old cached, per your earlier choice)
         series = []
-        for folder_path, tkb_val, tau_val in selected_runs:
+        for run_tuple in selected_runs:
+            folder_path = run_tuple[0]
+            tkb_val = float(run_tuple[1])
+            tau_val = float(run_tuple[2])
+            third_val = run_tuple[3] if len(run_tuple) > 3 else None
+            third_unit = run_tuple[4] if len(run_tuple) > 4 else None
             run_name = os.path.basename(folder_path)
             fx = os.path.join(folder_path, x_name)
             fy = os.path.join(folder_path, y_name)
