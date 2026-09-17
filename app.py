@@ -575,11 +575,22 @@ def sidebar_runs_common_ui(
 
         filtered_runs = [r for r in available_runs if run_passes_filter(r)]
 
+        # Re-select every filtered run whenever the TkB/TauB/3rd-param filter
+        # choice itself changes, instead of keeping whatever subset of runs
+        # was previously (de)selected -- a filter change means "show me
+        # everything matching this new filter", not "keep my old picks".
+        runs_key = f"multi_runs__{dataset_tag}"
+        filter_signature = (tuple(sorted(filter_tkbs)), tuple(sorted(filter_taus)), tuple(sorted(filter_thirds)))
+        filter_signature_key = f"multi_runs_filter_signature__{dataset_tag}"
+        if st.session_state.get(filter_signature_key) != filter_signature:
+            st.session_state[runs_key] = filtered_runs
+            st.session_state[filter_signature_key] = filter_signature
+
         selected_runs = st.sidebar.multiselect(
             "Select runs (from filtered):",
             options=filtered_runs,
             default=filtered_runs,
-            key=f"multi_runs__{dataset_tag}",
+            key=runs_key,
             format_func=format_run_option,
         )
     else:
