@@ -1475,15 +1475,23 @@ elif plot_mode == "Multiple plots":
 
                     unique_thirds_shape = sorted({c.get("third_val") for c in curves_for_shape if c.get("third_val") is not None})
                     shape_palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
-                    # Assign each dn value a color the first time it's ever seen this
-                    # session, and keep it forever after -- otherwise a color is only
-                    # a *position* in the currently-selected set of dn values, so
-                    # deselecting one group visibly reassigns everyone else's color.
+                    # Assign each dn value a color (and a line style) the first time
+                    # it's ever seen this session, and keep it forever after --
+                    # otherwise a color is only a *position* in the currently-selected
+                    # set of dn values, so deselecting one group visibly reassigns
+                    # everyone else's color. The line style rides along so two
+                    # overlapping lines stay visually distinguishable even where
+                    # their colors and y-values nearly coincide.
+                    line_style_cycle = ["-", "--", "-.", ":"]
                     dn_color_map = st.session_state.setdefault("dn_color_map", {})
+                    dn_style_map = st.session_state.setdefault("dn_style_map", {})
                     for v in unique_thirds_shape:
                         if v not in dn_color_map:
-                            dn_color_map[v] = shape_palette[len(dn_color_map) % len(shape_palette)]
+                            idx = len(dn_color_map)
+                            dn_color_map[v] = shape_palette[idx % len(shape_palette)]
+                            dn_style_map[v] = line_style_cycle[idx % len(line_style_cycle)]
                     third_color_map = {v: dn_color_map[v] for v in unique_thirds_shape}
+                    third_style_map = {v: dn_style_map.get(v, "-") for v in unique_thirds_shape}
 
                     col_sa, col_sb, col_sc, col_sd, col_se = st.columns(5)
                     safe_key = metric_label.replace(" ", "_")
@@ -1629,10 +1637,11 @@ elif plot_mode == "Multiple plots":
                             by_third[r["third_val"]].append(r)
                         for v, group in sorted(by_third.items()):
                             col_c = third_color_map.get(v, "gray")
+                            style_c = third_style_map.get(v, "-")
                             group_sorted = sorted(group, key=lambda r: r["tkb"])
                             xs_r = [r["tkb"] for r in group_sorted]
                             ys_r = [r[mk] for r in group_sorted]
-                            ax.scatter(xs_r, ys_r, color=col_c, s=60, zorder=3)
+                            ax.scatter(xs_r, ys_r, color=col_c, s=60, zorder=3, edgecolors="white", linewidths=0.6)
                             if connect_dots_row1:
                                 # connect through the per-TkB mean so replicate
                                 # runs at the same TkB don't zig-zag the line
@@ -1641,8 +1650,7 @@ elif plot_mode == "Multiple plots":
                                     by_tkb[xv].append(yv)
                                 xs_line = sorted(by_tkb.keys())
                                 ys_line = [np.nanmean(by_tkb[xv]) for xv in xs_line]
-                                st.write(f"[debug] {mk} group={v} n_points_per_tkb={[len(by_tkb[xv]) for xv in xs_line]} xs_line={xs_line} ys_line={ys_line}")
-                                ax.plot(xs_line, ys_line, color=col_c, linewidth=1, alpha=0.6)
+                                ax.plot(xs_line, ys_line, color=col_c, linewidth=1.3, linestyle=style_c, alpha=0.8)
                         ax.set_xlabel("TkB")
                         ax.set_ylabel(ylabel)
                         ax.set_title(f"{title}\n(per run, colored by nm)")
@@ -1713,7 +1721,8 @@ elif plot_mode == "Multiple plots":
 
                     # shared legend
                     legend_els = [
-                        Line2D([0], [0], marker='o', color='w',
+                        Line2D([0], [0], marker='o', color=third_color_map[v],
+                               linestyle=third_style_map.get(v, "-"),
                                markerfacecolor=third_color_map[v],
                                markersize=8, label=f"{v:g}{group_summary[v]['unit']}")
                         for v in sorted(group_summary.keys())
