@@ -1422,6 +1422,189 @@ elif plot_mode == "Multiple plots":
         plt.close("all")
         metric_func, default_ylabel = metric_map[metric_label]
 
+        def render_curve_shape_analysis():
+            # ---- Curve shape analysis ----
+            with st.expander(f"📐 Curve shape analysis — {metric_label}", expanded=False):
+                safe_key = metric_label.replace(" ", "_")
+                curves_for_shape = st.session_state.get(f"post_curves_{metric_label}", [])
+                if x_range_custom and x_range_min is not None and x_range_max is not None:
+                    clipped_shape = []
+                    for c in curves_for_shape:
+                        x_c = np.asarray(c["x"], float)
+                        y_c = np.asarray(c["y"], float)
+                        mask = (x_c >= float(x_range_min)) & (x_c <= float(x_range_max))
+                        if mask.sum() >= 2:
+                            cc = dict(c)
+                            cc["x"] = x_c[mask]
+                            cc["y"] = y_c[mask]
+                            clipped_shape.append(cc)
+                    curves_for_shape = clipped_shape
+                if not curves_for_shape:
+                    st.info("Run the plot first to populate curves.")
+                else:
+                    from scipy.ndimage import uniform_filter1d
+                    from collections import defaultdict
+                    from matplotlib.lines import Line2D
+
+                    unique_thirds_shape = sorted({c.get("third_val") for c in curves_for_shape if c.get("third_val") is not None})
+                    shape_palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
+                    third_color_map = {v: shape_palette[i % len(shape_palette)] for i, v in enumerate(unique_thirds_shape)}
+
+                    col_sa, col_sb, col_sc, col_sd, col_se = st.columns(5)
+                    safe_key = metric_label.replace(" ", "_")
+                    with col_sa:
+                        smooth_win_shape = st.slider("Smoothing window", 1, 51, 9, 2, key=f"shape_{safe_key}_smooth")
+                    with col_sb:
+                        connect_dots_row1 = st.checkbox("Connect dots (row 1)", value=True, key=f"shape_{safe_key}_connect_r1")
+                    with col_sc:
+                        connect_dots_row2 = st.checkbox("Connect dots (row 2)", value=False, key=f"shape_{safe_key}_connect_r2")
+                    with col_sd:
+                        early_pct = st.slider("Early segment (%)", 5, 49, 20, 5, key=f"shape_{safe_key}_early")
+                    with col_se:
+                        late_pct = st.slider("Late segment (%)", 5, 49, 20, 5, key=f"shape_{safe_key}_late")
+
+                    # --- live smoothing preview: raw vs. smoothed, one run or all at once ---
+                    preview_run = st.selectbox(
+                        "Preview smoothing on run:",
+                        ["All"] + [c["run"] for c in curves_for_shape],
+                        key=f"shape_{safe_key}_preview_run",
+                    )
+                    preview_targets = curves_for_shape if preview_run == "All" else [
+                        c for c in curves_for_shape if c["run"] == preview_run
+                    ]
+                    preview_curves = []
+                    for c in preview_targets:
+                        x_p = np.asarray(c["x"], float)
+                        y_p = np.asarray(c["y"], float)
+                        preview_curves.append({
+                            "label": c["run"],
+                            "x": x_p,
+                            "y_raw": y_p,
+                            "y_smoothed": uniform_filter1d(y_p, size=smooth_win_shape),
+                        })
+                    render_smoothing_preview(preview_curves, smooth_win_shape)
+
+                    # --- compute per-run metrics ---
+                    results = []
+                    for c in curves_for_shape:
+                        y = np.asarray(c["y"], float)
+                        x = np.asarray(c["x"], float)
+                        if len(y) < 10:
+                            continue
+                        y_sm = uniform_filter1d(y, size=smooth_win_shape)
+                        n = len(y_sm)
+                        early_seg = max(1, int(n * early_pct / 100))
+                        late_seg  = max(1, int(n * late_pct  / 100))
+                        early_slope = (y_sm[early_seg] - y_sm[0]) / (x[early_seg] - x[0] + 1e-12)
+                        late_slope  = (y_sm[-1] - y_sm[-late_seg]) / (x[-1] - x[-late_seg] + 1e-12)
+                        slope_ratio = abs(early_slope) / (abs(late_slope) + 1e-12)
+                        half_max = (np.nanmax(y_sm) + np.nanmin(y_sm)) / 2.0
+                        is_decreasing = y_sm[-1] < y_sm[0]
+                        if is_decreasing:
+                            idx_half = np.where(y_sm <= half_max)[0]
+                        else:
+                            idx_half = np.where(y_sm >= half_max)[0]
+                        t_half = float(x[idx_half[0]]) if len(idx_half) > 0 else float(x[-1])
+                        results.append({
+                            "run": c["run"],
+                            "tkb": float(c["tkb"]),
+                            "third_val": c.get("third_val"),
+                            "third_unit": c.get("third_unit") or "",
+                            "slope_ratio": slope_ratio,
+                            "t_half": t_half,
+                            "y_final": float(y_sm[-1]),
+                        })
+
+                    # --- aggregate per nm group ---
+                    group_data = defaultdict(lambda: {"slope_ratios": [], "t_halfs": [], "y_finals": [], "unit": ""})
+                    for r in results:
+                        v = r["third_val"]
+                        if v is not None:
+                            group_data[v]["slope_ratios"].append(r["slope_ratio"])
+                            group_data[v]["t_halfs"].append(r["t_half"])
+                            group_data[v]["y_finals"].append(r["y_final"])
+                            group_data[v]["unit"] = r["third_unit"]
+
+                    group_summary = {}
+                    for v, d in group_data.items():
+                        group_summary[v] = {
+                            "slope_ratio_mean": np.mean(d["slope_ratios"]),
+                            "slope_ratio_std":  np.std(d["slope_ratios"]),
+                            "t_half_mean":      np.mean(d["t_halfs"]),
+                            "t_half_std":       np.std(d["t_halfs"]),
+                            "spread":           np.std(d["y_finals"]),
+                            "unit":             d["unit"],
+                        }
+
+                    # --- plot 2 rows x 3 cols ---
+                    fig_shape, axes = plt.subplots(2, 3, figsize=(15, 8))
+
+                    metric_keys = [
+                        ("slope_ratio",  "Early/late slope ratio",     "Slope ratio (exp→linear)"),
+                        ("t_half",       "Time to half-max",           "Time to 50% of final value"),
+                        ("y_final",      "Final value",                 "Final value"),
+                    ]
+
+                    # Row 1: per-run, x = TkB
+                    for col, (mk, ylabel, title) in enumerate(metric_keys):
+                        ax = axes[0][col]
+                        # group by third_val for connecting
+                        by_third = defaultdict(list)
+                        for r in sorted(results, key=lambda r: r["tkb"]):
+                            by_third[r["third_val"]].append(r)
+                        for v, group in sorted(by_third.items()):
+                            col_c = third_color_map.get(v, "gray")
+                            xs_r = [r["tkb"] for r in group]
+                            ys_r = [r[mk] for r in group]
+                            ax.scatter(xs_r, ys_r, color=col_c, s=60, zorder=3)
+                            if connect_dots_row1:
+                                ax.plot(xs_r, ys_r, color=col_c, linewidth=1, alpha=0.6)
+                        ax.set_xlabel("TkB")
+                        ax.set_ylabel(ylabel)
+                        ax.set_title(f"{title}\n(per run, colored by nm)")
+                        apply_grid(ax, show_grid)
+
+                    # Row 2: per nm group, x = third_val, with error bars = std across TkB
+                    agg_metrics = [
+                        ("slope_ratio_mean", "slope_ratio_std", "Early/late slope ratio",  "Slope ratio (exp→linear)"),
+                        ("t_half_mean",      "t_half_std",      "Time to half-max",        "Time to 50% of final value"),
+                        ("spread",           None,              "Spread (std of final val)","Spread across TkB values"),
+                    ]
+                    for col, (mk_mean, mk_std, ylabel, title) in enumerate(agg_metrics):
+                        ax = axes[1][col]
+                        xs = sorted(group_summary.keys())
+                        ys = [group_summary[v][mk_mean] for v in xs]
+                        errs = [group_summary[v][mk_std] for v in xs] if mk_std else None
+                        cols_g = [third_color_map.get(v, "gray") for v in xs]
+                        units = [group_summary[v]["unit"] for v in xs]
+                        xlabels = [f"{v:g}{u}" for v, u in zip(xs, units)]
+                        for i, (xv, yv, col_c) in enumerate(zip(range(len(xs)), ys, cols_g)):
+                            err = errs[i] if errs else None
+                            ax.errorbar(xv, yv, yerr=err, fmt='o', color=col_c, markersize=8,
+                                        capsize=4, zorder=3)
+                        if connect_dots_row2:
+                            ax.plot(range(len(xs)), ys, color="gray", linewidth=1, alpha=0.5, zorder=2)
+                        ax.set_xticks(range(len(xs)))
+                        ax.set_xticklabels(xlabels, rotation=45, ha="right")
+                        ax.set_xlabel("dn value")
+                        ax.set_ylabel(ylabel)
+                        ax.set_title(f"{title}\n(per group ± std across TkB)")
+                        apply_grid(ax, show_grid)
+
+                    # shared legend
+                    legend_els = [
+                        Line2D([0], [0], marker='o', color='w',
+                               markerfacecolor=third_color_map[v],
+                               markersize=8, label=f"{v:g}{group_summary[v]['unit']}")
+                        for v in sorted(group_summary.keys())
+                    ]
+                    axes[0][0].legend(handles=legend_els, fontsize=9)
+
+                    plt.tight_layout()
+                    st.pyplot(fig_shape)
+                    plt.close(fig_shape)
+
+
         # --- Detect crystals: plot one curve per selected crystal type ---
         if metric_label == "Detect crystals":
             plt.figure()
@@ -1562,6 +1745,8 @@ elif plot_mode == "Multiple plots":
                 title_fontsize=title_fontsize_multi,
                 show_grid=show_grid,
             )
+
+            render_curve_shape_analysis()
 
             continue  # <-- IMPORTANT: skip the normal metric plotting below
 
@@ -1726,6 +1911,9 @@ elif plot_mode == "Multiple plots":
                 title_fontsize=title_fontsize_multi,
                 show_grid=show_grid,
 )
+
+            render_curve_shape_analysis()
+
             continue  # <-- skip compute/export/plot path when using cached curves
 
         if export_data:
@@ -1900,186 +2088,8 @@ elif plot_mode == "Multiple plots":
             show_grid=show_grid,
         )
 
-        # ---- Curve shape analysis ----
-        with st.expander(f"📐 Curve shape analysis — {metric_label}", expanded=False):
-            safe_key = metric_label.replace(" ", "_")
-            curves_for_shape = st.session_state.get(f"post_curves_{metric_label}", [])
-            if x_range_custom and x_range_min is not None and x_range_max is not None:
-                clipped_shape = []
-                for c in curves_for_shape:
-                    x_c = np.asarray(c["x"], float)
-                    y_c = np.asarray(c["y"], float)
-                    mask = (x_c >= float(x_range_min)) & (x_c <= float(x_range_max))
-                    if mask.sum() >= 2:
-                        cc = dict(c)
-                        cc["x"] = x_c[mask]
-                        cc["y"] = y_c[mask]
-                        clipped_shape.append(cc)
-                curves_for_shape = clipped_shape
-            if not curves_for_shape:
-                st.info("Run the plot first to populate curves.")
-            else:
-                from scipy.ndimage import uniform_filter1d
-                from collections import defaultdict
-                from matplotlib.lines import Line2D
 
-                unique_thirds_shape = sorted({c.get("third_val") for c in curves_for_shape if c.get("third_val") is not None})
-                shape_palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
-                third_color_map = {v: shape_palette[i % len(shape_palette)] for i, v in enumerate(unique_thirds_shape)}
-
-                col_sa, col_sb, col_sc, col_sd, col_se = st.columns(5)
-                safe_key = metric_label.replace(" ", "_")
-                with col_sa:
-                    smooth_win_shape = st.slider("Smoothing window", 1, 51, 9, 2, key=f"shape_{safe_key}_smooth")
-                with col_sb:
-                    connect_dots_row1 = st.checkbox("Connect dots (row 1)", value=True, key=f"shape_{safe_key}_connect_r1")
-                with col_sc:
-                    connect_dots_row2 = st.checkbox("Connect dots (row 2)", value=False, key=f"shape_{safe_key}_connect_r2")
-                with col_sd:
-                    early_pct = st.slider("Early segment (%)", 5, 49, 20, 5, key=f"shape_{safe_key}_early")
-                with col_se:
-                    late_pct = st.slider("Late segment (%)", 5, 49, 20, 5, key=f"shape_{safe_key}_late")
-
-                # --- live smoothing preview: raw vs. smoothed, one run or all at once ---
-                preview_run = st.selectbox(
-                    "Preview smoothing on run:",
-                    ["All"] + [c["run"] for c in curves_for_shape],
-                    key=f"shape_{safe_key}_preview_run",
-                )
-                preview_targets = curves_for_shape if preview_run == "All" else [
-                    c for c in curves_for_shape if c["run"] == preview_run
-                ]
-                preview_curves = []
-                for c in preview_targets:
-                    x_p = np.asarray(c["x"], float)
-                    y_p = np.asarray(c["y"], float)
-                    preview_curves.append({
-                        "label": c["run"],
-                        "x": x_p,
-                        "y_raw": y_p,
-                        "y_smoothed": uniform_filter1d(y_p, size=smooth_win_shape),
-                    })
-                render_smoothing_preview(preview_curves, smooth_win_shape)
-
-                # --- compute per-run metrics ---
-                results = []
-                for c in curves_for_shape:
-                    y = np.asarray(c["y"], float)
-                    x = np.asarray(c["x"], float)
-                    if len(y) < 10:
-                        continue
-                    y_sm = uniform_filter1d(y, size=smooth_win_shape)
-                    n = len(y_sm)
-                    early_seg = max(1, int(n * early_pct / 100))
-                    late_seg  = max(1, int(n * late_pct  / 100))
-                    early_slope = (y_sm[early_seg] - y_sm[0]) / (x[early_seg] - x[0] + 1e-12)
-                    late_slope  = (y_sm[-1] - y_sm[-late_seg]) / (x[-1] - x[-late_seg] + 1e-12)
-                    slope_ratio = abs(early_slope) / (abs(late_slope) + 1e-12)
-                    half_max = (np.nanmax(y_sm) + np.nanmin(y_sm)) / 2.0
-                    is_decreasing = y_sm[-1] < y_sm[0]
-                    if is_decreasing:
-                        idx_half = np.where(y_sm <= half_max)[0]
-                    else:
-                        idx_half = np.where(y_sm >= half_max)[0]
-                    t_half = float(x[idx_half[0]]) if len(idx_half) > 0 else float(x[-1])
-                    results.append({
-                        "run": c["run"],
-                        "tkb": float(c["tkb"]),
-                        "third_val": c.get("third_val"),
-                        "third_unit": c.get("third_unit") or "",
-                        "slope_ratio": slope_ratio,
-                        "t_half": t_half,
-                        "y_final": float(y_sm[-1]),
-                    })
-
-                # --- aggregate per nm group ---
-                group_data = defaultdict(lambda: {"slope_ratios": [], "t_halfs": [], "y_finals": [], "unit": ""})
-                for r in results:
-                    v = r["third_val"]
-                    if v is not None:
-                        group_data[v]["slope_ratios"].append(r["slope_ratio"])
-                        group_data[v]["t_halfs"].append(r["t_half"])
-                        group_data[v]["y_finals"].append(r["y_final"])
-                        group_data[v]["unit"] = r["third_unit"]
-
-                group_summary = {}
-                for v, d in group_data.items():
-                    group_summary[v] = {
-                        "slope_ratio_mean": np.mean(d["slope_ratios"]),
-                        "slope_ratio_std":  np.std(d["slope_ratios"]),
-                        "t_half_mean":      np.mean(d["t_halfs"]),
-                        "t_half_std":       np.std(d["t_halfs"]),
-                        "spread":           np.std(d["y_finals"]),
-                        "unit":             d["unit"],
-                    }
-
-                # --- plot 2 rows x 3 cols ---
-                fig_shape, axes = plt.subplots(2, 3, figsize=(15, 8))
-
-                metric_keys = [
-                    ("slope_ratio",  "Early/late slope ratio",     "Slope ratio (exp→linear)"),
-                    ("t_half",       "Time to half-max",           "Time to 50% of final value"),
-                    ("y_final",      "Final value",                 "Final value"),
-                ]
-
-                # Row 1: per-run, x = TkB
-                for col, (mk, ylabel, title) in enumerate(metric_keys):
-                    ax = axes[0][col]
-                    # group by third_val for connecting
-                    by_third = defaultdict(list)
-                    for r in sorted(results, key=lambda r: r["tkb"]):
-                        by_third[r["third_val"]].append(r)
-                    for v, group in sorted(by_third.items()):
-                        col_c = third_color_map.get(v, "gray")
-                        xs_r = [r["tkb"] for r in group]
-                        ys_r = [r[mk] for r in group]
-                        ax.scatter(xs_r, ys_r, color=col_c, s=60, zorder=3)
-                        if connect_dots_row1:
-                            ax.plot(xs_r, ys_r, color=col_c, linewidth=1, alpha=0.6)
-                    ax.set_xlabel("TkB")
-                    ax.set_ylabel(ylabel)
-                    ax.set_title(f"{title}\n(per run, colored by nm)")
-                    apply_grid(ax, show_grid)
-
-                # Row 2: per nm group, x = third_val, with error bars = std across TkB
-                agg_metrics = [
-                    ("slope_ratio_mean", "slope_ratio_std", "Early/late slope ratio",  "Slope ratio (exp→linear)"),
-                    ("t_half_mean",      "t_half_std",      "Time to half-max",        "Time to 50% of final value"),
-                    ("spread",           None,              "Spread (std of final val)","Spread across TkB values"),
-                ]
-                for col, (mk_mean, mk_std, ylabel, title) in enumerate(agg_metrics):
-                    ax = axes[1][col]
-                    xs = sorted(group_summary.keys())
-                    ys = [group_summary[v][mk_mean] for v in xs]
-                    errs = [group_summary[v][mk_std] for v in xs] if mk_std else None
-                    cols_g = [third_color_map.get(v, "gray") for v in xs]
-                    units = [group_summary[v]["unit"] for v in xs]
-                    xlabels = [f"{v:g}{u}" for v, u in zip(xs, units)]
-                    for i, (xv, yv, col_c) in enumerate(zip(range(len(xs)), ys, cols_g)):
-                        err = errs[i] if errs else None
-                        ax.errorbar(xv, yv, yerr=err, fmt='o', color=col_c, markersize=8,
-                                    capsize=4, zorder=3)
-                    if connect_dots_row2:
-                        ax.plot(range(len(xs)), ys, color="gray", linewidth=1, alpha=0.5, zorder=2)
-                    ax.set_xticks(range(len(xs)))
-                    ax.set_xticklabels(xlabels, rotation=45, ha="right")
-                    ax.set_xlabel("dn value")
-                    ax.set_ylabel(ylabel)
-                    ax.set_title(f"{title}\n(per group ± std across TkB)")
-                    apply_grid(ax, show_grid)
-
-                # shared legend
-                legend_els = [
-                    Line2D([0], [0], marker='o', color='w',
-                           markerfacecolor=third_color_map[v],
-                           markersize=8, label=f"{v:g}{group_summary[v]['unit']}")
-                    for v in sorted(group_summary.keys())
-                ]
-                axes[0][0].legend(handles=legend_els, fontsize=9)
-
-                plt.tight_layout()
-                st.pyplot(fig_shape)
-                plt.close(fig_shape)
+        render_curve_shape_analysis()
 
     st.success("Multiple-plot figure(s) done ✅")
 
