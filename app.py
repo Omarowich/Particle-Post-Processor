@@ -1746,6 +1746,13 @@ elif plot_mode == "Multiple plots":
 
                         x = (t_grid_sec / 13.513) if x_axis_mode_multi == "Brownian time τ_B" else t_grid_sec
 
+                        if x_range_custom and x_range_min is not None and x_range_max is not None:
+                            mask = (x >= float(x_range_min)) & (x <= float(x_range_max))
+                            x = x[mask]
+                            y_grid = y_grid[mask]
+                            if len(x) < 2:
+                                continue
+
                         ax.plot(
                             x,
                             y_grid,
