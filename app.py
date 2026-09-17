@@ -1619,7 +1619,7 @@ elif plot_mode == "Multiple plots":
                         }
 
                     # --- plot 3 rows x 6 cols ---
-                    fig_shape, axes = plt.subplots(3, 6, figsize=(24, 12), dpi=200)
+                    fig_shape, axes = plt.subplots(3, 6, figsize=(24, 12), dpi=300)
 
                     metric_keys = [
                         ("slope_ratio",  "Early/late slope ratio",     "Slope ratio (exp→linear)"),
@@ -1661,8 +1661,7 @@ elif plot_mode == "Multiple plots":
                                 # dots above) so it's visually obvious these mark a
                                 # per-TkB average, not a path through individual points
                                 ax.plot(xs_line, ys_line, color=col_c, linewidth=1.3, linestyle=style_c,
-                                        alpha=0.95, marker='o', markersize=7,
-                                        markeredgecolor="black", markeredgewidth=0.4, zorder=4)
+                                        alpha=0.95, marker='o', markersize=7, zorder=4)
                         ax.set_xlabel("TkB")
                         ax.set_ylabel(ylabel)
                         ax.set_title(f"{title}\n(per run, colored by nm)")
@@ -1736,7 +1735,6 @@ elif plot_mode == "Multiple plots":
                         Line2D([0], [0], marker='o', color=third_color_map[v],
                                linestyle=third_style_map.get(v, "-"),
                                markerfacecolor=third_color_map[v],
-                               markeredgecolor="black", markeredgewidth=0.4,
                                markersize=7, label=f"{v:g}{group_summary[v]['unit']}")
                         for v in sorted(group_summary.keys())
                     ]
