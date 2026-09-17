@@ -1572,7 +1572,7 @@ elif plot_mode == "Multiple plots":
                         }
 
                     # --- plot 3 rows x 6 cols ---
-                    fig_shape, axes = plt.subplots(3, 6, figsize=(24, 12))
+                    fig_shape, axes = plt.subplots(3, 6, figsize=(24, 12), dpi=200)
 
                     metric_keys = [
                         ("slope_ratio",  "Early/late slope ratio",     "Slope ratio (exp→linear)"),
@@ -1591,11 +1591,19 @@ elif plot_mode == "Multiple plots":
                             by_third[r["third_val"]].append(r)
                         for v, group in sorted(by_third.items()):
                             col_c = third_color_map.get(v, "gray")
-                            xs_r = [r["tkb"] for r in group]
-                            ys_r = [r[mk] for r in group]
+                            group_sorted = sorted(group, key=lambda r: r["tkb"])
+                            xs_r = [r["tkb"] for r in group_sorted]
+                            ys_r = [r[mk] for r in group_sorted]
                             ax.scatter(xs_r, ys_r, color=col_c, s=60, zorder=3)
                             if connect_dots_row1:
-                                ax.plot(xs_r, ys_r, color=col_c, linewidth=1, alpha=0.6)
+                                # connect through the per-TkB mean so replicate
+                                # runs at the same TkB don't zig-zag the line
+                                by_tkb = defaultdict(list)
+                                for xv, yv in zip(xs_r, ys_r):
+                                    by_tkb[xv].append(yv)
+                                xs_line = sorted(by_tkb.keys())
+                                ys_line = [np.mean(by_tkb[xv]) for xv in xs_line]
+                                ax.plot(xs_line, ys_line, color=col_c, linewidth=1, alpha=0.6)
                         ax.set_xlabel("TkB")
                         ax.set_ylabel(ylabel)
                         ax.set_title(f"{title}\n(per run, colored by nm)")
@@ -1668,6 +1676,12 @@ elif plot_mode == "Multiple plots":
 
                     plt.tight_layout()
                     st.pyplot(fig_shape)
+                    save_figure_if_requested(
+                        fig_shape,
+                        base_name=f"multi_{metric_label}_curve_shape",
+                        save_enabled=save_plots,
+                        output_dir=output_dir,
+                    )
                     plt.close(fig_shape)
 
 
