@@ -67,18 +67,24 @@ def apply_grid(ax, show_grid: bool):
 def slugify(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", text).strip("_")
 
-def render_smoothing_preview(x, y_raw, y_smoothed, smooth_win, *, title="Smoothing preview"):
+def render_smoothing_preview(curves, smooth_win, *, title="Smoothing preview"):
     """
     Small raw-vs-smoothed line plot so a smoothing-window slider's effect is
     visible immediately, instead of having to run the full analysis to see it.
-    Caller supplies the already-smoothed array so this works regardless of
-    which smoothing function a given section actually uses downstream.
+
+    `curves` is a list of {"label": str, "x": array, "y_raw": array,
+    "y_smoothed": array} -- pass a single-item list to preview one curve, or
+    every curve to preview them all at once. Caller supplies the
+    already-smoothed array so this works regardless of which smoothing
+    function a given section actually uses downstream.
     """
-    fig, ax = plt.subplots(figsize=(6, 2.2))
-    ax.plot(x, y_raw, color="#bbbbbb", linewidth=1, label="raw")
-    ax.plot(x, y_smoothed, color="crimson", linewidth=1.5, label=f"smoothed (window={smooth_win})")
-    ax.legend(fontsize=8)
-    ax.set_title(title, fontsize=10)
+    fig, ax = plt.subplots(figsize=(6, 2.6))
+    for c in curves:
+        ax.plot(c["x"], c["y_raw"], color="#bbbbbb", linewidth=1, alpha=0.6)
+    for c in curves:
+        ax.plot(c["x"], c["y_smoothed"], linewidth=1.5, label=c["label"])
+    ax.legend(fontsize=7, ncol=2)
+    ax.set_title(f"{title} (window={smooth_win})", fontsize=10)
     st.pyplot(fig)
     plt.close(fig)
 

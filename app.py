@@ -102,16 +102,19 @@ def post_analysis_block_generic(
         pick = st.selectbox("Analyze curve", run_opts, index=0, key=f"{key}_pick")
         smooth_win = st.slider("Smoothing window", 1, 51, 9, 2, key=f"{key}_smooth")
 
-        preview_curves = curves if pick == "All" else [c for c in curves if c["run"] == pick]
-        if preview_curves:
-            preview_curve = preview_curves[0]
-            x_prev = np.asarray(preview_curve["x"], float)
-            y_prev = np.asarray(preview_curve["y"], float)
-            y_prev_smooth = _moving_average(y_prev, smooth_win)
-            render_smoothing_preview(
-                x_prev, y_prev, y_prev_smooth, smooth_win,
-                title=f"Smoothing preview — {preview_curve.get('run', 'run')}",
-            )
+        preview_targets = curves if pick == "All" else [c for c in curves if c["run"] == pick]
+        if preview_targets:
+            preview_curves = []
+            for c in preview_targets:
+                x_p = np.asarray(c["x"], float)
+                y_p = np.asarray(c["y"], float)
+                preview_curves.append({
+                    "label": c.get("run", "run"),
+                    "x": x_p,
+                    "y_raw": y_p,
+                    "y_smoothed": _moving_average(y_p, smooth_win),
+                })
+            render_smoothing_preview(preview_curves, smooth_win)
 
         # ALWAYS rendered (state won’t reset)
 
@@ -160,8 +163,15 @@ def post_analysis_block_generic(
 
             run_post = st.form_submit_button("▶ Run post-analysis")
 
+        result_cache_key = f"{key}_last_post_analysis"
         if not run_post:
-            st.caption("Adjust settings, then click **Run post-analysis**.")
+            cached = st.session_state.get(result_cache_key)
+            if cached is None:
+                st.caption("Adjust settings, then click **Run post-analysis**.")
+            else:
+                import pandas as pd
+                st.pyplot(cached["fig"])
+                st.dataframe(pd.DataFrame(cached["results"]))
             return
 
         # ---- run ----
@@ -272,6 +282,7 @@ def post_analysis_block_generic(
             title_on=title_on,
             title_fontsize=title_fontsize,
         )
+        st.session_state[result_cache_key] = {"fig": fig2, "results": results}
         st.pyplot(fig2)
 
         import pandas as pd
@@ -308,16 +319,19 @@ def post_analysis_block(
         pick = st.selectbox("Analyze run", run_opts, index=0, key=f"{key}_pick")
         smooth_win = st.slider("Smoothing window", 1, 51, 9, 2, key=f"{key}_smooth")
 
-        preview_curves = curves if pick == "All" else [c for c in curves if c.get("run") == pick]
-        if preview_curves:
-            preview_curve = preview_curves[0]
-            x_prev = np.asarray(preview_curve["x"], float)
-            y_prev = np.asarray(preview_curve["y"], float)
-            y_prev_smooth = _moving_average(y_prev, smooth_win)
-            render_smoothing_preview(
-                x_prev, y_prev, y_prev_smooth, smooth_win,
-                title=f"Smoothing preview — {preview_curve.get('run', 'run')}",
-            )
+        preview_targets = curves if pick == "All" else [c for c in curves if c.get("run") == pick]
+        if preview_targets:
+            preview_curves = []
+            for c in preview_targets:
+                x_p = np.asarray(c["x"], float)
+                y_p = np.asarray(c["y"], float)
+                preview_curves.append({
+                    "label": c.get("run", "run"),
+                    "x": x_p,
+                    "y_raw": y_p,
+                    "y_smoothed": _moving_average(y_p, smooth_win),
+                })
+            render_smoothing_preview(preview_curves, smooth_win)
 
         with st.form(key=f"post_form_{key}", clear_on_submit=False):
             sustain = st.slider("Flatten sustain (% of points)", 1, 30, 8, 1, key=f"{key}_sustain")
@@ -351,8 +365,15 @@ def post_analysis_block(
 
             run_post = st.form_submit_button("▶ Run post-analysis")
 
+        result_cache_key = f"{key}_last_post_analysis"
         if not run_post:
-            st.caption("Adjust settings, then click **Run post-analysis**.")
+            cached = st.session_state.get(result_cache_key)
+            if cached is None:
+                st.caption("Adjust settings, then click **Run post-analysis**.")
+            else:
+                import pandas as pd
+                st.pyplot(cached["fig"])
+                st.dataframe(pd.DataFrame(cached["results"]))
             return
 
         # -------- run analysis + plot ----------
@@ -439,6 +460,7 @@ def post_analysis_block(
             title_on=title_on,
             title_fontsize=title_fontsize,
         )
+        st.session_state[result_cache_key] = {"fig": fig2, "results": results}
         st.pyplot(fig2)
 
         import pandas as pd
@@ -1918,17 +1940,26 @@ elif plot_mode == "Multiple plots":
                 with col_se:
                     late_pct = st.slider("Late segment (%)", 5, 49, 20, 5, key=f"shape_{safe_key}_late")
 
-                # --- live smoothing preview: raw vs. smoothed for one curve ---
+                # --- live smoothing preview: raw vs. smoothed, one run or all at once ---
                 preview_run = st.selectbox(
                     "Preview smoothing on run:",
-                    [c["run"] for c in curves_for_shape],
+                    ["All"] + [c["run"] for c in curves_for_shape],
                     key=f"shape_{safe_key}_preview_run",
                 )
-                preview_curve = next(c for c in curves_for_shape if c["run"] == preview_run)
-                x_prev = np.asarray(preview_curve["x"], float)
-                y_prev = np.asarray(preview_curve["y"], float)
-                y_prev_smooth = uniform_filter1d(y_prev, size=smooth_win_shape)
-                render_smoothing_preview(x_prev, y_prev, y_prev_smooth, smooth_win_shape)
+                preview_targets = curves_for_shape if preview_run == "All" else [
+                    c for c in curves_for_shape if c["run"] == preview_run
+                ]
+                preview_curves = []
+                for c in preview_targets:
+                    x_p = np.asarray(c["x"], float)
+                    y_p = np.asarray(c["y"], float)
+                    preview_curves.append({
+                        "label": c["run"],
+                        "x": x_p,
+                        "y_raw": y_p,
+                        "y_smoothed": uniform_filter1d(y_p, size=smooth_win_shape),
+                    })
+                render_smoothing_preview(preview_curves, smooth_win_shape)
 
                 # --- compute per-run metrics ---
                 results = []
