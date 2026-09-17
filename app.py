@@ -1451,8 +1451,27 @@ elif plot_mode == "Multiple plots":
                     st.info("Run the plot first to populate curves.")
                 else:
                     from scipy.ndimage import uniform_filter1d
+                    from scipy.stats import theilslopes
                     from collections import defaultdict
                     from matplotlib.lines import Line2D
+
+                    def _robust_slope(x_seg, y_seg):
+                        """Theil-Sen slope: the median of all pairwise slopes --
+                        far less sensitive to one noisy point than a two-point
+                        difference or an ordinary least-squares fit."""
+                        if len(x_seg) < 2 or len(set(x_seg)) < 2:
+                            return 0.0
+                        return float(theilslopes(y_seg, x_seg)[0])
+
+                    def _robust_spread(values):
+                        """Median absolute deviation, scaled to be comparable to
+                        std under normality -- doesn't get dragged around by a
+                        single outlier the way std does."""
+                        arr = np.asarray(values, float)
+                        arr = arr[np.isfinite(arr)]
+                        if arr.size == 0:
+                            return np.nan
+                        return float(1.4826 * np.median(np.abs(arr - np.median(arr))))
 
                     unique_thirds_shape = sorted({c.get("third_val") for c in curves_for_shape if c.get("third_val") is not None})
                     shape_palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
@@ -1512,12 +1531,13 @@ elif plot_mode == "Multiple plots":
                         n = len(y_sm)
                         early_seg = max(2, int(n * early_pct / 100))
                         late_seg  = max(2, int(n * late_pct  / 100))
-                        # linear-fit slope over each whole segment, not just its
-                        # two endpoints -- a two-point difference is extremely
-                        # noise-sensitive once a segment is close to flat, which
-                        # was causing slope_ratio to spike toward +inf on some runs
-                        early_slope, _ = np.polyfit(x[:early_seg + 1], y_sm[:early_seg + 1], 1)
-                        late_slope, _  = np.polyfit(x[-late_seg:], y_sm[-late_seg:], 1)
+                        # Theil-Sen slope over each whole segment, not just its
+                        # two endpoints -- a two-point difference (or even an
+                        # ordinary least-squares fit) is noise-sensitive once a
+                        # segment is close to flat, which was causing slope_ratio
+                        # to spike toward +inf on some runs
+                        early_slope = _robust_slope(x[:early_seg + 1], y_sm[:early_seg + 1])
+                        late_slope  = _robust_slope(x[-late_seg:], y_sm[-late_seg:])
                         late_scale = max(abs(late_slope), 0.05 * abs(early_slope))
                         slope_ratio = abs(early_slope) / (late_scale + 1e-12)
                         half_max = (np.nanmax(y_sm) + np.nanmin(y_sm)) / 2.0
@@ -1559,27 +1579,27 @@ elif plot_mode == "Multiple plots":
                             group_data[v]["unit"] = r["third_unit"]
 
                     def _sensitivity_slope(tkbs, values):
-                        """Linear-fit slope of `values` against `tkbs` -- d(value)/d(TkB)."""
+                        """Robust (Theil-Sen) slope of `values` against `tkbs` -- d(value)/d(TkB).
+                        Resistant to a single outlier run dominating the fit."""
                         tkbs_arr = np.asarray(tkbs, float)
                         values_arr = np.asarray(values, float)
                         ok = np.isfinite(tkbs_arr) & np.isfinite(values_arr)
                         if ok.sum() < 2 or len(set(tkbs_arr[ok])) < 2:
                             return np.nan
-                        slope, _intercept = np.polyfit(tkbs_arr[ok], values_arr[ok], 1)
-                        return float(slope)
+                        return _robust_slope(tkbs_arr[ok], values_arr[ok])
 
                     group_summary = {}
                     for v, d in group_data.items():
                         group_summary[v] = {
-                            "slope_ratio_mean": np.nanmean(d["slope_ratios"]),
-                            "slope_ratio_std":  np.nanstd(d["slope_ratios"]),
-                            "t_half_mean":      np.nanmean(d["t_halfs"]),
-                            "t_half_std":       np.nanstd(d["t_halfs"]),
+                            "slope_ratio_mean": np.nanmedian(d["slope_ratios"]),
+                            "slope_ratio_std":  _robust_spread(d["slope_ratios"]),
+                            "t_half_mean":      np.nanmedian(d["t_halfs"]),
+                            "t_half_std":       _robust_spread(d["t_halfs"]),
                             "spread":           np.nanstd(d["y_finals"]),
-                            "tau_mean":         np.nanmean(d["taus"]),
-                            "tau_std":          np.nanstd(d["taus"]),
-                            "auc_mean_mean":    np.nanmean(d["auc_means"]),
-                            "auc_mean_std":     np.nanstd(d["auc_means"]),
+                            "tau_mean":         np.nanmedian(d["taus"]),
+                            "tau_std":          _robust_spread(d["taus"]),
+                            "auc_mean_mean":    np.nanmedian(d["auc_means"]),
+                            "auc_mean_std":     _robust_spread(d["auc_means"]),
                             "envelope_area":    curve_envelope_area(group_curves_smoothed.get(v, [])),
                             "sens_slope_ratio": _sensitivity_slope(d["tkbs"], d["slope_ratios"]),
                             "sens_t_half":      _sensitivity_slope(d["tkbs"], d["t_halfs"]),
@@ -1620,7 +1640,7 @@ elif plot_mode == "Multiple plots":
                                 for xv, yv in zip(xs_r, ys_r):
                                     by_tkb[xv].append(yv)
                                 xs_line = sorted(by_tkb.keys())
-                                ys_line = [np.mean(by_tkb[xv]) for xv in xs_line]
+                                ys_line = [np.nanmean(by_tkb[xv]) for xv in xs_line]
                                 ax.plot(xs_line, ys_line, color=col_c, linewidth=1, alpha=0.6)
                         ax.set_xlabel("TkB")
                         ax.set_ylabel(ylabel)
@@ -1655,10 +1675,10 @@ elif plot_mode == "Multiple plots":
                         ax.set_xticklabels(xlabels, rotation=45, ha="right")
                         ax.set_xlabel("dn value")
                         ax.set_ylabel(ylabel)
-                        ax.set_title(f"{title}\n(per group ± std across TkB)")
+                        ax.set_title(f"{title}\n(per group, median ± MAD across TkB)")
                         apply_grid(ax, show_grid)
 
-                    # Row 3: sensitivity d(metric)/d(TkB) per group -- one linear-fit slope per group
+                    # Row 3: sensitivity d(metric)/d(TkB) per group -- one robust (Theil-Sen) slope per group
                     sens_metrics = [
                         ("sens_slope_ratio", "d(slope ratio)/d(TkB)", "Sensitivity: slope ratio vs TkB"),
                         ("sens_t_half",      "d(t_half)/d(TkB)",      "Sensitivity: time-to-half vs TkB"),
@@ -1679,7 +1699,7 @@ elif plot_mode == "Multiple plots":
                         ax.set_xticklabels(xlabels, rotation=45, ha="right")
                         ax.set_xlabel("dn value")
                         ax.set_ylabel(ylabel)
-                        ax.set_title(f"{title}\n(linear-fit slope per group)")
+                        ax.set_title(f"{title}\n(Theil-Sen slope per group)")
                         apply_grid(ax, show_grid)
                     axes[2][5].axis("off")
 
