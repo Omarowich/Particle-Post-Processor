@@ -1399,19 +1399,20 @@ elif plot_mode == "Multiple plots":
         st.stop()
 
     st.subheader("Multiple plots over TkB")
-    st.write(f"Base folder: `{base_dir}`")
-    st.write(f"Metrics: **{metrics_selected}**")
-    st.write("Selected runs (TkB, TauB):")
+    st.caption(f"Base folder: `{base_dir}` · Metrics: {', '.join(metrics_selected)}")
 
-
-    readable_runs = [
-        f"{tkb:g} Tkb  {tau:g} TauB"
-        for _, tkb, tau, *_ in selected_runs
-    ]
-
-    st.write("Selected runs:")
-    for txt in readable_runs:
-        st.write(f"- {txt}")
+    with st.expander(f"Selected runs ({len(selected_runs)})", expanded=False):
+        import pandas as pd
+        runs_rows = []
+        for r in selected_runs:
+            tkb, tau = r[1], r[2]
+            third_val = r[3] if len(r) > 3 else None
+            third_unit = r[4] if len(r) > 4 else None
+            row = {"TkB": tkb, "TauB": tau}
+            if third_val is not None:
+                row["3rd param"] = f"{third_val:g}{third_unit or ''}"
+            runs_rows.append(row)
+        st.dataframe(pd.DataFrame(runs_rows), use_container_width=True, hide_index=True)
 
     metric_kwargs = dict(TauB=TauB, skip=skip, normY=int(normY))
 
@@ -1655,12 +1656,12 @@ elif plot_mode == "Multiple plots":
                                     by_tkb[xv].append(yv)
                                 xs_line = sorted(by_tkb.keys())
                                 ys_line = [np.nanmean(by_tkb[xv]) for xv in xs_line]
-                                # the trend line gets its own bold diamond markers
-                                # (distinct from the raw-run circles above) so it's
-                                # visually obvious these mark a per-TkB average, not
-                                # a path through individual raw points
+                                # the trend line gets its own bold, larger circle
+                                # markers (distinct from the smaller/lighter raw-run
+                                # dots above) so it's visually obvious these mark a
+                                # per-TkB average, not a path through individual points
                                 ax.plot(xs_line, ys_line, color=col_c, linewidth=1.3, linestyle=style_c,
-                                        alpha=0.95, marker='D', markersize=6,
+                                        alpha=0.95, marker='o', markersize=7,
                                         markeredgecolor="black", markeredgewidth=0.4, zorder=4)
                         ax.set_xlabel("TkB")
                         ax.set_ylabel(ylabel)
@@ -1732,7 +1733,7 @@ elif plot_mode == "Multiple plots":
 
                     # shared legend
                     legend_els = [
-                        Line2D([0], [0], marker='D', color=third_color_map[v],
+                        Line2D([0], [0], marker='o', color=third_color_map[v],
                                linestyle=third_style_map.get(v, "-"),
                                markerfacecolor=third_color_map[v],
                                markeredgecolor="black", markeredgewidth=0.4,
