@@ -1703,13 +1703,7 @@ elif plot_mode == "Multiple plots":
                     if len(x) < 2:
                         continue
 
-                if use_gradient and len({float(r["tkb"]) for r in series}) == 1:
-                    # same TkB, differentiate by TauB index
-                    idx = taubs_sorted.index(float(s["taub"]))
-                    frac = idx / max(len(taubs_sorted) - 1, 1)
-                    col = cmap(frac) if cmap else None
-                else:
-                    col = get_line_color(s)
+                col = get_line_color(s)
                 ax.plot(
                     x, y_vals,
                     label=f"{s['tkb']:g} Tkb (TauB {s['taub']:g})" if show_taub_in_legend else f"{s['tkb']:g} Tkb",
