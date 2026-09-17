@@ -49,6 +49,9 @@ from stats_detectors import (
     _moving_average,
     apply_curve_detectors,
     slice_by_time_window,
+    auc_and_mean,
+    fit_relaxation_tau,
+    curve_envelope_area,
 )
 from math_expr import (
     fft_freqs,
@@ -1486,6 +1489,7 @@ elif plot_mode == "Multiple plots":
 
                     # --- compute per-run metrics ---
                     results = []
+                    group_curves_smoothed = defaultdict(list)
                     for c in curves_for_shape:
                         y = np.asarray(c["y"], float)
                         x = np.asarray(c["x"], float)
@@ -1505,6 +1509,8 @@ elif plot_mode == "Multiple plots":
                         else:
                             idx_half = np.where(y_sm >= half_max)[0]
                         t_half = float(x[idx_half[0]]) if len(idx_half) > 0 else float(x[-1])
+                        tau = fit_relaxation_tau(x, y_sm)
+                        _auc, auc_mean_val = auc_and_mean(x, y_sm)
                         results.append({
                             "run": c["run"],
                             "tkb": float(c["tkb"]),
@@ -1513,36 +1519,67 @@ elif plot_mode == "Multiple plots":
                             "slope_ratio": slope_ratio,
                             "t_half": t_half,
                             "y_final": float(y_sm[-1]),
+                            "tau": tau,
+                            "auc_mean": auc_mean_val,
                         })
+                        group_curves_smoothed[c.get("third_val")].append((x, y_sm))
 
                     # --- aggregate per nm group ---
-                    group_data = defaultdict(lambda: {"slope_ratios": [], "t_halfs": [], "y_finals": [], "unit": ""})
+                    group_data = defaultdict(lambda: {
+                        "tkbs": [], "slope_ratios": [], "t_halfs": [], "y_finals": [],
+                        "taus": [], "auc_means": [], "unit": "",
+                    })
                     for r in results:
                         v = r["third_val"]
                         if v is not None:
+                            group_data[v]["tkbs"].append(r["tkb"])
                             group_data[v]["slope_ratios"].append(r["slope_ratio"])
                             group_data[v]["t_halfs"].append(r["t_half"])
                             group_data[v]["y_finals"].append(r["y_final"])
+                            group_data[v]["taus"].append(r["tau"])
+                            group_data[v]["auc_means"].append(r["auc_mean"])
                             group_data[v]["unit"] = r["third_unit"]
+
+                    def _sensitivity_slope(tkbs, values):
+                        """Linear-fit slope of `values` against `tkbs` -- d(value)/d(TkB)."""
+                        tkbs_arr = np.asarray(tkbs, float)
+                        values_arr = np.asarray(values, float)
+                        ok = np.isfinite(tkbs_arr) & np.isfinite(values_arr)
+                        if ok.sum() < 2 or len(set(tkbs_arr[ok])) < 2:
+                            return np.nan
+                        slope, _intercept = np.polyfit(tkbs_arr[ok], values_arr[ok], 1)
+                        return float(slope)
 
                     group_summary = {}
                     for v, d in group_data.items():
                         group_summary[v] = {
-                            "slope_ratio_mean": np.mean(d["slope_ratios"]),
-                            "slope_ratio_std":  np.std(d["slope_ratios"]),
-                            "t_half_mean":      np.mean(d["t_halfs"]),
-                            "t_half_std":       np.std(d["t_halfs"]),
-                            "spread":           np.std(d["y_finals"]),
+                            "slope_ratio_mean": np.nanmean(d["slope_ratios"]),
+                            "slope_ratio_std":  np.nanstd(d["slope_ratios"]),
+                            "t_half_mean":      np.nanmean(d["t_halfs"]),
+                            "t_half_std":       np.nanstd(d["t_halfs"]),
+                            "spread":           np.nanstd(d["y_finals"]),
+                            "tau_mean":         np.nanmean(d["taus"]),
+                            "tau_std":          np.nanstd(d["taus"]),
+                            "auc_mean_mean":    np.nanmean(d["auc_means"]),
+                            "auc_mean_std":     np.nanstd(d["auc_means"]),
+                            "envelope_area":    curve_envelope_area(group_curves_smoothed.get(v, [])),
+                            "sens_slope_ratio": _sensitivity_slope(d["tkbs"], d["slope_ratios"]),
+                            "sens_t_half":      _sensitivity_slope(d["tkbs"], d["t_halfs"]),
+                            "sens_y_final":     _sensitivity_slope(d["tkbs"], d["y_finals"]),
+                            "sens_tau":         _sensitivity_slope(d["tkbs"], d["taus"]),
+                            "sens_auc_mean":    _sensitivity_slope(d["tkbs"], d["auc_means"]),
                             "unit":             d["unit"],
                         }
 
-                    # --- plot 2 rows x 3 cols ---
-                    fig_shape, axes = plt.subplots(2, 3, figsize=(15, 8))
+                    # --- plot 3 rows x 6 cols ---
+                    fig_shape, axes = plt.subplots(3, 6, figsize=(24, 12))
 
                     metric_keys = [
                         ("slope_ratio",  "Early/late slope ratio",     "Slope ratio (exp→linear)"),
                         ("t_half",       "Time to half-max",           "Time to 50% of final value"),
-                        ("y_final",      "Final value",                 "Final value"),
+                        ("y_final",      "Final value",                "Final value"),
+                        ("tau",          "Relaxation time constant τ", "Growth time constant τ"),
+                        ("auc_mean",     "Time-averaged value",        "Area under curve / duration"),
                     ]
 
                     # Row 1: per-run, x = TkB
@@ -1563,12 +1600,16 @@ elif plot_mode == "Multiple plots":
                         ax.set_ylabel(ylabel)
                         ax.set_title(f"{title}\n(per run, colored by nm)")
                         apply_grid(ax, show_grid)
+                    axes[0][5].axis("off")
 
                     # Row 2: per nm group, x = third_val, with error bars = std across TkB
                     agg_metrics = [
-                        ("slope_ratio_mean", "slope_ratio_std", "Early/late slope ratio",  "Slope ratio (exp→linear)"),
-                        ("t_half_mean",      "t_half_std",      "Time to half-max",        "Time to 50% of final value"),
-                        ("spread",           None,              "Spread (std of final val)","Spread across TkB values"),
+                        ("slope_ratio_mean", "slope_ratio_std", "Early/late slope ratio",    "Slope ratio (exp→linear)"),
+                        ("t_half_mean",      "t_half_std",      "Time to half-max",          "Time to 50% of final value"),
+                        ("spread",           None,              "Spread (std of final val)", "Spread across TkB values"),
+                        ("tau_mean",         "tau_std",         "Relaxation time constant τ","Growth time constant τ"),
+                        ("auc_mean_mean",    "auc_mean_std",    "Time-averaged value",       "Area under curve / duration"),
+                        ("envelope_area",    None,              "Envelope area",             "Area between highest & lowest curve"),
                     ]
                     for col, (mk_mean, mk_std, ylabel, title) in enumerate(agg_metrics):
                         ax = axes[1][col]
@@ -1590,6 +1631,31 @@ elif plot_mode == "Multiple plots":
                         ax.set_ylabel(ylabel)
                         ax.set_title(f"{title}\n(per group ± std across TkB)")
                         apply_grid(ax, show_grid)
+
+                    # Row 3: sensitivity d(metric)/d(TkB) per group -- one linear-fit slope per group
+                    sens_metrics = [
+                        ("sens_slope_ratio", "d(slope ratio)/d(TkB)", "Sensitivity: slope ratio vs TkB"),
+                        ("sens_t_half",      "d(t_half)/d(TkB)",      "Sensitivity: time-to-half vs TkB"),
+                        ("sens_y_final",     "d(final value)/d(TkB)", "Sensitivity: final value vs TkB"),
+                        ("sens_tau",         "d(τ)/d(TkB)",           "Sensitivity: τ vs TkB"),
+                        ("sens_auc_mean",    "d(time-avg)/d(TkB)",    "Sensitivity: time-averaged value vs TkB"),
+                    ]
+                    for col, (mk, ylabel, title) in enumerate(sens_metrics):
+                        ax = axes[2][col]
+                        xs = sorted(group_summary.keys())
+                        ys = [group_summary[v][mk] for v in xs]
+                        cols_g = [third_color_map.get(v, "gray") for v in xs]
+                        units = [group_summary[v]["unit"] for v in xs]
+                        xlabels = [f"{v:g}{u}" for v, u in zip(xs, units)]
+                        ax.axhline(0, color="black", linewidth=0.8, alpha=0.5)
+                        ax.bar(range(len(xs)), ys, color=cols_g)
+                        ax.set_xticks(range(len(xs)))
+                        ax.set_xticklabels(xlabels, rotation=45, ha="right")
+                        ax.set_xlabel("dn value")
+                        ax.set_ylabel(ylabel)
+                        ax.set_title(f"{title}\n(linear-fit slope per group)")
+                        apply_grid(ax, show_grid)
+                    axes[2][5].axis("off")
 
                     # shared legend
                     legend_els = [

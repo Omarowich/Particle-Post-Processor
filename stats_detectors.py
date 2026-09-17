@@ -264,6 +264,74 @@ def auc_and_mean(x, y):
     mean = float(auc / dt) if dt != 0 else np.nan
     return auc, mean
 
+
+def fit_relaxation_tau(x, y):
+    """
+    Estimate a single relaxation time constant tau for a curve that
+    approaches its final value like y(t) = y_final - (y_final - y0)*exp(-t/tau),
+    via the linearized fit ln((y_final - y) / (y_final - y0)) = -t / tau.
+
+    Returns np.nan if the curve is flat, too short, or doesn't monotonically
+    approach y[-1] from y[0] (the linearization only holds in that case).
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    m = np.isfinite(x) & np.isfinite(y)
+    x, y = x[m], y[m]
+    if x.size < 4:
+        return np.nan
+
+    y_final = y[-1]
+    denom = y_final - y[0]
+    if denom == 0 or not np.isfinite(denom):
+        return np.nan
+
+    frac_remaining = (y_final - y) / denom
+    mask = frac_remaining > 1e-6
+    if np.sum(mask) < 3:
+        return np.nan
+
+    slope, _intercept = np.polyfit(x[mask], np.log(frac_remaining[mask]), 1)
+    if not np.isfinite(slope) or slope >= 0:
+        return np.nan
+
+    return float(-1.0 / slope)
+
+
+def curve_envelope_area(curves):
+    """
+    Given a list of (x, y) array pairs for curves in the same group,
+    resample them onto a shared grid (the intersection of their x-ranges)
+    and return the trapezoidal-integrated area between the highest and
+    lowest curve at each point -- a single number capturing how spread
+    out the group is across its *whole* trajectory, not just at one point
+    in time (e.g. contrast with the std of final values alone).
+
+    Returns np.nan if fewer than 2 usable curves or their x-ranges don't
+    overlap.
+    """
+    cleaned = []
+    for x, y in curves:
+        x = np.asarray(x, float)
+        y = np.asarray(y, float)
+        ok = np.isfinite(x) & np.isfinite(y)
+        if ok.sum() < 2:
+            continue
+        cleaned.append((x[ok], y[ok]))
+    if len(cleaned) < 2:
+        return np.nan
+
+    x_lo = max(x.min() for x, _ in cleaned)
+    x_hi = min(x.max() for x, _ in cleaned)
+    if x_hi <= x_lo:
+        return np.nan
+
+    grid = np.linspace(x_lo, x_hi, 200)
+    ys_on_grid = np.array([np.interp(grid, x, y) for x, y in cleaned])
+    spread = ys_on_grid.max(axis=0) - ys_on_grid.min(axis=0)
+    return float(np.trapz(spread, grid))
+
+
 def max_slope_time(x, y, *, smooth_win=9):
     """
     Return (x_at_max_abs_slope, idx, slope_value) using smoothed derivative.
