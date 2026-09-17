@@ -1329,12 +1329,17 @@ elif plot_mode == "Multiple plots":
     unique_taus = sorted({float(r[2]) for r in selected_runs})
     unique_thirds = sorted({r[3] for r in selected_runs if r[3] is not None})
 
-    # assign a base color per group (3rd param)
+    # assign a base color per group (3rd param) -- stable for the whole session
+    # (assigned the first time a dn value is ever seen, kept forever after) so
+    # deselecting one group doesn't visibly reassign every other group's color
     group_base_colors = {}
     if unique_thirds:
         group_palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
-        for i, v in enumerate(unique_thirds):
-            group_base_colors[v] = group_palette[i % len(group_palette)]
+        dn_color_map = st.session_state.setdefault("dn_color_map", {})
+        for v in unique_thirds:
+            if v not in dn_color_map:
+                dn_color_map[v] = group_palette[len(dn_color_map) % len(group_palette)]
+            group_base_colors[v] = dn_color_map[v]
 
     cmap_default = mcolors.LinearSegmentedColormap.from_list(
         "default", [color_start_multi, color_end_multi]
@@ -1451,7 +1456,15 @@ elif plot_mode == "Multiple plots":
 
                     unique_thirds_shape = sorted({c.get("third_val") for c in curves_for_shape if c.get("third_val") is not None})
                     shape_palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
-                    third_color_map = {v: shape_palette[i % len(shape_palette)] for i, v in enumerate(unique_thirds_shape)}
+                    # Assign each dn value a color the first time it's ever seen this
+                    # session, and keep it forever after -- otherwise a color is only
+                    # a *position* in the currently-selected set of dn values, so
+                    # deselecting one group visibly reassigns everyone else's color.
+                    dn_color_map = st.session_state.setdefault("dn_color_map", {})
+                    for v in unique_thirds_shape:
+                        if v not in dn_color_map:
+                            dn_color_map[v] = shape_palette[len(dn_color_map) % len(shape_palette)]
+                    third_color_map = {v: dn_color_map[v] for v in unique_thirds_shape}
 
                     col_sa, col_sb, col_sc, col_sd, col_se = st.columns(5)
                     safe_key = metric_label.replace(" ", "_")
