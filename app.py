@@ -1650,14 +1650,14 @@ elif plot_mode == "Multiple plots":
 
                     # Row 2: per nm group, x = third_val, with error bars = std across TkB
                     agg_metrics = [
-                        ("slope_ratio_mean", "slope_ratio_std", "Early/late slope ratio",    "Slope ratio (exp→linear)"),
-                        ("t_half_mean",      "t_half_std",      "Time to half-max",          "Time to 50% of final value"),
-                        ("spread",           None,              "Spread (std of final val)", "Spread across TkB values"),
-                        ("tau_mean",         "tau_std",         "Relaxation time constant τ","Growth time constant τ"),
-                        ("auc_mean_mean",    "auc_mean_std",    "Time-averaged value",       "Area under curve / duration"),
-                        ("envelope_area",    None,              "Envelope area",             "Area between highest & lowest curve"),
+                        ("slope_ratio_mean", "slope_ratio_std", "Early/late slope ratio",    "Slope ratio (exp→linear)", True),
+                        ("t_half_mean",      "t_half_std",      "Time to half-max",          "Time to 50% of final value", True),
+                        ("spread",           None,              "Spread (std of final val)", "Spread across TkB values", False),
+                        ("tau_mean",         "tau_std",         "Relaxation time constant τ","Growth time constant τ", True),
+                        ("auc_mean_mean",    "auc_mean_std",    "Time-averaged value",       "Area under curve / duration", False),
+                        ("envelope_area",    None,              "Envelope area",             "Area between highest & lowest curve", False),
                     ]
-                    for col, (mk_mean, mk_std, ylabel, title) in enumerate(agg_metrics):
+                    for col, (mk_mean, mk_std, ylabel, title, non_negative) in enumerate(agg_metrics):
                         ax = axes[1][col]
                         xs = sorted(group_summary.keys())
                         ys = [group_summary[v][mk_mean] for v in xs]
@@ -1667,7 +1667,14 @@ elif plot_mode == "Multiple plots":
                         xlabels = [f"{v:g}{u}" for v, u in zip(xs, units)]
                         for i, (xv, yv, col_c) in enumerate(zip(range(len(xs)), ys, cols_g)):
                             err = errs[i] if errs else None
-                            ax.errorbar(xv, yv, yerr=err, fmt='o', color=col_c, markersize=8,
+                            yerr = err
+                            # a symmetric error bar can dip below zero even with a
+                            # robust median/MAD if the spread is large relative to
+                            # the median -- clip it for quantities that can't
+                            # physically be negative (a ratio, a time, tau)
+                            if err is not None and non_negative and np.isfinite(yv) and np.isfinite(err):
+                                yerr = [[min(err, yv)], [err]]
+                            ax.errorbar(xv, yv, yerr=yerr, fmt='o', color=col_c, markersize=8,
                                         capsize=4, zorder=3)
                         if connect_dots_row2:
                             ax.plot(range(len(xs)), ys, color="gray", linewidth=1, alpha=0.5, zorder=2)
