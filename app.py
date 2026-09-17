@@ -1641,6 +1641,7 @@ elif plot_mode == "Multiple plots":
                                     by_tkb[xv].append(yv)
                                 xs_line = sorted(by_tkb.keys())
                                 ys_line = [np.nanmean(by_tkb[xv]) for xv in xs_line]
+                                st.write(f"[debug] {mk} group={v} n_points_per_tkb={[len(by_tkb[xv]) for xv in xs_line]} xs_line={xs_line} ys_line={ys_line}")
                                 ax.plot(xs_line, ys_line, color=col_c, linewidth=1, alpha=0.6)
                         ax.set_xlabel("TkB")
                         ax.set_ylabel(ylabel)
