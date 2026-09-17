@@ -46,6 +46,7 @@ from stats_detectors import (
     _overlay_feature_locus,
     _clamp_smooth_win,
     _overlay_prognosis_surface,
+    _moving_average,
     apply_curve_detectors,
     slice_by_time_window,
 )
@@ -59,6 +60,7 @@ from plot_utils import (
     apply_global_styling,
     apply_grid,
     save_figure_if_requested,
+    render_smoothing_preview,
 )
 from metric_caching import (
     rundata_npz_path,
@@ -96,14 +98,25 @@ def post_analysis_block_generic(
             st.info("No curves available.")
             return
 
+        run_opts = ["All"] + [c["run"] for c in curves]
+        pick = st.selectbox("Analyze curve", run_opts, index=0, key=f"{key}_pick")
+        smooth_win = st.slider("Smoothing window", 1, 51, 9, 2, key=f"{key}_smooth")
+
+        preview_curves = curves if pick == "All" else [c for c in curves if c["run"] == pick]
+        if preview_curves:
+            preview_curve = preview_curves[0]
+            x_prev = np.asarray(preview_curve["x"], float)
+            y_prev = np.asarray(preview_curve["y"], float)
+            y_prev_smooth = _moving_average(y_prev, smooth_win)
+            render_smoothing_preview(
+                x_prev, y_prev, y_prev_smooth, smooth_win,
+                title=f"Smoothing preview — {preview_curve.get('run', 'run')}",
+            )
+
         # ALWAYS rendered (state won’t reset)
 
 
         with st.form(key=f"post_form_{key}", clear_on_submit=False):
-            run_opts = ["All"] + [c["run"] for c in curves]
-            pick = st.selectbox("Analyze curve", run_opts, index=0, key=f"{key}_pick")
-
-            smooth_win = st.slider("Smoothing window", 1, 51, 9, 2, key=f"{key}_smooth")
             sustain = st.slider("Flatten sustain (% of points)", 1, 30, 8, 1, key=f"{key}_sustain")
             slope_eps_user = st.number_input(
                 "Flatten slope threshold (leave 0 for auto)",
@@ -291,11 +304,22 @@ def post_analysis_block(
             st.info("No curves available.")
             return
 
-        with st.form(key=f"post_form_{key}", clear_on_submit=False):
-            run_opts = ["All"] + sorted({c.get("run", "run") for c in curves})
-            pick = st.selectbox("Analyze run", run_opts, index=0, key=f"{key}_pick")
+        run_opts = ["All"] + sorted({c.get("run", "run") for c in curves})
+        pick = st.selectbox("Analyze run", run_opts, index=0, key=f"{key}_pick")
+        smooth_win = st.slider("Smoothing window", 1, 51, 9, 2, key=f"{key}_smooth")
 
-            smooth_win = st.slider("Smoothing window", 1, 51, 9, 2, key=f"{key}_smooth")
+        preview_curves = curves if pick == "All" else [c for c in curves if c.get("run") == pick]
+        if preview_curves:
+            preview_curve = preview_curves[0]
+            x_prev = np.asarray(preview_curve["x"], float)
+            y_prev = np.asarray(preview_curve["y"], float)
+            y_prev_smooth = _moving_average(y_prev, smooth_win)
+            render_smoothing_preview(
+                x_prev, y_prev, y_prev_smooth, smooth_win,
+                title=f"Smoothing preview — {preview_curve.get('run', 'run')}",
+            )
+
+        with st.form(key=f"post_form_{key}", clear_on_submit=False):
             sustain = st.slider("Flatten sustain (% of points)", 1, 30, 8, 1, key=f"{key}_sustain")
             slope_eps_user = st.number_input(
                 "Flatten slope threshold (leave 0 for auto)",
@@ -1893,6 +1917,18 @@ elif plot_mode == "Multiple plots":
                     early_pct = st.slider("Early segment (%)", 5, 49, 20, 5, key=f"shape_{safe_key}_early")
                 with col_se:
                     late_pct = st.slider("Late segment (%)", 5, 49, 20, 5, key=f"shape_{safe_key}_late")
+
+                # --- live smoothing preview: raw vs. smoothed for one curve ---
+                preview_run = st.selectbox(
+                    "Preview smoothing on run:",
+                    [c["run"] for c in curves_for_shape],
+                    key=f"shape_{safe_key}_preview_run",
+                )
+                preview_curve = next(c for c in curves_for_shape if c["run"] == preview_run)
+                x_prev = np.asarray(preview_curve["x"], float)
+                y_prev = np.asarray(preview_curve["y"], float)
+                y_prev_smooth = uniform_filter1d(y_prev, size=smooth_win_shape)
+                render_smoothing_preview(x_prev, y_prev, y_prev_smooth, smooth_win_shape)
 
                 # --- compute per-run metrics ---
                 results = []

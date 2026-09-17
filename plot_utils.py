@@ -10,6 +10,7 @@ import pathlib
 import re
 import tempfile
 
+import matplotlib.pyplot as plt
 import streamlit as st
 
 
@@ -65,6 +66,22 @@ def apply_grid(ax, show_grid: bool):
 
 def slugify(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", text).strip("_")
+
+def render_smoothing_preview(x, y_raw, y_smoothed, smooth_win, *, title="Smoothing preview"):
+    """
+    Small raw-vs-smoothed line plot so a smoothing-window slider's effect is
+    visible immediately, instead of having to run the full analysis to see it.
+    Caller supplies the already-smoothed array so this works regardless of
+    which smoothing function a given section actually uses downstream.
+    """
+    fig, ax = plt.subplots(figsize=(6, 2.2))
+    ax.plot(x, y_raw, color="#bbbbbb", linewidth=1, label="raw")
+    ax.plot(x, y_smoothed, color="crimson", linewidth=1.5, label=f"smoothed (window={smooth_win})")
+    ax.legend(fontsize=8)
+    ax.set_title(title, fontsize=10)
+    st.pyplot(fig)
+    plt.close(fig)
+
 
 def save_figure_if_requested(fig, base_name: str, save_enabled: bool, output_dir: str):
     if not save_enabled:
