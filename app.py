@@ -1266,7 +1266,7 @@ elif plot_mode == "Multiple plots":
         source_root=source_root,
         metric_options=metric_options,
         include_metric_select=True,
-        default_metrics=[metric_options[0]],
+        default_metrics=["Particle distance"],
         include_crystal_multiselect=True,
     )
 
@@ -1510,11 +1510,16 @@ elif plot_mode == "Multiple plots":
                             continue
                         y_sm = uniform_filter1d(y, size=smooth_win_shape)
                         n = len(y_sm)
-                        early_seg = max(1, int(n * early_pct / 100))
-                        late_seg  = max(1, int(n * late_pct  / 100))
-                        early_slope = (y_sm[early_seg] - y_sm[0]) / (x[early_seg] - x[0] + 1e-12)
-                        late_slope  = (y_sm[-1] - y_sm[-late_seg]) / (x[-1] - x[-late_seg] + 1e-12)
-                        slope_ratio = abs(early_slope) / (abs(late_slope) + 1e-12)
+                        early_seg = max(2, int(n * early_pct / 100))
+                        late_seg  = max(2, int(n * late_pct  / 100))
+                        # linear-fit slope over each whole segment, not just its
+                        # two endpoints -- a two-point difference is extremely
+                        # noise-sensitive once a segment is close to flat, which
+                        # was causing slope_ratio to spike toward +inf on some runs
+                        early_slope, _ = np.polyfit(x[:early_seg + 1], y_sm[:early_seg + 1], 1)
+                        late_slope, _  = np.polyfit(x[-late_seg:], y_sm[-late_seg:], 1)
+                        late_scale = max(abs(late_slope), 0.05 * abs(early_slope))
+                        slope_ratio = abs(early_slope) / (late_scale + 1e-12)
                         half_max = (np.nanmax(y_sm) + np.nanmin(y_sm)) / 2.0
                         is_decreasing = y_sm[-1] < y_sm[0]
                         if is_decreasing:
