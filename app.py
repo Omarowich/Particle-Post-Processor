@@ -1641,7 +1641,12 @@ elif plot_mode == "Multiple plots":
                             group_sorted = sorted(group, key=lambda r: r["tkb"])
                             xs_r = [r["tkb"] for r in group_sorted]
                             ys_r = [r[mk] for r in group_sorted]
-                            ax.scatter(xs_r, ys_r, color=col_c, s=60, zorder=3, edgecolors="white", linewidths=0.6)
+                            # raw per-run points: small and semi-transparent, since
+                            # when several runs share a TkB (replicates) the trend
+                            # line below connects through their *average*, which
+                            # generally sits at a different y than any one of them
+                            ax.scatter(xs_r, ys_r, color=col_c, s=35, zorder=2, alpha=0.55,
+                                       edgecolors="white", linewidths=0.5)
                             if connect_dots_row1:
                                 # connect through the per-TkB mean so replicate
                                 # runs at the same TkB don't zig-zag the line
@@ -1650,7 +1655,13 @@ elif plot_mode == "Multiple plots":
                                     by_tkb[xv].append(yv)
                                 xs_line = sorted(by_tkb.keys())
                                 ys_line = [np.nanmean(by_tkb[xv]) for xv in xs_line]
-                                ax.plot(xs_line, ys_line, color=col_c, linewidth=1.3, linestyle=style_c, alpha=0.8)
+                                # the trend line gets its own bold diamond markers
+                                # (distinct from the raw-run circles above) so it's
+                                # visually obvious these mark a per-TkB average, not
+                                # a path through individual raw points
+                                ax.plot(xs_line, ys_line, color=col_c, linewidth=1.3, linestyle=style_c,
+                                        alpha=0.95, marker='D', markersize=6,
+                                        markeredgecolor="black", markeredgewidth=0.4, zorder=4)
                         ax.set_xlabel("TkB")
                         ax.set_ylabel(ylabel)
                         ax.set_title(f"{title}\n(per run, colored by nm)")
@@ -1721,10 +1732,11 @@ elif plot_mode == "Multiple plots":
 
                     # shared legend
                     legend_els = [
-                        Line2D([0], [0], marker='o', color=third_color_map[v],
+                        Line2D([0], [0], marker='D', color=third_color_map[v],
                                linestyle=third_style_map.get(v, "-"),
                                markerfacecolor=third_color_map[v],
-                               markersize=8, label=f"{v:g}{group_summary[v]['unit']}")
+                               markeredgecolor="black", markeredgewidth=0.4,
+                               markersize=7, label=f"{v:g}{group_summary[v]['unit']}")
                         for v in sorted(group_summary.keys())
                     ]
                     axes[0][0].legend(handles=legend_els, fontsize=9)
