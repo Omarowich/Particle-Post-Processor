@@ -561,7 +561,7 @@ def sidebar_runs_common_ui(
     if base_dir and os.path.isdir(base_dir):
         try:
             folder_re = re.compile(
-                r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB(?:[ _]*([0-9]+(?:\.[0-9]+)?)(nm|dn))?$",
+                r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB(?:[ _]*([0-9]+(?:\.[0-9]+)?)(nm|dn|F))?$",
                 re.IGNORECASE,
             )
             for fn in os.listdir(base_dir):
@@ -1475,6 +1475,8 @@ elif plot_mode == "Multiple plots":
                         return float(1.4826 * np.median(np.abs(arr - np.median(arr))))
 
                     unique_thirds_shape = sorted({c.get("third_val") for c in curves_for_shape if c.get("third_val") is not None})
+                    third_units_shape = sorted({c.get("third_unit") for c in curves_for_shape if c.get("third_unit")})
+                    third_axis_label = "/".join(third_units_shape) if third_units_shape else "3rd param"
                     shape_palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
                     # Assign each dn value a color (and a line style) the first time
                     # it's ever seen this session, and keep it forever after --
@@ -1700,7 +1702,7 @@ elif plot_mode == "Multiple plots":
                             ax.plot(range(len(xs)), ys, color="gray", linewidth=1, alpha=0.5, zorder=2)
                         ax.set_xticks(range(len(xs)))
                         ax.set_xticklabels(xlabels, rotation=45, ha="right")
-                        ax.set_xlabel("dn value")
+                        ax.set_xlabel(third_axis_label)
                         ax.set_ylabel(ylabel)
                         ax.set_title(f"{title}\n(per group, median ± MAD across TkB)")
                         apply_grid(ax, show_grid)
@@ -1724,7 +1726,7 @@ elif plot_mode == "Multiple plots":
                         ax.bar(range(len(xs)), ys, color=cols_g)
                         ax.set_xticks(range(len(xs)))
                         ax.set_xticklabels(xlabels, rotation=45, ha="right")
-                        ax.set_xlabel("dn value")
+                        ax.set_xlabel(third_axis_label)
                         ax.set_ylabel(ylabel)
                         ax.set_title(f"{title}\n(Theil-Sen slope per group)")
                         apply_grid(ax, show_grid)
