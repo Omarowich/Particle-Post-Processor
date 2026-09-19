@@ -3153,7 +3153,7 @@ elif plot_mode == "Summary plots":
     available_runs = []
     if base_dir and os.path.isdir(base_dir):
         folder_re = re.compile(
-            r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB$",
+            r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB(?:[ _]*[0-9]+(?:\.[0-9]+)?(?:nm|dn|F))?$",
             re.IGNORECASE,
         )
         for fn in os.listdir(base_dir):
