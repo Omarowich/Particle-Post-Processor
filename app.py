@@ -82,9 +82,10 @@ from sidebar_widgets import render_cluster_params_widgets
 
 # Sweep-folder 3rd-parameter units are parsed and stored lowercase (e.g. "f"
 # for the "...F" acoustic-streaming-force folders) since that raw value is
-# used as a grouping/cache key throughout the app. This maps that raw value
-# to what should actually be shown to the user, without touching the raw
-# value itself anywhere else.
+# used as a grouping/cache key, filter widget value, and folder-matching
+# literal throughout the app. This maps that raw value to what should be
+# shown in plot legends only -- folder names, filter labels, and tables
+# still show the raw unit as parsed.
 UNIT_DISPLAY_NAMES = {"f": "N/m³"}
 
 
@@ -598,7 +599,7 @@ def sidebar_runs_common_ui(
         third_unit = run[4] if len(run) > 4 else None
         base = f"{tkb:g} Tkb (TauB: {tau:g})"
         if third_val is not None and third_unit:
-            base += f" ({third_val:g} {display_unit(third_unit)})"
+            base += f" ({third_val:g} {third_unit})"
         return base
 
     if available_runs:
@@ -618,7 +619,7 @@ def sidebar_runs_common_ui(
             "TauB values", all_taus, default=all_taus, key=f"multi_filter_tau__{dataset_tag}"
         )
         if all_thirds:
-            unit_label = "/".join(sorted({display_unit(u) for u in all_units})) if all_units else "3rd param"
+            unit_label = "/".join(all_units) if all_units else "3rd param"
             filter_thirds = st.sidebar.multiselect(
                 f"{unit_label} values", all_thirds, default=all_thirds,
                 key=f"multi_filter_third__{dataset_tag}"
@@ -664,7 +665,7 @@ def sidebar_runs_common_ui(
     group_by_options = ["TkB", "TauB"]
     if has_third:
         third_units = {r[4] for r in available_runs if len(r) > 4 and r[4]}
-        third_label = "/".join(sorted({display_unit(u) for u in third_units})) if third_units else "3rd param"
+        third_label = "/".join(sorted(third_units)) if third_units else "3rd param"
         group_by_options.append(third_label)
 
     group_by = st.sidebar.selectbox(
@@ -1423,7 +1424,7 @@ elif plot_mode == "Multiple plots":
             third_unit = r[4] if len(r) > 4 else None
             row = {"TkB": tkb, "TauB": tau}
             if third_val is not None:
-                row["3rd param"] = f"{third_val:g}{display_unit(third_unit) if third_unit else ''}"
+                row["3rd param"] = f"{third_val:g}{third_unit or ''}"
             runs_rows.append(row)
         st.dataframe(pd.DataFrame(runs_rows), use_container_width=True, hide_index=True)
 
@@ -1489,7 +1490,7 @@ elif plot_mode == "Multiple plots":
 
                     unique_thirds_shape = sorted({c.get("third_val") for c in curves_for_shape if c.get("third_val") is not None})
                     third_units_shape = sorted({c.get("third_unit") for c in curves_for_shape if c.get("third_unit")})
-                    third_axis_label = "/".join(sorted({display_unit(u) for u in third_units_shape})) if third_units_shape else "3rd param"
+                    third_axis_label = "/".join(third_units_shape) if third_units_shape else "3rd param"
                     shape_palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
                     # Assign each dn value a color (and a line style) the first time
                     # it's ever seen this session, and keep it forever after --
@@ -1698,7 +1699,7 @@ elif plot_mode == "Multiple plots":
                         ys = [group_summary[v][mk_mean] for v in xs]
                         errs = [group_summary[v][mk_std] for v in xs] if mk_std else None
                         cols_g = [third_color_map.get(v, "gray") for v in xs]
-                        units = [display_unit(group_summary[v]["unit"]) for v in xs]
+                        units = [group_summary[v]["unit"] for v in xs]
                         xlabels = [f"{v:g}{u}" for v, u in zip(xs, units)]
                         for i, (xv, yv, col_c) in enumerate(zip(range(len(xs)), ys, cols_g)):
                             err = errs[i] if errs else None
@@ -1733,7 +1734,7 @@ elif plot_mode == "Multiple plots":
                         xs = sorted(group_summary.keys())
                         ys = [group_summary[v][mk] for v in xs]
                         cols_g = [third_color_map.get(v, "gray") for v in xs]
-                        units = [display_unit(group_summary[v]["unit"]) for v in xs]
+                        units = [group_summary[v]["unit"] for v in xs]
                         xlabels = [f"{v:g}{u}" for v, u in zip(xs, units)]
                         ax.axhline(0, color="black", linewidth=0.8, alpha=0.5)
                         ax.bar(range(len(xs)), ys, color=cols_g)
