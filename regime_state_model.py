@@ -41,7 +41,8 @@ REGIME_NAMES = {
     "ARF": "acoustic radiation force",
     "ASF": "acoustic streaming flow",
 }
-_NAME_RE = re.compile(r"^([\d.]+)Tkb_([\d.]+)TauB(?:_(\d+(?:\.\d+)?)(nm|nn|F))?$", re.IGNORECASE)
+_NAME_RE = re.compile(r"^([\d.]+)Tkb_([\d.]+)TauB(?:_(\d+(?:\.\d+)?)(nm|nn|F))?((?:_[A-Za-z]+\d*)*)$",
+                      re.IGNORECASE)   # optional tags: _core, _dt50, _seed2, ...
 
 # colours: categorical slots of the app's chart palette (identity), blue ramp for magnitude
 STATE_COLORS = {
@@ -78,6 +79,8 @@ def parse_run_name(regime: str, name: str) -> dict | None:
         "T_name": float(m.group(2)),
         "dn": val if unit in ("nm", "nn") else np.nan,
         "F": val if unit == "f" else np.nan,
+        "tags": (m.group(5) or "").lstrip("_"),
+        "seed": int(re.search(r"seed(\d+)", m.group(5) or "").group(1)) if "seed" in (m.group(5) or "") else 0,
     }
 
 
@@ -231,6 +234,8 @@ class BoundaryModel:
 
 def boundary_data(df: pd.DataFrame, regime="ARF", param="dn", common_time_tauB=1.0):
     d = df[(df.regime == regime) & np.isfinite(df[param])].copy()
+    if "tags" in d:   # time-step test runs use a different step size: keep them out of the fit
+        d = d[~d.tags.fillna("").str.contains("dt")]
     d = d[np.isclose(d.t_eval_tauB, common_time_tauB, atol=0.05)]
     has_common = set(d.loc[d["eval"] == "common", "name"])
     return d[~((d["eval"] == "end") & d["name"].isin(has_common))]
@@ -406,6 +411,8 @@ def fig_transitions(df: pd.DataFrame, metric="psi6", threshold=None, regimes=("A
     k, amax = 0, 0.0
     for reg in regimes:
         d = df[(df.regime == reg) & (df["eval"] == "end") & df.dn.isna() & df.F.isna()]
+        if "tags" in d:   # tagged runs (_core, _seed2, ...) are not part of the original sweep lines
+            d = d[d.tags.fillna("") == ""]
         for T in sorted(d.T_name.unique()):
             s = d[d.T_name == T].sort_values("A")
             if len(s) < 2 or k >= len(pal):
