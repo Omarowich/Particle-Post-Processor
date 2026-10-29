@@ -79,7 +79,10 @@ def parse_run_name(regime: str, name: str) -> dict | None:
         "T_name": float(m.group(2)),
         "dn": val if unit in ("nm", "nn") else np.nan,
         "F": val if unit == "f" else np.nan,
-        "tags": (m.group(5) or "").lstrip("_"),
+        # source: _CS = COMSOL, _BD = Python Brownian dynamics; untagged names are COMSOL (old folders).
+        # The _CS tag itself is not kept in "tags", so COMSOL runs behave as before (untagged).
+        "tags": "_".join(t for t in (m.group(5) or "").lstrip("_").split("_") if t and t.upper() != "CS"),
+        "source": "BD" if re.search(r"(^|_)BD(_|$)", m.group(5) or "") else "COMSOL",
         "seed": _tag_value(m.group(5), "seed", int, 0),
         "potential": "AO" if re.search(r"(^|_)AO(_|$)", m.group(5) or "") else "LJ",
         "q": _tag_value(m.group(5), "q", float, np.nan),

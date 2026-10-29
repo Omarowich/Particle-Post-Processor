@@ -143,7 +143,8 @@ def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=Tru
 
     Returns (df, pairs) with pairs[(regime, name)] = all pair distances at the last frame.
     """
-    runs = rsm.discover_runs(bd_root, regimes=("ARF", "NAF", "AAF"))
+    # only the Python runs: the folder may also hold COMSOL runs (_CS) since the data merge
+    runs = [(q, rd) for q, rd in rsm.discover_runs(bd_root, regimes=("ARF", "NAF", "AAF")) if q.get("source") == "BD"]
     cache_file = os.path.join(bd_root, CACHE_NAME)
     cache = {}
     if use_cache and os.path.isfile(cache_file):
@@ -224,6 +225,15 @@ def band(ax, d, m, col, label, ls="-"):
         ax.fill_between(t, piv.min(axis=1).values, piv.max(axis=1).values, color=col, alpha=0.18, lw=0)
 
 
+def comsol_dir(root, regime, base):
+    """COMSOL run folder: <base>_CS (merged Data folder) or <base> (old raw csv data folder)."""
+    for n in (base + "_CS", base):
+        d = os.path.join(root, regime, n)
+        if os.path.isfile(os.path.join(d, "datax.csv")):
+            return d
+    raise FileNotFoundError(f"COMSOL run {regime}/{base}(_CS) not found in {root}")
+
+
 def comsol_series(run_dir, every=5):
     x, y, t = rv.load_run(run_dir)
     co = np.array([frame_obs(np.c_[x[k], y[k]]) for k in range(0, len(t), every)])
@@ -252,8 +262,8 @@ def fig_seeds(df, bd_root, comsol_root,
               bd_runs=("2.5Tkb_10TauB_2750nm_BD_seed1", "2.5Tkb_10TauB_2750nm_BD_seed2"),
               A=2.5, dn=2750):
     plt = _style()
-    a = first_step(os.path.join(comsol_root, "ARF", comsol_runs[0]))
-    b = first_step(os.path.join(comsol_root, "ARF", comsol_runs[1]))
+    a = first_step(comsol_dir(comsol_root, "ARF", comsol_runs[0]))
+    b = first_step(comsol_dir(comsol_root, "ARF", comsol_runs[1]))
     c = first_step(_run_dir(bd_root, "ARF", bd_runs[0]))
     d = first_step(_run_dir(bd_root, "ARF", bd_runs[1]))
     fig, ax = plt.subplots(1, 3, figsize=(15, 4.2), constrained_layout=True,
@@ -469,7 +479,7 @@ def _comsol_aaf(comsol_root, every=5):
         return out
     for n in os.listdir(base):
         p = rsm.parse_run_name("AAF", n)
-        if p is None or not os.path.isfile(os.path.join(base, n, "datax.csv")):
+        if p is None or p.get("source") != "COMSOL" or not os.path.isfile(os.path.join(base, n, "datax.csv")):
             continue
         t, co = comsol_series(os.path.join(base, n), every)
         out[p["A"]] = (t, co)
@@ -534,7 +544,7 @@ def fig_vs_comsol(df, comsol_root, cases=((0, 2000), (0, 4000), (5, 2000), (5, 4
     plt = _style()
     fig, ax = plt.subplots(2, len(cases), figsize=(15, 6), constrained_layout=True, sharex=True, squeeze=False)
     for j, (A, dn) in enumerate(cases):
-        tc, co = comsol_series(os.path.join(comsol_root, "ARF", f"{A:g}Tkb_1TauB_{dn:g}nm"))
+        tc, co = comsol_series(comsol_dir(comsol_root, "ARF", f"{A:g}Tkb_1TauB_{dn:g}nm"))
         d = sel(df, A=A, dn=dn, T=1, tags="BD")
         for i, (m, ci) in enumerate((("z", 0), ("y_spread", 3))):
             band(ax[i, j], d, m, BLUE, "Python BD")

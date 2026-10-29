@@ -626,6 +626,18 @@ def sidebar_runs_common_ui(
         all_units = sorted({r[4] for r in available_runs if r[4] is not None})
 
         st.sidebar.markdown("**Filter runs:**")
+        _is_bd = lambda r: bool(re.search(r"(^|_)BD(_|$)", run_tag(r[0])))
+        if any(_is_bd(r) for r in available_runs) and not all(_is_bd(r) for r in available_runs):
+            src = st.sidebar.radio("Source", ["COMSOL and Python", "COMSOL only", "Python (BD) only"],
+                                   horizontal=False, key=f"multi_filter_src__{dataset_tag}")
+            if src == "COMSOL only":
+                available_runs = [r for r in available_runs if not _is_bd(r)]
+            elif src == "Python (BD) only":
+                available_runs = [r for r in available_runs if _is_bd(r)]
+            all_tkbs = sorted({r[1] for r in available_runs})
+            all_taus = sorted({r[2] for r in available_runs})
+            all_thirds = sorted({r[3] for r in available_runs if r[3] is not None})
+            all_units = sorted({r[4] for r in available_runs if r[4] is not None})
         # Widget keys are namespaced by dataset_tag so switching data folders
         # always starts with everything selected instead of carrying over the
         # previous folder's (likely mismatched) TkB/TauB/run selections.
@@ -3907,7 +3919,7 @@ elif plot_mode == "Regime state model":
         rsm_found,
         default=rsm_found,
         format_func=lambda r: f"{r} ({rsm.REGIME_NAMES[r]})",
-        key="rsm_regimes",
+        key=f"rsm_regimes__{rsm_root}",   # per folder, so a newly typed folder starts with all regimes
     )
 
     with st.sidebar.expander("4. Analysis settings", expanded=False):
@@ -3951,6 +3963,15 @@ elif plot_mode == "Regime state model":
     if rsm_obs.empty:
         st.warning("No runs found. Folder names must look like 3Tkb_1TauB_2000nm, 50Tkb_0.75TauB_1000F or 5Tkb_2TauB.")
         st.stop()
+    if "source" in rsm_obs and rsm_obs.source.nunique() > 1:
+        rsm_src = st.sidebar.radio("6. Runs to use", ["COMSOL only", "COMSOL and Python", "Python (BD) only"],
+                                   key="rsm_source",
+                                   help="The folder holds both COMSOL (_CS) and Python (_BD) runs. "
+                                        "The original boundary model is fitted on the COMSOL runs.")
+        if rsm_src == "COMSOL only":
+            rsm_obs = rsm_obs[rsm_obs.source == "COMSOL"]
+        elif rsm_src == "Python (BD) only":
+            rsm_obs = rsm_obs[rsm_obs.source == "BD"]
     rsm_df = rsm.label_runs(rsm_obs, rsm_th)
 
     tab_states, tab_map, tab_trans, tab_next, tab_checks = st.tabs(
