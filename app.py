@@ -1088,7 +1088,7 @@ def sidebar_runs_common_ui(
     if base_dir and os.path.isdir(base_dir):
         try:
             folder_re = re.compile(
-                r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB(?:[ _]*([0-9]+(?:\.[0-9]+)?)(nm|dn))?$",
+                r"^([0-9]+(?:\.[0-9]+)?)Tkb[ _]*([0-9]+(?:\.[0-9]+)?)TauB(?:[ _]*([0-9]+(?:\.[0-9]+)?)(nm|nn|dn|F))?((?:_[A-Za-z]+[0-9.]*)*)$",
                 re.IGNORECASE,
             )
             for fn in os.listdir(base_dir):
@@ -1099,6 +1099,8 @@ def sidebar_runs_common_ui(
                 tau_val = float(m.group(2))
                 third_val = float(m.group(3)) if m.group(3) else None
                 third_unit = m.group(4).lower() if m.group(4) else None
+                if third_unit == "nn":   # typo in some folder names (e.g. 0Tkb_1TauB_3000nn)
+                    third_unit = "nm"
                 folder_path = os.path.join(base_dir, fn)
                 available_runs.append((folder_path, tkb_val, tau_val, third_val, third_unit))
         except Exception as e:
@@ -1113,6 +1115,9 @@ def sidebar_runs_common_ui(
         base = f"{tkb:g} Tkb (TauB: {tau:g})"
         if third_val is not None and third_unit:
             base += f" ({third_val:g} {third_unit})"
+        tag = run_tag(run[0])
+        if tag:
+            base += f" [{tag}]"
         return base
 
     if available_runs:
@@ -1607,12 +1612,28 @@ def rundata_dir(base_dir: str) -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
-def make_rundata_stem(dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None) -> str:
-    third_part = f"_{third_val:g}{third_unit}" if third_val is not None and third_unit else ""
-    return slugify(f"{dataset_tag}_{tkb:g}tkb_{taub:g}taub{third_part}_{metric_label}")
+# Run folders may carry tags after the standard name, e.g. 3Tkb_1TauB_4000nm_BD_seed2 or
+# 3Tkb_2TauB_2750nm_BD_AO_q0.2_phi0.664_seed1. Runs that differ only by tag must not share caches or labels.
+_RUN_TAG_RE = re.compile(
+    r"^[0-9]+(?:\.[0-9]+)?Tkb[ _]*[0-9]+(?:\.[0-9]+)?TauB(?:[ _]*[0-9]+(?:\.[0-9]+)?(?:nm|nn|dn|F))?((?:_[A-Za-z]+[0-9.]*)*)$",
+    re.IGNORECASE,
+)
 
-def rundata_npz_path(base_dir: str, dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None) -> Path:
-    return rundata_dir(base_dir) / (make_rundata_stem(dataset_tag, tkb, taub, metric_label, third_val, third_unit) + ".npz")
+def run_tag(run_name: str) -> str:
+    m = _RUN_TAG_RE.match(os.path.basename(str(run_name).rstrip("\\/")))
+    return m.group(1).lstrip("_") if m else ""
+
+def tag_suffix(d: dict) -> str:
+    t = run_tag(d.get("run", "")) if isinstance(d, dict) else ""
+    return f" [{t}]" if t else ""
+
+def make_rundata_stem(dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None, tag: str = "") -> str:
+    third_part = f"_{third_val:g}{third_unit}" if third_val is not None and third_unit else ""
+    tag_part = f"_{tag}" if tag else ""
+    return slugify(f"{dataset_tag}_{tkb:g}tkb_{taub:g}taub{third_part}{tag_part}_{metric_label}")
+
+def rundata_npz_path(base_dir: str, dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None, tag: str = "") -> Path:
+    return rundata_dir(base_dir) / (make_rundata_stem(dataset_tag, tkb, taub, metric_label, third_val, third_unit, tag) + ".npz")
 
 def save_rundata_npz(path: Path, y: np.ndarray):
     y = np.asarray(y, float)
@@ -1709,7 +1730,7 @@ def get_series_for_metric(
         third_unit = run_tuple[4] if len(run_tuple) > 4 else None
         run_name = os.path.basename(folder_path)
 
-        npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label, third_val, third_unit)
+        npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label, third_val, third_unit, run_tag(run_name))
 
         y = None
         loaded = False
@@ -2823,7 +2844,7 @@ elif plot_mode == "Multiple plots":
                         ax.plot(
                             x,
                             y_grid,
-                            label = f"{s['tkb']:g} Tkb (TauB {taub:g}) — {kind}" if show_taub_in_legend else f"{s['tkb']:g} Tkb — {kind}",
+                            label = (f"{s['tkb']:g} Tkb (TauB {taub:g}) — {kind}" if show_taub_in_legend else f"{s['tkb']:g} Tkb — {kind}") + tag_suffix(s),
                             color = get_line_color(s),
                         )
                         # collect for post-analysis
@@ -2904,7 +2925,7 @@ elif plot_mode == "Multiple plots":
                 tkb_val = float(tkb_val)
                 tau_val = float(tau_val)
 
-                npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label, third_val, third_unit)
+                npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label, third_val, third_unit, run_tag(run_name))
                 #st.write(
                 #    f"🔎 {metric_label} | {run_name} -> saved file exists? {npz_path.exists()} | export_data={export_data}")
 
@@ -3084,7 +3105,7 @@ elif plot_mode == "Multiple plots":
                     col = get_line_color(s)
                 ax.plot(
                     x, s["y"],
-                    label=f"{s['tkb']:g} Tkb (TauB {s['taub']:g})" if show_taub_in_legend else f"{s['tkb']:g} Tkb",
+                    label=(f"{s['tkb']:g} Tkb (TauB {s['taub']:g})" if show_taub_in_legend else f"{s['tkb']:g} Tkb") + tag_suffix(s),
                     color=col,
                 )
                 post_curves.append({
@@ -3593,7 +3614,7 @@ elif plot_mode == "Function mixer":
             ax.plot(
                 c["x"],
                 c["y"],
-                label=f"{c['tkb']:g} Tkb (TauB {c['taub']:g})" if show_taub_in_legend else f"{c['tkb']:g} Tkb",
+                label=(f"{c['tkb']:g} Tkb (TauB {c['taub']:g})" if show_taub_in_legend else f"{c['tkb']:g} Tkb") + tag_suffix(c),
                 color=(c["tkb"]),
             )
 
