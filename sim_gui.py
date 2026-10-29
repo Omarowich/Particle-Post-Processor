@@ -59,7 +59,7 @@ def match_phi(c, A_target):
     target = b2_star({**c, "potential": "LJ", "A": A_target})
     f = lambda p: b2_star({**c, "potential": "AO", "phi_p": p}) - target
     try:
-        return brentq(f, 1e-3, 3.0, xtol=1e-4), target
+        return brentq(f, 1e-3, 20.0, xtol=1e-4), target
     except ValueError:
         return float("nan"), target
 

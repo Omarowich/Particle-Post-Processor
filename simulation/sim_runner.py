@@ -123,11 +123,17 @@ def run_folder_name(c, seed):
 
 
 def _status(job_dir, seed, **kw):
+    """Write the progress file. Never lets a locked file (Windows, while the page reads it) stop a run."""
     p = os.path.join(job_dir, f"status_seed{seed}.json")
-    tmp = p + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(kw, f)
-    os.replace(tmp, p)
+    tmp = p + f".{os.getpid()}.tmp"
+    for _ in range(5):
+        try:
+            with open(tmp, "w") as f:
+                json.dump(kw, f)
+            os.replace(tmp, p)
+            return
+        except OSError:
+            time.sleep(0.05)
 
 
 def run_one(args):

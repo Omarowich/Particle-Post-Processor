@@ -80,6 +80,12 @@ from metric_caching import (
 )
 import pandas as pd
 import regime_state_model as rsm
+
+
+def clean_path(p):
+    """Path typed or pasted by the user: drop spaces, any kind of quotes and trailing slashes."""
+    p = (p or "").strip().strip('"\'\u201c\u201d\u2018\u2019').strip()
+    return p.rstrip("\\/") if len(p) > 3 else p
 import run_viewer as rv
 import io
 from pptx_export import build_pptx_from_images
@@ -4065,9 +4071,11 @@ elif plot_mode == "Paper figures":
     st.sidebar.header("2. Data folders")
     pf_bd = st.sidebar.text_input("Python BD runs (folder with ARF / NAF / AAF):",
                                   value=os.path.join(source_root, "BD runs v2") if source_root else "",
-                                  key="pf_bd").strip().strip('"').strip("'")
+                                  key="pf_bd")
+    pf_bd = clean_path(pf_bd)
     pf_co = st.sidebar.text_input("COMSOL runs (folder with ARF, for figures 0 and 2):",
-                                  value=source_root or "", key="pf_co").strip().strip('"').strip("'")
+                                  value=source_root or "", key="pf_co")
+    pf_co = clean_path(pf_co)
     st.sidebar.header("3. Figures")
     pf_keys = st.sidebar.multiselect("Figures:", list(pf.FIGURES), default=list(pf.FIGURES),
                                      format_func=lambda k: f"{k.split('_')[0]}  {pf.FIGURES[k]}", key="pf_keys")
@@ -4079,8 +4087,16 @@ elif plot_mode == "Paper figures":
                "`python paper_figures.py`). Figures 6 / 6a (two-particle B₂ and AO force check) come from "
                "`verify_ao.py` in the BD simulation folder. Snapshots (5b, 8, 8b) use the Run viewer code, "
                "so you can also make them there and change colours.")
-    if not (pf_bd and os.path.isdir(os.path.join(pf_bd, "ARF"))):
-        st.info("Set the BD runs folder (it must contain ARF/ and NAF/).")
+    pf_found = [r for r in ("ARF", "NAF", "AAF") if pf_bd and os.path.isdir(os.path.join(pf_bd, r))]
+    if not pf_found:
+        if not pf_bd:
+            st.info("Set the Python BD runs folder (the one that contains ARF / NAF / AAF).")
+        elif not os.path.isdir(pf_bd):
+            st.error(f"This folder does not exist (as the app sees it): `{pf_bd}`")
+        else:
+            subs = sorted(d for d in os.listdir(pf_bd) if os.path.isdir(os.path.join(pf_bd, d)))[:20]
+            st.error(f"`{pf_bd}` exists but has no ARF / NAF / AAF folder inside. Subfolders found: "
+                     + (", ".join(subs) if subs else "none"))
         st.stop()
     df_pf, pairs_pf = _pf_series(pf_bd, _folder_stamp(pf_bd))
     st.write(f"{df_pf.name.nunique()} runs loaded.")
@@ -4208,9 +4224,10 @@ elif plot_mode == "Run simulation":
     with st.sidebar:
         st.header("2. Output")
         sim_root = st.text_input("Output folder:", value=os.path.join(source_root, "BD runs v2") if source_root else
-                                 "BD runs v2", key="sim_root").strip().strip('"').strip("'")
+                                 "BD runs v2", key="sim_root")
+        sim_root = clean_path(sim_root)
         with st.expander("Load settings from an existing run"):
-            lf = st.text_input("Run folder (with sim_config.json):", key="sim_loadfolder").strip().strip('"')
+            lf = clean_path(st.text_input("Run folder (with sim_config.json):", key="sim_loadfolder"))
             if st.button("Load settings", key="sim_load_btn"):
                 try:
                     _apply_config(sg.load_config_from_run(lf))
@@ -4229,15 +4246,17 @@ elif plot_mode == "Run simulation":
         with c1:
             st.subheader("Interaction")
             pot = st.radio("Attraction", list(sg.POTENTIALS), format_func=sg.POTENTIALS.get, key="sim_pot")
+            match_failed = False
             if pot == "LJ":
                 A = st.number_input("A (k_BT)", 0.0, 50.0, step=0.25, key="sim_A")
                 st.number_input("LJ cut-off (σ)", 1.5, 10.0, step=0.5, key="sim_ljcut")
             elif pot == "AO":
-                st.number_input("q = δ/a (polymer / particle size)", 0.02, 1.0, step=0.05, key="sim_q",
+                st.number_input("q = δ/a (polymer / particle size)", 0.05, 1.0, step=0.05, key="sim_q",
                                 help="AO range is 2δ; q = 0.2 → 0.4 µm. Smaller q needs a smaller time step.")
                 match = st.checkbox("Match φ_p to an LJ depth by B₂*", key="sim_match")
                 A = st.number_input("matched LJ A (k_BT)" if match else "A for the run name (k_BT)",
                                     0.0, 50.0, step=0.25, key="sim_A")
+                match_failed = False
                 if match:
                     phi, tgt = sg.match_phi({"q": SS.sim_q, "core": SS.sim_core, "core_Z": SS.sim_Z}, A) \
                         if A > 0 else (float("nan"), 1.0)
@@ -4245,9 +4264,11 @@ elif plot_mode == "Run simulation":
                         SS.sim_phi = round(float(phi), 3)
                         st.caption(f"φ_p = **{phi:.3f}** gives B₂* = {tgt:.2f} (= LJ A = {A:g}).")
                     else:
-                        st.warning("No φ_p found for this A (A = 0 means no attraction: use 'none').")
-                st.number_input("φ_p (polymer reservoir volume fraction)", 0.0, 3.0, step=0.01, format="%.4f",
-                                key="sim_phi", disabled=match)
+                        match_failed = True
+                        st.warning("No φ_p matches this A. A = 0 means no attraction (choose 'no attraction'); "
+                                   "otherwise untick the box and set φ_p yourself.")
+                st.number_input("φ_p (polymer reservoir volume fraction)", 0.0, 20.0, step=0.01, format="%.3f",
+                                key="sim_phi", disabled=match and not match_failed)
             else:
                 A = 0.0
             st.selectbox("Repulsive core", list(sg.CORES), format_func=sg.CORES.get, key="sim_core")
@@ -4275,10 +4296,10 @@ elif plot_mode == "Run simulation":
             elif sk == "run":
                 st.text_input("Run folder (with datax.csv):", key="sim_runfolder")
                 st.number_input("Time of the frame (τ_B; large = last frame)", 0.0, 1e6, step=1.0, key="sim_runt")
-                start = {"kind": "run", "folder": SS.sim_runfolder.strip().strip('"'), "t_tauB": float(SS.sim_runt)}
+                start = {"kind": "run", "folder": clean_path(SS.sim_runfolder), "t_tauB": float(SS.sim_runt)}
             elif sk == "file":
                 st.text_input("CSV file (header line, then x, y in µm):", key="sim_file")
-                start = {"kind": "file", "path": SS.sim_file.strip().strip('"')}
+                start = {"kind": "file", "path": clean_path(SS.sim_file)}
             else:
                 start = {"kind": "aaf"}
                 st.caption("Frame 0 of your COMSOL AAF runs (`simulation/aaf_start.csv`); use with the field off.")
@@ -4391,7 +4412,27 @@ elif plot_mode == "Run simulation":
         exist = [os.path.isdir(os.path.join(sim_root, rg, nm)) for rg, nm in names]
         st.dataframe(pd.DataFrame({"folder": [f"{rg}/{nm}" for rg, nm in names],
                                    "exists already (skipped)": exist}), use_container_width=True, hide_index=True)
-        ok = bool(seeds) and tag_ok and n_part > 0 and not cfg["steps_per_tauB"] % cfg["out_per_tauB"] and bool(sim_root)
+        problems = []
+        if not seeds:
+            problems.append("enter at least one seed")
+        if not tag_ok:
+            problems.append("fix the name tag")
+        if n_part < 2:
+            problems.append("the start positions could not be made (see the preview)")
+        if cfg["steps_per_tauB"] % cfg["out_per_tauB"]:
+            problems.append("steps per τ_B must be a multiple of saved frames per τ_B")
+        if cfg["T_tauB"] * cfg["out_per_tauB"] < 2:
+            problems.append(f"run length × saved frames per τ_B is {cfg['T_tauB'] * cfg['out_per_tauB']:g}: "
+                            "at least 2 frames must be saved")
+        if pot == "AO" and match_failed:
+            problems.append("no φ_p matches the chosen A")
+        if pot == "AO" and cfg["phi_p"] <= 0:
+            problems.append("φ_p must be above 0 for AO")
+        if not sim_root:
+            problems.append("set the output folder")
+        if problems:
+            st.error("Cannot start yet: " + "; ".join(problems) + ".")
+        ok = not problems
         if st.button("▶ Start", type="primary", disabled=not ok, key="sim_go"):
             os.makedirs(sim_root, exist_ok=True)
             jd = sg.launch(cfg)

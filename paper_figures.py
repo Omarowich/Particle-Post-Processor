@@ -723,6 +723,13 @@ FIG_FUNCS = {
 def make_figure(key, df, pairs, bd_root, comsol_root=None):
     if key in NEEDS_COMSOL and not (comsol_root and os.path.isdir(comsol_root)):
         raise FileNotFoundError(f"{key} needs the COMSOL runs folder (with ARF/ inside)")
+    if key.startswith("10"):
+        lj, ao = _aaf_groups(df)
+        need = {"10a_aaf_time_LJ": lj, "10b_aaf_time_AO": ao, "10c_aaf_end_state": pd.concat([lj, ao])}[key]
+        if need.empty:
+            raise FileNotFoundError("no regime III runs (AAF folder) for this figure in the BD runs folder yet")
+    if key.startswith("6b") and not ((df.potential == "AO") & np.isclose(df.T_name, 2) & np.isclose(df.dn, 4000)).any():
+        raise FileNotFoundError("needs the AO time-step runs (airpods_bd.py --plan ao_dt)")
     return FIG_FUNCS[key](df, pairs, bd_root, comsol_root)
 
 
