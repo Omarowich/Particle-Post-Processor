@@ -425,36 +425,50 @@ def live_figure(x, y, t, k, opts: DrawOptions, model=None, selected=None, height
         ys = np.c_[P[b[:, 0], 1], P[b[:, 1], 1], np.full(len(b), np.nan)].ravel()
         fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color=opts.bond_color, width=1),
                                  hoverinfo="skip", showlegend=False))
-    px_per_um = 0.85 * (height - 80) / (2 * box + 2)   # plotly marker size is in pixels
-    size = 2 * A_P * opts.particle_scale * px_per_um
+    # Particles are drawn as circles in data units (true size at any zoom or window width);
+    # an almost invisible marker on each centre makes them clickable and carries the hover text.
+    R = A_P * opts.particle_scale
     hover = [f"particle {i}<br>z = {z[i]}<br>|ψ6| = {abs(psi[i]):.2f}" for i in range(len(P))]
+    cbar_trace = None
     if kind == "plain":
-        marker = dict(color=opts.plain_color)
+        fills = [opts.plain_color] * len(P)
     elif kind == "cat":
         vals = metric_values(opts.metric, x, y, t, k, model, opts.rc, cache)
-        marker = dict(color=[CAT_COLORS[v] for v in vals])
+        fills = [CAT_COLORS[v] for v in vals]
         hover = [h + f"<br>{v}" for h, v in zip(hover, vals)]
     else:
+        from matplotlib.colors import to_hex
         vals = metric_values(opts.metric, x, y, t, k, model, opts.rc, cache)
         lo, hi = opts.fixed_range or value_range(opts.metric, vals)
-        scale = {"seq": [[i / (len(_BLUE_RAMP) - 1), c] for i, c in enumerate(_BLUE_RAMP)],
-                 "div": [[i / (len(_DIVERGING) - 1), c] for i, c in enumerate(_DIVERGING)],
-                 "cyc": "Twilight"}[kind]
-        marker = dict(color=vals, colorscale=scale, cmin=lo, cmax=hi,
-                      colorbar=dict(title=METRICS[opts.metric][1], thickness=12) if opts.show_colorbar else None,
-                      showscale=opts.show_colorbar)
+        cmap = _cmaps()[kind]
+        fills = [to_hex(c) for c in cmap(np.clip((vals - lo) / max(hi - lo, 1e-12), 0, 1))]
         hover = [h + f"<br>{opts.metric}: {v:.3g}" for h, v in zip(hover, vals)]
-    marker.update(size=size, line=dict(color=opts.edge_color, width=0.5))
-    fig.add_trace(go.Scatter(x=P[:, 0], y=P[:, 1], mode="markers", marker=marker, customdata=np.arange(len(P)),
-                             hovertext=hover, hoverinfo="text", showlegend=False, name="particles"))
+        if opts.show_colorbar:
+            scale = [[f, to_hex(cmap(f))] for f in np.linspace(0, 1, 11)]
+            cbar_trace = go.Scatter(x=[None], y=[None], mode="markers", showlegend=False, hoverinfo="skip",
+                                    marker=dict(colorscale=scale, cmin=lo, cmax=hi, color=[lo], showscale=True,
+                                                colorbar=dict(title=METRICS[opts.metric][1], thickness=12)))
+    shapes = list(fig.layout.shapes)
+    for (px_, py_), fc in zip(P, fills):
+        shapes.append(dict(type="circle", xref="x", yref="y", x0=px_ - R, y0=py_ - R, x1=px_ + R, y1=py_ + R,
+                           fillcolor=fc, line=dict(color=opts.edge_color, width=0.6), layer="below"))
+    sel_ring = []
     if selected is not None and 0 <= selected < len(P):
         f_pair, f_arf, js, rj, fr, contrib = forces_on(P, selected, model or RunModel())
         bonded = js[rj < opts.rc]
-        fig.add_trace(go.Scatter(x=P[bonded, 0], y=P[bonded, 1], mode="markers", hoverinfo="skip", showlegend=False,
-                                 marker=dict(size=size, color="rgba(0,0,0,0)", line=dict(color="#eda100", width=3))))
-        fig.add_trace(go.Scatter(x=[P[selected, 0]], y=[P[selected, 1]], mode="markers", hoverinfo="skip",
-                                 showlegend=False, marker=dict(size=size * 1.25, color="rgba(0,0,0,0)",
-                                                               line=dict(color="#e34948", width=4))))
+        for j_ in bonded:
+            sel_ring.append(dict(type="circle", xref="x", yref="y", x0=P[j_, 0] - R, y0=P[j_, 1] - R,
+                                 x1=P[j_, 0] + R, y1=P[j_, 1] + R, line=dict(color="#eda100", width=3)))
+        sel_ring.append(dict(type="circle", xref="x", yref="y", x0=P[selected, 0] - 1.15 * R,
+                             y0=P[selected, 1] - 1.15 * R, x1=P[selected, 0] + 1.15 * R,
+                             y1=P[selected, 1] + 1.15 * R, line=dict(color="#e34948", width=4)))
+    fig.update_layout(shapes=shapes + sel_ring)
+    if cbar_trace is not None:
+        fig.add_trace(cbar_trace)
+    fig.add_trace(go.Scatter(x=P[:, 0], y=P[:, 1], mode="markers", customdata=np.arange(len(P)),
+                             marker=dict(size=14, color="rgba(0,0,0,0.01)"),
+                             hovertext=hover, hoverinfo="text", showlegend=False, name="particles"))
+    if selected is not None and 0 <= selected < len(P):
         if show_arrows:
             fmax = max(np.linalg.norm(f_pair), np.linalg.norm(f_arf), np.linalg.norm(f_pair + f_arf), 1e-9)
             L = 6.0
@@ -473,7 +487,7 @@ def live_figure(x, y, t, k, opts: DrawOptions, model=None, selected=None, height
         title.append(f"t = {t[k] / TAUB_S:.2f} τB (frame {k})")
     if opts.show_stats:
         title.append(f"mean z = {z.mean():.2f}, mean |ψ6| = {np.abs(psi)[z >= 2].mean() if (z >= 2).any() else 0:.2f}")
-    fig.update_layout(height=height, width=height + (90 if marker.get("showscale") else 0),
+    fig.update_layout(height=height, width=height + (90 if cbar_trace is not None else 0),
                       margin=dict(l=50, r=20, t=40, b=40), title="   ".join(title) or None,
                       plot_bgcolor="white", paper_bgcolor="white", font=dict(color="#222"),
                       xaxis=dict(range=[-box - 1, box + 1], title="x (µm)" if opts.show_axes else None,
