@@ -242,7 +242,7 @@ def _run_dir(bd_root, regime, name):
 
 # --------------------------------------------------------------------------- figures
 def fig_seeds(df, bd_root, comsol_root,
-              comsol_runs=("3Tkb_1TauB_5nm", "3Tkb_1TauB_500nm"),
+              comsol_runs=("0Tkb_1TauB_2000nm", "5Tkb_1TauB_4000nm"),
               bd_runs=("2.5Tkb_10TauB_2750nm_BD_seed1", "2.5Tkb_10TauB_2750nm_BD_seed2"),
               A=2.5, dn=2750):
     plt = _style()
@@ -254,7 +254,7 @@ def fig_seeds(df, bd_root, comsol_root,
                            gridspec_kw=dict(width_ratios=[1, 1, 1.6]))
     lim = max(np.abs(np.r_[a, b, c, d]).max(), 0.1) * 1.1
     for axx, (u, v, ttl, col) in zip(ax[:2], (
-            (a, b, "COMSOL: two different runs\n(3 k$_B$T at d$_n$ = 5 nm vs 500 nm)", ORANGE),
+            (a, b, "COMSOL: two different runs\n(0 k$_B$T, 2000 nm vs 5 k$_B$T, 4000 nm)", ORANGE),
             (c, d, f"Python: same run, seed 1 vs seed 2\n({A:g} k$_B$T, {dn:g} nm)", BLUE))):
         axx.plot([-lim, lim], [-lim, lim], c="#ccc", lw=1, zorder=0)
         axx.scatter(u, v, s=14, c=col)
