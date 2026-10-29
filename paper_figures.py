@@ -549,25 +549,24 @@ def fig_state_map(df, times=(1.0, 10.0), dns=(2000, 2250, 2750, 3000, 4000, 5000
     return fig
 
 
-def _confinement_cases(df, palette):
-    return [("NAF control: no field, A = 0", sel(df, regime="NAF", A=0, T=10), palette[0]),
-            ("band only: d$_n$ = 5000 nm, A = 0", sel(df, A=0, dn=5000, T=10, tags="BD"), palette[1]),
-            ("band + weak attraction: 5000 nm, A = 1", sel(df, A=1, dn=5000, T=10, tags="BD"), palette[2]),
-            ("band + attraction: 4000 nm, A = 3 (LJ)", sel(df, A=3, dn=4000, T=10, tags="BD"), palette[3]),
-            ("band + AO: 4000 nm, matched to A = 3", sel(df, "AO", dn=4000, T=10, q=0.2), palette[4])]
+def _confinement_cases(df, palette=(None, None, None)):
+    """No field / field without attraction / field + the strongest attraction (AO), all at d_n = 4000 nm."""
+    return [("no field (NAF), no attraction", sel(df, regime="NAF", A=0, T=10), palette[0]),
+            ("field (4000 nm), no attraction", sel(df, A=0, dn=4000, T=10, tags="BD"), palette[1]),
+            ("field (4000 nm) + AO attraction", sel(df, "AO", dn=4000, T=10, q=0.2), palette[2])]
 
 
 def fig_confinement(df):
     plt = _style()
     fig, ax = plt.subplots(1, 3, figsize=(15, 3.8), constrained_layout=True)
-    for lab, d, col in _confinement_cases(df, (GRAY, VIOLET, YELLOW, BLUE, ORANGE)):
+    for lab, d, col in _confinement_cases(df, (GRAY, VIOLET, ORANGE)):
         for j, m in enumerate(("psi6", "z", "nn1")):
             band(ax[j], d, m, col, lab)
     for j, m in enumerate(("psi6", "z", "nn1")):
         ax[j].set_title(LAB[m], loc="left")
         ax[j].set_xlabel("t (τ$_B$)")
     ax[1].legend(fontsize=8, loc="center right")
-    fig.suptitle("5  Order from confinement alone vs with attraction (band = 3 seeds)", x=0.01, ha="left", fontsize=11)
+    fig.suptitle("5  Order from the field, not from attraction (d$_n$ = 4000 nm; band = 3 seeds)", x=0.01, ha="left", fontsize=11)
     return fig
 
 
@@ -582,13 +581,10 @@ def fig_hexfrac(df, dns=(2000, 2750, 4000), A=3):
                 band(ax[i, j], sel(df, "AO", dn=dn, T=2, q=0.1), m, AQUA, "AO, q = 0.1")
             if i == 0:
                 ax[i, j].set_title(f"AO vs LJ, d$_n$ = {dn:g} nm", loc="left")
-        cases = _confinement_cases(df, (GRAY, VIOLET, YELLOW, BLUE, ORANGE))
-        for (lab, d, col), short in zip(cases, ("NAF: no field, A = 0", "band only: 5000 nm, A = 0",
-                                                "band + A = 1: 5000 nm", "band + A = 3: 4000 nm (LJ)",
-                                                "band + AO: 4000 nm")):
-            band(ax[i, -1], d, m, col, short)
+        for lab, d, col in _confinement_cases(df, (GRAY, VIOLET, ORANGE)):
+            band(ax[i, -1], d, m, col, lab)
         if i == 0:
-            ax[i, -1].set_title("confinement vs attraction", loc="left")
+            ax[i, -1].set_title("field vs attraction (all at 4000 nm)", loc="left")
         ax[i, 0].set_ylabel(LAB[m])
     for a in ax[1]:
         a.set_xlabel("t (τ$_B$)")

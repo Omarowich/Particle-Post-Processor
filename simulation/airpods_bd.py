@@ -216,6 +216,7 @@ def plan(name):
         L += [("ARF", A, dn, T, None, s, N) for (A, dn) in ((0, 3000), (3, 3000), (1, 5000)) for s in S]
         L += [("NAF", 0, 0, T, None, s, N) for s in S]                                    # no-field control
         L += [("ARF", 0, 5000, T, None, s, N) for s in S]                                 # confinement only
+        L += [("ARF", 0, 4000, T, None, s, N) for s in S]                                 # confinement only, same field as AO
         return L
     if name == "ao":             # AO vs LJ partners (matched to A = 3); AO needs much smaller steps
         L = []
