@@ -10,6 +10,7 @@ from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import streamlit as st
 from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
@@ -42,6 +43,7 @@ from track_crystal_formation_over_time import (
     crystals_all_over_time,
     crystals_none_over_time,
 )
+import regime_state_model as rsm
 from phase_snapshot_fields import (
     snapshot_local_density,
     snapshot_displacement_vectors,
@@ -2265,7 +2267,7 @@ with st.sidebar.expander("0.5 Output saving", expanded=False):
 st.sidebar.header("1. Output type")
 plot_mode = st.sidebar.radio(
     "Select output type:",
-    ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram"],
+    ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram", "Regime state model"],
     key="plot_mode",
     index=1,
 )
@@ -5020,6 +5022,174 @@ elif plot_mode == "Summary plots":
         sweep_rows=rows,
         x_choice=x_choice,
     )
+
+    st.stop()
+
+# ---------------------------------------------------------------------
+# REGIME STATE MODEL  (label runs, fit fluid/network boundary, suggest runs)
+# ---------------------------------------------------------------------
+elif plot_mode == "Regime state model":
+
+    @st.cache_data(show_spinner=False)
+    def _rsm_observables(root, regimes, rc, box, common_t, lag):
+        return rsm.compute_observables(root, regimes, rc=rc, box=box,
+                                       common_time_tauB=common_t, lag_tauB=lag)
+
+    @st.cache_data(show_spinner=False)
+    def _rsm_checks(root, regimes):
+        return rsm.data_checks(root, regimes)
+
+    st.sidebar.header("2. Data folder")
+    rsm_source = st.sidebar.radio(
+        "Folder with AAF / ARF / ASF / NAF:",
+        ["Source root", "Custom path"],
+        key="rsm_folder_source",
+    )
+    if rsm_source == "Source root":
+        rsm_root = source_root
+    else:
+        rsm_root = st.sidebar.text_input("Custom folder path:", value="", key="rsm_folder_custom")
+    rsm_root = rsm_root.strip().strip('"').strip("'")
+
+    rsm_found = [r for r in rsm.REGIMES if rsm_root and os.path.isdir(os.path.join(rsm_root, r))]
+    rsm_regimes = st.sidebar.multiselect(
+        "3. Regimes to include:",
+        rsm_found,
+        default=rsm_found,
+        format_func=lambda r: f"{r} ({rsm.REGIME_NAMES[r]})",
+        key="rsm_regimes",
+    )
+
+    with st.sidebar.expander("4. Analysis settings", expanded=False):
+        rsm_rc = st.number_input("Bond cutoff (µm)", 1.0, 10.0, 2.9, 0.1, key="rsm_rc",
+                                 help="Two particles count as bonded when their centres are closer than this. "
+                                      "Default: first minimum of g(r) after the 2.2 µm contact peak.")
+        rsm_box = st.number_input("Box size (µm)", 10.0, 500.0, 50.0, 5.0, key="rsm_box")
+        rsm_tc = st.number_input("Common evaluation time for the boundary model (τB)", 0.1, 50.0, 1.0, 0.25,
+                                 key="rsm_tc",
+                                 help="Runs of different length are compared at this time.")
+        rsm_lag = st.number_input("Bond-persistence / MSD lag (τB)", 0.05, 5.0, 0.5, 0.05, key="rsm_lag")
+
+    with st.sidebar.expander("5. State thresholds", expanded=True):
+        rsm_th = rsm.Thresholds(
+            z_fluid=st.slider("Fluid if mean coordination below", 0.5, 5.0, 2.5, 0.1, key="rsm_zf"),
+            psi_order=st.slider("Ordered if ψ6 at least", 0.5, 1.0, 0.8, 0.01, key="rsm_psi"),
+            smax_span=st.slider("Network if largest cluster fraction at least", 0.3, 1.0, 0.8, 0.05, key="rsm_smax"),
+        )
+
+    st.header("Regime state model")
+    st.caption(
+        "Labels every run with an operational state (fluid, ordered/disordered network or clusters), "
+        "fits a Gaussian-process classifier for the fluid / network boundary, and suggests the "
+        "simulations that would sharpen it. Thresholds are provisional - change them in the sidebar."
+    )
+
+    if not rsm_root or not os.path.isdir(rsm_root):
+        st.info("Choose a folder that contains the AAF / ARF / ASF / NAF subfolders.")
+        st.stop()
+    if not rsm_regimes:
+        st.warning("No regime folders selected (or none found in this folder).")
+        st.stop()
+
+    with st.spinner("Reading runs and computing observables (cached after the first time)..."):
+        try:
+            rsm_obs = _rsm_observables(rsm_root, tuple(rsm_regimes), float(rsm_rc), float(rsm_box),
+                                       float(rsm_tc), float(rsm_lag))
+        except Exception as e:
+            st.error(f"Could not compute observables: {e}")
+            st.stop()
+    if rsm_obs.empty:
+        st.warning("No runs found. Folder names must look like 3Tkb_1TauB_2000nm, 50Tkb_0.75TauB_1000F or 5Tkb_2TauB.")
+        st.stop()
+    rsm_df = rsm.label_runs(rsm_obs, rsm_th)
+
+    tab_states, tab_map, tab_trans, tab_next, tab_checks = st.tabs(
+        ["States", "Boundary map", "Transitions along A", "Suggested runs", "Data checks"]
+    )
+
+    with tab_states:
+        rsm_end = rsm_df[rsm_df["eval"] == "end"]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Runs", len(rsm_end))
+        c2.metric("Non-fluid", int((rsm_end.state != "fluid").sum()))
+        c3.metric("Near a threshold", int(rsm_end.near_threshold.sum()))
+        st.subheader("Runs per regime and state (at the end of each run)")
+        st.dataframe(pd.crosstab(rsm_end.regime, rsm_end.state))
+        show_cols = ["regime", "name", "potential", "q", "phi_p", "eval", "t_eval_tauB", "state", "z_mean", "Smax", "spans", "psi6",
+                     "bond_persist", "Rg_ratio", "concentrated", "restructuring", "near_threshold"]
+        st.subheader("All runs")
+        st.dataframe(rsm_df[show_cols].round(3), hide_index=True)
+        st.download_button("Download labelled runs (CSV)", rsm_df.to_csv(index=False).encode(),
+                           "labelled_runs.csv", "text/csv", key="rsm_dl_states")
+
+    rsm_model, rsm_plan = None, None
+    with tab_map:
+        cand_regimes = [r for r in rsm_regimes
+                        if rsm_df[(rsm_df.regime == r)][["dn", "F"]].notna().any().any()]
+        if not cand_regimes:
+            st.info("No regime with a second swept parameter (d_n or F) is selected.")
+        else:
+            map_regime = st.selectbox("Regime", cand_regimes,
+                                      index=cand_regimes.index("ARF") if "ARF" in cand_regimes else 0,
+                                      key="rsm_map_regime")
+            map_param = "dn" if rsm_df.loc[rsm_df.regime == map_regime, "dn"].notna().any() else "F"
+            try:
+                rsm_model = rsm.fit_boundary(rsm_df, map_regime, map_param, float(rsm_tc))
+                rsm_plan = rsm.suggest_runs(rsm_model, rsm_df)
+            except ValueError as e:
+                st.warning(str(e))
+            if rsm_model is not None:
+                bvals = [b for _, b in rsm_model.boundary]
+                unit = "nm" if map_param == "dn" else "F"
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Fitted boundary (median over A)", f"{np.median(bvals):,.0f} {unit}")
+                c2.metric("Spread of boundary over A", f"{np.ptp(bvals):,.0f} {unit}")
+                c3.metric("Leave-one-out correct", f"{rsm_model.loo_hits} / {len(rsm_model.data)}")
+                fig = rsm.fig_state_map(rsm_model, rsm_plan)
+                st.pyplot(fig)
+                save_figure_if_requested(fig, f"regime_state_map_{map_regime}", save_plots, output_dir)
+                st.caption(
+                    f"The boundary sits where the model is 50/50; with no runs between the last fluid "
+                    f"and first network value it falls in the middle of that gap. Kernel: `{rsm_model.kernel}`. "
+                    f"A long length scale on A means A barely matters at this time."
+                )
+                plt.close(fig)
+
+    with tab_trans:
+        tr_regs = [r for r in ("AAF", "NAF", "ASF") if r in rsm_regimes]
+        if not tr_regs:
+            st.info("Select AAF, NAF or ASF to see how the state changes with A.")
+        else:
+            labels = {"psi6": "ψ6 (local hexagonal order)", "z_mean": "Mean coordination number",
+                      "Smax": "Largest cluster fraction", "bond_persist": "Bond persistence",
+                      "Rg_ratio": "Rg / Rg(t=0)", "mobility": "Mobility (MSD / free MSD)"}
+            thr = {"psi6": rsm_th.psi_order, "z_mean": rsm_th.z_fluid, "Smax": rsm_th.smax_span}
+            c1, c2 = st.columns(2)
+            m1 = c1.selectbox("Metric", list(labels), format_func=labels.get, key="rsm_tr_metric")
+            regs = c2.multiselect("Regimes", tr_regs, default=[r for r in tr_regs if r != "ASF"],
+                                  key="rsm_tr_regs")
+            fig = rsm.fig_transitions(rsm_df, m1, thr.get(m1), tuple(regs))
+            st.pyplot(fig)
+            save_figure_if_requested(fig, f"regime_transition_{m1}", save_plots, output_dir)
+            plt.close(fig)
+
+    with tab_next:
+        if rsm_plan is None:
+            st.info("Open the Boundary map tab with a regime that can be fitted first.")
+        else:
+            st.write("New runs either side of the fitted boundary, plus repeats with a **new random seed** "
+                     "where a label could be noise.")
+            st.dataframe(rsm_plan, hide_index=True)
+            st.download_button("Download suggested runs (CSV)", rsm_plan.to_csv(index=False).encode(),
+                               "suggested_runs.csv", "text/csv", key="rsm_dl_plan")
+
+    with tab_checks:
+        with st.spinner("Checking files..."):
+            checks = _rsm_checks(rsm_root, tuple(rsm_regimes))
+        if checks.empty:
+            st.success("No duplicate files, run-length mismatches or shared random seeds found.")
+        else:
+            st.dataframe(checks, hide_index=True)
 
     st.stop()
 
