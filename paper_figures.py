@@ -286,22 +286,35 @@ def fig_seeds(df, bd_root, comsol_root,
 
 
 def fig_timestep(df, A=3, dn=4000):
+    """Top: the three time steps on the 3-seed band. Bottom: difference to the 3-seed mean,
+    so the lines that sit on top of each other in the top row can be told apart."""
     plt = _style()
     mets = ["z", "psi6", "y_spread", "nn1"]
-    fig, ax = plt.subplots(1, 4, figsize=(15, 3.4), constrained_layout=True)
+    fig, ax = plt.subplots(2, 4, figsize=(15, 6.2), constrained_layout=True, sharex=True,
+                           gridspec_kw=dict(height_ratios=[1.3, 1]))
     ref = sel(df, A=A, dn=dn, T=10, tags="BD")
     ref = ref[ref.t <= 2.0001]
+    runs = (("BD_dt2000", YELLOW, "τ$_B$/2000", "-", 2.2), ("BD", BLUE, "τ$_B$/4000", "--", 1.8),
+            ("BD_dt8000", ORANGE, "τ$_B$/8000", ":", 2.2))
     for j, m in enumerate(mets):
-        band(ax[j], ref, m, GRAY, "4000 steps, 3 seeds (10 τ$_B$ runs)")
-        for tag, col, lab in (("BD_dt2000", YELLOW, "τ$_B$/2000"), ("BD", BLUE, "τ$_B$/4000"),
-                              ("BD_dt8000", ORANGE, "τ$_B$/8000")):
+        piv = ref.pivot_table(index="t", columns="seed", values=m)
+        mu = piv.mean(axis=1)
+        band(ax[0, j], ref, m, GRAY, "τ$_B$/4000, 3 seeds")
+        ax[1, j].fill_between(mu.index, piv.min(axis=1) - mu, piv.max(axis=1) - mu, color=GRAY, alpha=0.25, lw=0,
+                              label="spread of 3 seeds")
+        ax[1, j].axhline(0, c="#999", lw=0.8)
+        for tag, col, lab, ls, lw in runs:
             d = sel(df, A=A, dn=dn, T=2, tags=tag)
-            ax[j].plot(d.t, d[m], c=col, lw=1.4, label=lab)
-        ax[j].set_title(LAB[m], loc="left")
-        ax[j].set_xlabel("t (τ$_B$)")
-    ax[0].legend(fontsize=8)
-    fig.suptitle(f"1  Time-step convergence  (LJ, A = {A:g} k$_B$T, d$_n$ = {dn:g} nm; grey band = spread of 3 seeds)",
-                 x=0.01, ha="left", fontsize=11)
+            if d.empty:
+                continue
+            ax[0, j].plot(d.t, d[m], ls, c=col, lw=lw, label=f"{lab} (1 run)")
+            ax[1, j].plot(d.t, d[m].values - np.interp(d.t, mu.index, mu.values), ls, c=col, lw=lw, label=lab)
+        ax[0, j].set_title(LAB[m], loc="left")
+        ax[1, j].set_xlabel("t (τ$_B$)")
+    ax[1, 0].set_ylabel("difference to the\n3-seed mean")
+    ax[0, 0].legend(fontsize=8)
+    fig.suptitle(f"1  Time-step convergence  (LJ, A = {A:g} k$_B$T, d$_n$ = {dn:g} nm). Top: values; bottom: "
+                 "difference to the 3-seed mean (grey = seed-to-seed spread)", x=0.01, ha="left", fontsize=11)
     return fig
 
 
