@@ -1434,6 +1434,7 @@ elif plot_mode == "Multiple plots":
             row = {"TkB": tkb, "TauB": tau}
             if third_val is not None:
                 row["3rd param"] = f"{third_val:g}{third_unit or ''}"
+            row["tag"] = run_tag(r[0])
             runs_rows.append(row)
         st.dataframe(pd.DataFrame(runs_rows), use_container_width=True, hide_index=True)
 
@@ -1446,7 +1447,7 @@ elif plot_mode == "Multiple plots":
             base += f" (TauB {s['taub']:g})"
         if s.get("third_val") is not None and s.get("third_unit"):
             base += f" {s['third_val']:g}{display_unit(s['third_unit'])}"
-        return base
+        return base + tag_suffix(s)
 
 
     # ----- RUN ALL SELECTED METRICS -----

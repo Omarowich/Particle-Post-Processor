@@ -13,6 +13,8 @@ import re
 
 import numpy as np
 
+_trapz = getattr(np, "trapezoid", None) or np.trapz   # np.trapz was removed in NumPy 2.0
+
 
 _num_re = re.compile(r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)")
 
@@ -259,7 +261,7 @@ def auc_and_mean(x, y):
     if x.size < 2:
         return np.nan, np.nan
 
-    auc = float(np.trapz(y, x))
+    auc = float(_trapz(y, x))
     dt = float(x[-1] - x[0])
     mean = float(auc / dt) if dt != 0 else np.nan
     return auc, mean
@@ -329,7 +331,7 @@ def curve_envelope_area(curves):
     grid = np.linspace(x_lo, x_hi, 200)
     ys_on_grid = np.array([np.interp(grid, x, y) for x, y in cleaned])
     spread = ys_on_grid.max(axis=0) - ys_on_grid.min(axis=0)
-    return float(np.trapz(spread, grid))
+    return float(_trapz(spread, grid))
 
 
 def max_slope_time(x, y, *, smooth_win=9):
@@ -590,7 +592,7 @@ def apply_curve_detectors(
     if do_auc:
         m = np.isfinite(x) & np.isfinite(y)
         if np.sum(m) >= 2:
-            auc = float(np.trapz(y[m], x[m]))
+            auc = float(_trapz(y[m], x[m]))
             span = float(x[m][-1] - x[m][0])
             mean = auc / span if span != 0 else np.nan
         else:
