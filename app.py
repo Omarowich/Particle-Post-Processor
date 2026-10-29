@@ -964,7 +964,7 @@ with st.sidebar.expander("0.5 Output saving", expanded=False):
 st.sidebar.header("1. Output type")
 plot_mode = st.sidebar.radio(
     "Select output type:",
-    ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram", "Regime state model", "Run viewer"],
+    ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram", "Regime state model", "Run viewer", "Paper figures"],
     key="plot_mode",
     index=1,
 )
@@ -4040,6 +4040,120 @@ elif plot_mode == "Regime state model":
 # ---------------------------------------------------------------------
 # RUN VIEWER  (snapshot, animation, live particle inspector)
 # ---------------------------------------------------------------------
+elif plot_mode == "Paper figures":
+    import paper_figures as pf
+    import matplotlib.pyplot as plt
+
+    @st.cache_data(show_spinner=False)
+    def _pf_series(root, stamp):
+        bar = st.progress(0.0, text="Computing observables (cached afterwards)…")
+        df, pairs = pf.load_series(root, progress=lambda i, n: bar.progress(i / n, text=f"Observables {i}/{n} runs"))
+        bar.empty()
+        return df, pairs
+
+    def _folder_stamp(root):
+        out = []
+        for reg in ("ARF", "NAF"):
+            d = os.path.join(root, reg)
+            if os.path.isdir(d):
+                for n in sorted(os.listdir(d)):
+                    f = os.path.join(d, n, "datax.csv")
+                    if os.path.isfile(f):
+                        out.append((reg, n, os.path.getmtime(f)))
+        return tuple(out)
+
+    st.sidebar.header("2. Data folders")
+    pf_bd = st.sidebar.text_input("Python BD runs (folder with ARF / NAF):",
+                                  value=os.path.join(source_root, "BD runs v2") if source_root else "",
+                                  key="pf_bd").strip().strip('"').strip("'")
+    pf_co = st.sidebar.text_input("COMSOL runs (folder with ARF, for figures 0 and 2):",
+                                  value=source_root or "", key="pf_co").strip().strip('"').strip("'")
+    st.sidebar.header("3. Figures")
+    pf_keys = st.sidebar.multiselect("Figures:", list(pf.FIGURES), default=list(pf.FIGURES),
+                                     format_func=lambda k: f"{k.split('_')[0]}  {pf.FIGURES[k]}", key="pf_keys")
+    pf_dpi = st.sidebar.number_input("Saved PNG dpi", 72, 600, 170, 10, key="pf_dpi")
+    pf_save = st.sidebar.text_input("Also save PNGs to folder (optional):", value="", key="pf_save").strip().strip('"')
+
+    st.header("Paper figures")
+    st.caption("Recreates the figures of the proposal deck from the run folders (same code as "
+               "`python paper_figures.py`). Figures 6 / 6a (two-particle B₂ and AO force check) come from "
+               "`verify_ao.py` in the BD simulation folder. Snapshots (5b, 8, 8b) use the Run viewer code, "
+               "so you can also make them there and change colours.")
+    if not (pf_bd and os.path.isdir(os.path.join(pf_bd, "ARF"))):
+        st.info("Set the BD runs folder (it must contain ARF/ and NAF/).")
+        st.stop()
+    df_pf, pairs_pf = _pf_series(pf_bd, _folder_stamp(pf_bd))
+    st.write(f"{df_pf.name.nunique()} runs loaded.")
+
+    tab_figs, tab_custom, tab_table = st.tabs(["Deck figures", "Custom seed-band plot", "End-of-run numbers"])
+    with tab_figs:
+        for key in pf_keys:
+            st.subheader(f"{key}  ·  {pf.FIGURES[key]}")
+            try:
+                fig = pf.make_figure(key, df_pf, pairs_pf, pf_bd, pf_co)
+            except Exception as ex:
+                st.warning(f"{key}: {ex}")
+                continue
+            st.pyplot(fig)
+            buf = io.BytesIO()
+            dpi = 150 if key.startswith(("5b", "8")) else pf_dpi
+            fig.savefig(buf, format="png", dpi=dpi)
+            st.download_button(f"Download {key}.png", buf.getvalue(), file_name=f"{key}.png",
+                               mime="image/png", key=f"pf_dl_{key}")
+            if pf_save:
+                try:
+                    os.makedirs(pf_save, exist_ok=True)
+                    fig.savefig(os.path.join(pf_save, key + ".png"), dpi=dpi)
+                except OSError as ex:
+                    st.warning(f"could not save: {ex}")
+            plt.close(fig)
+
+    with tab_custom:
+        st.caption("Mean over seeds (line) and min–max over seeds (band) for any set of runs. "
+                   "Each line = all runs whose name contains every word of its filter.")
+        c1, c2 = st.columns(2)
+        cm = c1.selectbox("Metric", pf.OBS, format_func=lambda m: pf.LAB[m].replace("$", ""), key="pf_cm")
+        tmax = c2.number_input("Up to t (τB)", 0.1, 100.0, 10.0, 0.5, key="pf_tmax")
+        n_lines = st.number_input("Number of lines", 1, 8, 2, key="pf_nl")
+        names = sorted(df_pf.name.unique())
+        pf._style()
+        figc, axc = plt.subplots(figsize=(8, 4), constrained_layout=True)
+        palette = [pf.BLUE, pf.ORANGE, pf.AQUA, pf.YELLOW, pf.VIOLET, pf.GRAY, "#c0397a", "#333333"]
+        defaults = ["3Tkb_10TauB_4000nm_BD_seed", "3Tkb_10TauB_4000nm_BD_AO_q0.2"]
+        for i in range(int(n_lines)):
+            a, b = st.columns([3, 2])
+            flt = a.text_input(f"Line {i + 1} filter", value=defaults[i] if i < 2 else "", key=f"pf_f{i}")
+            lab = b.text_input(f"Label {i + 1}", value=flt, key=f"pf_l{i}")
+            toks = flt.split()
+            if not toks:
+                continue
+            ex_ao = "AO" not in flt
+            pick = [n for n in names if all(tk in n for tk in toks) and not (ex_ao and "_AO" in n)]
+            d = df_pf[df_pf.name.isin(pick) & (df_pf.t <= tmax)]
+            if d.empty:
+                st.caption(f"line {i + 1}: no runs match")
+                continue
+            if d.base_tags.nunique() > 1 or d.groupby("seed").name.nunique().max() > 1:
+                st.caption(f"line {i + 1}: matches {len(pick)} runs with different parameters - refine the filter")
+            pf.band(axc, d.groupby(["seed", "t"], as_index=False)[cm].mean(), cm, palette[i % 8], lab)
+            st.caption(f"line {i + 1}: " + ", ".join(pick))
+        axc.set_xlabel("t (τ$_B$)")
+        axc.set_ylabel(pf.LAB[cm])
+        axc.legend(fontsize=8)
+        st.pyplot(figc)
+        buf = io.BytesIO()
+        figc.savefig(buf, format="png", dpi=pf_dpi)
+        st.download_button("Download PNG", buf.getvalue(), file_name=f"seed_band_{cm}.png", mime="image/png")
+        plt.close(figc)
+
+    with tab_table:
+        t_from = st.number_input("Average over t > (τB)", 0.0, 100.0, 9.5, 0.5, key="pf_tf")
+        tab = pf.summary_table(df_pf, t_from)
+        st.dataframe(tab, use_container_width=True)
+        st.download_button("Download CSV", tab.to_csv(index=False).encode(), file_name="summary_end_of_run.csv",
+                           mime="text/csv")
+    st.stop()
+
 elif plot_mode == "Run viewer":
 
     @st.cache_data(show_spinner=False)
