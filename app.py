@@ -80,6 +80,8 @@ from metric_caching import (
 )
 import pandas as pd
 import regime_state_model as rsm
+import run_viewer as rv
+import io
 from pptx_export import build_pptx_from_images
 from phase_panel import make_snapshot_phase_panel
 from sidebar_widgets import render_cluster_params_widgets
@@ -962,7 +964,7 @@ with st.sidebar.expander("0.5 Output saving", expanded=False):
 st.sidebar.header("1. Output type")
 plot_mode = st.sidebar.radio(
     "Select output type:",
-    ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram", "Regime state model"],
+    ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram", "Regime state model", "Run viewer"],
     key="plot_mode",
     index=1,
 )
@@ -4032,6 +4034,106 @@ elif plot_mode == "Regime state model":
             st.success("No duplicate files, run-length mismatches or shared random seeds found.")
         else:
             st.dataframe(checks, hide_index=True)
+
+    st.stop()
+
+# ---------------------------------------------------------------------
+# RUN VIEWER  (particles at a chosen time, side by side, animated GIF)
+# ---------------------------------------------------------------------
+elif plot_mode == "Run viewer":
+
+    @st.cache_data(show_spinner=False)
+    def _rv_load(folder, mtime):
+        return rv.load_run(folder)
+
+    st.sidebar.header("2. Data folder")
+    rv_source = st.sidebar.radio("Folder source:", ["Source root subfolder", "Custom path"], key="rv_source")
+    if rv_source == "Source root subfolder":
+        rv_subs = sorted(d for d in os.listdir(source_root)
+                         if os.path.isdir(os.path.join(source_root, d))) if os.path.isdir(source_root) else []
+        rv_sub = st.sidebar.selectbox("Subfolder:", rv_subs, key="rv_sub")
+        rv_base = os.path.join(source_root, rv_sub) if rv_sub else ""
+    else:
+        rv_base = st.sidebar.text_input("Folder with the run folders:", value="", key="rv_custom")
+    rv_base = rv_base.strip().strip('"').strip("'")
+
+    rv_all = rv.list_run_folders(rv_base)
+    st.sidebar.header("3. Runs (up to 4, shown side by side)")
+    rv_filter = st.sidebar.text_input("Filter names (e.g. 2750nm, AO, seed1):", value="", key="rv_filter")
+    rv_opts = [r for r in rv_all if all(tok.lower() in r.lower() for tok in rv_filter.split())]
+    rv_sel = st.sidebar.multiselect("Runs:", rv_opts, default=rv_opts[:1], key="rv_runs")
+    if len(rv_sel) > 4:
+        st.sidebar.warning("Showing the first 4 selected runs.")
+        rv_sel = rv_sel[:4]
+
+    st.sidebar.header("4. Display")
+    rv_mode = st.sidebar.selectbox("Colour particles by:", rv.COLOR_MODES, key="rv_mode")
+    rv_bonds = st.sidebar.checkbox("Show bonds", value=False, key="rv_bonds",
+                                   help="Lines between particles closer than the bond cutoff.")
+    rv_rc = st.sidebar.number_input("Bond cutoff (µm)", 1.0, 10.0, 2.9, 0.1, key="rv_rc")
+    rv_trail = st.sidebar.slider("Trail length (frames)", 0, 100, 0, 5, key="rv_trail",
+                                 help="Draw each particle's path over the previous frames.")
+
+    st.header("Run viewer")
+    if not rv_base or not os.path.isdir(rv_base):
+        st.info("Choose a folder that contains run folders (each with datax.csv and datay.csv).")
+        st.stop()
+    if not rv_sel:
+        st.info(f"{len(rv_all)} runs found. Pick one or more in the sidebar.")
+        st.stop()
+
+    rv_runs = []
+    for name in rv_sel:
+        f = os.path.join(rv_base, name)
+        try:
+            rv_runs.append((name, _rv_load(f, os.path.getmtime(os.path.join(f, "datax.csv")))))
+        except Exception as e:
+            st.error(f"Could not read {name}: {e}")
+    if not rv_runs:
+        st.stop()
+
+    t_max = min(r[1][2][-1] for r in rv_runs) / rv.TAUB_S
+    kw = dict(mode=rv_mode, show_bonds=rv_bonds, trail=int(rv_trail), rc=float(rv_rc))
+
+    tab_snap, tab_anim = st.tabs(["Snapshot", "Animation"])
+    with tab_snap:
+        t_sel = st.slider("Time (τB)", 0.0, float(t_max), float(t_max), float(t_max) / 200 or 0.01,
+                          key="rv_time", help="Same time for all selected runs (limited by the shortest run).")
+        fig = rv.make_figure(rv_runs, [rv.frame_at_time(r[1][2], t_sel * rv.TAUB_S) for r in rv_runs], **kw)
+        st.pyplot(fig)
+        save_figure_if_requested(fig, f"snapshot_{'_vs_'.join(rv_sel)}_{t_sel:.2f}tauB", save_plots, output_dir)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+        st.download_button("Download PNG", buf.getvalue(), f"snapshot_{t_sel:.2f}tauB.png", "image/png",
+                           key="rv_dl_png")
+        plt.close(fig)
+
+    with tab_anim:
+        c1, c2, c3 = st.columns(3)
+        a0, a1 = c1.slider("Time range (τB)", 0.0, float(t_max), (0.0, float(t_max)), key="rv_arange")
+        n_fr = c2.number_input("Frames", 10, 400, 60, 10, key="rv_nframes")
+        fps = c3.number_input("Frames per second", 2, 30, 12, 1, key="rv_fps")
+        st.caption("Each frame is drawn like the snapshot, so 60 frames of 4 runs take about a minute.")
+        if st.button("Make animation", key="rv_make_gif"):
+            bar = st.progress(0.0, text="Drawing frames...")
+            gif = rv.make_gif(rv_runs, t_start_s=a0 * rv.TAUB_S, t_end_s=a1 * rv.TAUB_S, n_frames=int(n_fr),
+                              fps=int(fps), progress=lambda p: bar.progress(p, text=f"Drawing frames... {p:.0%}"),
+                              **kw)
+            bar.empty()
+            st.session_state["rv_gif"] = gif
+        if st.session_state.get("rv_gif"):
+            st.image(st.session_state["rv_gif"])
+            st.download_button("Download GIF", st.session_state["rv_gif"], "run_animation.gif", "image/gif",
+                               key="rv_dl_gif")
+            if save_plots and output_dir:
+                try:
+                    os.makedirs(output_dir, exist_ok=True)
+                    pth = os.path.join(output_dir, f"animation_{'_vs_'.join(rv_sel)}.gif")
+                    with open(pth, "wb") as fh:
+                        fh.write(st.session_state["rv_gif"])
+                    st.info(f"Saved animation to: `{pth}`")
+                except Exception as e:
+                    st.warning(f"Could not save the animation: {e}")
 
     st.stop()
 
