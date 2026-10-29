@@ -41,8 +41,8 @@ REGIME_NAMES = {
     "ARF": "acoustic radiation force",
     "ASF": "acoustic streaming flow",
 }
-_NAME_RE = re.compile(r"^([\d.]+)Tkb_([\d.]+)TauB(?:_(\d+(?:\.\d+)?)(nm|nn|F))?((?:_[A-Za-z]+\d*)*)$",
-                      re.IGNORECASE)   # optional tags: _core, _dt50, _seed2, ...
+_NAME_RE = re.compile(r"^([\d.]+)Tkb_([\d.]+)TauB(?:_(\d+(?:\.\d+)?)(nm|nn|F))?((?:_[A-Za-z]+[\d.]*)*)$",
+                      re.IGNORECASE)   # optional tags: _core, _dt50, _seed2, _AO_q0.2_phi0.664, ...
 
 # colours: categorical slots of the app's chart palette (identity), blue ramp for magnitude
 STATE_COLORS = {
@@ -80,8 +80,17 @@ def parse_run_name(regime: str, name: str) -> dict | None:
         "dn": val if unit in ("nm", "nn") else np.nan,
         "F": val if unit == "f" else np.nan,
         "tags": (m.group(5) or "").lstrip("_"),
-        "seed": int(re.search(r"seed(\d+)", m.group(5) or "").group(1)) if "seed" in (m.group(5) or "") else 0,
+        "seed": _tag_value(m.group(5), "seed", int, 0),
+        "potential": "AO" if re.search(r"(^|_)AO(_|$)", m.group(5) or "") else "LJ",
+        "q": _tag_value(m.group(5), "q", float, np.nan),
+        "phi_p": _tag_value(m.group(5), "phi", float, np.nan),
     }
+
+
+def _tag_value(tags, key, cast, default):
+    """Value of a tag like _q0.2 or _seed2 in the folder-name suffix."""
+    m = re.search(rf"_{key}([\d.]+)(?=_|$)", tags or "")
+    return cast(m.group(1)) if m else default
 
 
 def discover_runs(root: str, regimes=REGIMES) -> list[tuple[dict, str]]:
@@ -236,6 +245,8 @@ def boundary_data(df: pd.DataFrame, regime="ARF", param="dn", common_time_tauB=1
     d = df[(df.regime == regime) & np.isfinite(df[param])].copy()
     if "tags" in d:   # time-step test runs use a different step size: keep them out of the fit
         d = d[~d.tags.fillna("").str.contains("dt")]
+    if "potential" in d:   # the boundary is fitted on the LJ runs; AO runs are compared against it
+        d = d[d.potential.fillna("LJ") == "LJ"]
     d = d[np.isclose(d.t_eval_tauB, common_time_tauB, atol=0.05)]
     has_common = set(d.loc[d["eval"] == "common", "name"])
     return d[~((d["eval"] == "end") & d["name"].isin(has_common))]

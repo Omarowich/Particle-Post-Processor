@@ -5115,7 +5115,7 @@ elif plot_mode == "Regime state model":
         c3.metric("Near a threshold", int(rsm_end.near_threshold.sum()))
         st.subheader("Runs per regime and state (at the end of each run)")
         st.dataframe(pd.crosstab(rsm_end.regime, rsm_end.state))
-        show_cols = ["regime", "name", "eval", "t_eval_tauB", "state", "z_mean", "Smax", "spans", "psi6",
+        show_cols = ["regime", "name", "potential", "q", "phi_p", "eval", "t_eval_tauB", "state", "z_mean", "Smax", "spans", "psi6",
                      "bond_persist", "Rg_ratio", "concentrated", "restructuring", "near_threshold"]
         st.subheader("All runs")
         st.dataframe(rsm_df[show_cols].round(3), hide_index=True)
