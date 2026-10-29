@@ -964,7 +964,7 @@ with st.sidebar.expander("0.5 Output saving", expanded=False):
 st.sidebar.header("1. Output type")
 plot_mode = st.sidebar.radio(
     "Select output type:",
-    ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram", "Regime state model", "Run viewer", "Paper figures"],
+    ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram", "Regime state model", "Run viewer", "Paper figures", "Run simulation"],
     key="plot_mode",
     index=1,
 )
@@ -4152,6 +4152,286 @@ elif plot_mode == "Paper figures":
         st.dataframe(tab, use_container_width=True)
         st.download_button("Download CSV", tab.to_csv(index=False).encode(), file_name="summary_end_of_run.csv",
                            mime="text/csv")
+    st.stop()
+
+elif plot_mode == "Run simulation":
+    import sim_gui as sg
+    import matplotlib.pyplot as plt
+
+    SS = st.session_state
+    DEF = sg.sr.DEFAULTS
+
+    def _d(key, val):
+        if key not in SS:
+            SS[key] = val
+
+    # defaults (= the COMSOL model) for every widget
+    for k, v in {"sim_pot": "LJ", "sim_A": 3.0, "sim_q": 0.2, "sim_phi": 0.633, "sim_match": True,
+                 "sim_core": "coulomb", "sim_Z": 100, "sim_ljcut": 3.0, "sim_field": True, "sim_dn": 4000.0,
+                 "sim_F0": float(DEF["arf_F0_ref"]), "sim_k": float(DEF["arf_k"]), "sim_start": "grid",
+                 "sim_nside": 12, "sim_spacing": 4.0, "sim_nrand": 144, "sim_dmin": 2.2, "sim_runfolder": "",
+                 "sim_runt": 1000.0, "sim_file": "", "sim_T": 1.0, "sim_steps_auto": True, "sim_steps": 4000,
+                 "sim_out": 100, "sim_seeds": "1, 2, 3", "sim_workers": max(1, min(3, (os.cpu_count() or 2) - 1)),
+                 "sim_regime": "auto", "sim_tag": "", "sim_box": float(DEF["box_half"]), "sim_TK": float(DEF["T_K"]),
+                 "sim_eta": float(DEF["eta"]) * 1e3, "sim_rad": float(DEF["radius_um"]),
+                 "sim_cap": float(DEF["max_step_um"])}.items():
+        _d(k, v)
+
+    def _apply_config(c):
+        """Fill the form from a saved sim_config.json."""
+        m = {"potential": "sim_pot", "A": "sim_A", "q": "sim_q", "phi_p": "sim_phi", "core": "sim_core",
+             "core_Z": "sim_Z", "lj_cutoff_sigma": "sim_ljcut", "arf_F0_ref": "sim_F0", "arf_k": "sim_k",
+             "T_tauB": "sim_T", "steps_per_tauB": "sim_steps", "out_per_tauB": "sim_out", "regime": "sim_regime",
+             "tag": "sim_tag", "box_half": "sim_box", "T_K": "sim_TK", "radius_um": "sim_rad", "max_step_um": "sim_cap"}
+        for a, b in m.items():
+            if a in c:
+                SS[b] = type(SS[b])(c[a]) if not isinstance(SS[b], bool) else bool(c[a])
+        SS.sim_eta = float(c.get("eta", DEF["eta"])) * 1e3
+        SS.sim_field = float(c.get("dn_nm", 0)) > 0
+        if SS.sim_field:
+            SS.sim_dn = float(c["dn_nm"])
+        SS.sim_match = False
+        SS.sim_steps_auto = False
+        stt = c.get("start", {})
+        SS.sim_start = stt.get("kind", "grid")
+        SS.sim_nside = int(stt.get("n_side", 12)); SS.sim_spacing = float(stt.get("spacing", 4.0))
+        SS.sim_nrand = int(stt.get("n", 144)); SS.sim_dmin = float(stt.get("min_dist", 2.2))
+        SS.sim_runfolder = stt.get("folder", ""); SS.sim_runt = float(stt.get("t_tauB", 1000.0))
+        SS.sim_file = stt.get("path", "")
+        SS.sim_seeds = ", ".join(str(s) for s in c.get("seeds", [c.get("run_seed", 1)]))
+
+    st.header("Run simulation")
+    st.caption("Python Brownian dynamics (`simulation/airpods_bd.py`), the same code as the BD runs. "
+               "Runs go into `<output>/<ARF|NAF|AAF>/<run name>/` as datax.csv / datay.csv, so every other page "
+               "reads them. Each run folder also gets `sim_config.json` with all settings, to repeat it exactly.")
+
+    with st.sidebar:
+        st.header("2. Output")
+        sim_root = st.text_input("Output folder:", value=os.path.join(source_root, "BD runs v2") if source_root else
+                                 "BD runs v2", key="sim_root").strip().strip('"').strip("'")
+        with st.expander("Load settings from an existing run"):
+            lf = st.text_input("Run folder (with sim_config.json):", key="sim_loadfolder").strip().strip('"')
+            if st.button("Load settings", key="sim_load_btn"):
+                try:
+                    _apply_config(sg.load_config_from_run(lf))
+                    st.success("Loaded.")
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"Could not load: {ex}")
+        if st.button("Reset all settings to the COMSOL model", key="sim_reset"):
+            for k in [k for k in SS.keys() if str(k).startswith("sim_") and k != "sim_root"]:
+                del SS[k]
+            st.rerun()
+
+    tab_set, tab_jobs = st.tabs(["Settings and start", "Jobs"])
+    with tab_set:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.subheader("Interaction")
+            pot = st.radio("Attraction", list(sg.POTENTIALS), format_func=sg.POTENTIALS.get, key="sim_pot")
+            if pot == "LJ":
+                A = st.number_input("A (k_BT)", 0.0, 50.0, step=0.25, key="sim_A")
+                st.number_input("LJ cut-off (σ)", 1.5, 10.0, step=0.5, key="sim_ljcut")
+            elif pot == "AO":
+                st.number_input("q = δ/a (polymer / particle size)", 0.02, 1.0, step=0.05, key="sim_q",
+                                help="AO range is 2δ; q = 0.2 → 0.4 µm. Smaller q needs a smaller time step.")
+                match = st.checkbox("Match φ_p to an LJ depth by B₂*", key="sim_match")
+                A = st.number_input("matched LJ A (k_BT)" if match else "A for the run name (k_BT)",
+                                    0.0, 50.0, step=0.25, key="sim_A")
+                if match:
+                    phi, tgt = sg.match_phi({"q": SS.sim_q, "core": SS.sim_core, "core_Z": SS.sim_Z}, A) \
+                        if A > 0 else (float("nan"), 1.0)
+                    if np.isfinite(phi):
+                        SS.sim_phi = round(float(phi), 3)
+                        st.caption(f"φ_p = **{phi:.3f}** gives B₂* = {tgt:.2f} (= LJ A = {A:g}).")
+                    else:
+                        st.warning("No φ_p found for this A (A = 0 means no attraction: use 'none').")
+                st.number_input("φ_p (polymer reservoir volume fraction)", 0.0, 3.0, step=0.01, format="%.4f",
+                                key="sim_phi", disabled=match)
+            else:
+                A = 0.0
+            st.selectbox("Repulsive core", list(sg.CORES), format_func=sg.CORES.get, key="sim_core")
+            if SS.sim_core == "coulomb":
+                st.number_input("Charge number Z", 1, 1000, step=10, key="sim_Z")
+        with c2:
+            st.subheader("Acoustic field")
+            field = st.checkbox("Field on (ARF)", key="sim_field")
+            if field:
+                st.number_input("d_n (nm)", 1.0, 20000.0, step=250.0, key="sim_dn",
+                                help="Inward wall displacement; the force scales with d_n².")
+                with st.expander("Force law F_y = −F₀ (d_n/4000 nm)² sin(k y)"):
+                    st.number_input("F₀ at 4000 nm (k_BT/µm)", 0.0, 1000.0, step=0.5, key="sim_F0")
+                    st.number_input("k (1/µm)", 0.0, 2.0, step=0.001, format="%.3f", key="sim_k")
+            st.subheader("Start")
+            sk = st.selectbox("Start positions", list(sg.STARTS), format_func=sg.STARTS.get, key="sim_start")
+            if sk == "grid":
+                st.number_input("Particles per side", 2, 40, key="sim_nside")
+                st.number_input("Spacing (µm)", 2.0, 20.0, step=0.5, key="sim_spacing")
+                start = {"kind": "grid", "n_side": int(SS.sim_nside), "spacing": float(SS.sim_spacing)}
+            elif sk == "random":
+                st.number_input("Number of particles", 2, 2000, key="sim_nrand")
+                st.number_input("Minimum distance (µm)", 2.0, 10.0, step=0.1, key="sim_dmin")
+                start = {"kind": "random", "n": int(SS.sim_nrand), "min_dist": float(SS.sim_dmin)}
+            elif sk == "run":
+                st.text_input("Run folder (with datax.csv):", key="sim_runfolder")
+                st.number_input("Time of the frame (τ_B; large = last frame)", 0.0, 1e6, step=1.0, key="sim_runt")
+                start = {"kind": "run", "folder": SS.sim_runfolder.strip().strip('"'), "t_tauB": float(SS.sim_runt)}
+            elif sk == "file":
+                st.text_input("CSV file (header line, then x, y in µm):", key="sim_file")
+                start = {"kind": "file", "path": SS.sim_file.strip().strip('"')}
+            else:
+                start = {"kind": "aaf"}
+                st.caption("Frame 0 of your COMSOL AAF runs (`simulation/aaf_start.csv`); use with the field off.")
+        with c3:
+            st.subheader("Time and seeds")
+            st.number_input("Run length (τ_B)", 0.01, 1000.0, step=1.0, key="sim_T")
+            auto = st.checkbox("Automatic time step", key="sim_steps_auto",
+                               help="LJ τ_B/4000; AO q ≥ 0.2 τ_B/32000; q ≥ 0.1 τ_B/128000 (from the convergence checks).")
+            cfg_now = {"potential": pot, "q": SS.sim_q}
+            if auto:
+                SS.sim_steps = sg.suggested_steps(cfg_now)
+            st.number_input("Steps per τ_B", 100, 1_000_000, step=1000, key="sim_steps", disabled=auto)
+            st.number_input("Saved frames per τ_B", 1, 1000, step=10, key="sim_out")
+            st.text_input("Seeds (comma separated, one run each)", key="sim_seeds")
+            st.number_input("Runs at the same time", 1, max(1, os.cpu_count() or 1), key="sim_workers",
+                            help=f"This computer has {os.cpu_count()} CPU cores.")
+            st.selectbox("Regime folder", ["auto", "ARF", "NAF", "AAF"], key="sim_regime",
+                         help="auto: ARF if the field is on, AAF if starting from a band or a run, else NAF.")
+            st.text_input("Extra name tag (letters, then digits)", key="sim_tag")
+            with st.expander("Physics constants (change with care)"):
+                st.number_input("Box half-width (µm)", 5.0, 500.0, step=5.0, key="sim_box")
+                st.number_input("Temperature (K)", 200.0, 400.0, step=1.0, key="sim_TK")
+                st.number_input("Viscosity (mPa s)", 0.1, 100.0, step=0.1, key="sim_eta")
+                st.number_input("Particle radius (µm)", 0.1, 10.0, step=0.1, key="sim_rad")
+                st.number_input("Force cap per step (µm)", 0.001, 1.0, step=0.01, format="%.3f", key="sim_cap")
+                st.caption("The analyser assumes radius 1 µm and τ_B = 13.5 s; other values change the "
+                           "time unit of the runs.")
+
+        try:
+            seeds = [int(s) for s in SS.sim_seeds.replace(";", ",").split(",") if s.strip()]
+        except ValueError:
+            seeds = []
+            st.error("Seeds must be whole numbers, e.g. 1, 2, 3")
+        tag_ok = (not SS.sim_tag) or bool(re.fullmatch(r"[A-Za-z]+[0-9.]*", SS.sim_tag.strip().strip("_")))
+        if not tag_ok:
+            st.error("The tag must be letters followed by digits (e.g. test2), so the run picker can read it.")
+        cfg = {"potential": pot, "A": float(A), "q": float(SS.sim_q), "phi_p": float(SS.sim_phi),
+               "core": SS.sim_core, "core_Z": int(SS.sim_Z), "lj_cutoff_sigma": float(SS.sim_ljcut),
+               "dn_nm": float(SS.sim_dn) if field else 0.0, "arf_F0_ref": float(SS.sim_F0), "arf_k": float(SS.sim_k),
+               "start": start, "T_tauB": float(SS.sim_T), "steps_per_tauB": int(SS.sim_steps),
+               "out_per_tauB": int(SS.sim_out), "seeds": seeds, "workers": int(SS.sim_workers),
+               "regime": SS.sim_regime, "tag": SS.sim_tag.strip().strip("_"), "out_root": sim_root,
+               "box_half": float(SS.sim_box), "T_K": float(SS.sim_TK), "eta": float(SS.sim_eta) * 1e-3,
+               "radius_um": float(SS.sim_rad), "max_step_um": float(SS.sim_cap)}
+
+        # ---- previews ----
+        st.subheader("Preview")
+        pc1, pc2, pc3 = st.columns(3)
+        try:
+            r, U, fr = sg.potential_curve(cfg)
+            b2 = sg.b2_star(cfg)
+            fig, ax = plt.subplots(figsize=(4.2, 3.0), constrained_layout=True)
+            ax.plot(r, U, c="#2a78d6", lw=2)
+            ax.axhline(0, c="#999", lw=0.8)
+            lo = max(min(U.min() * 1.3, -1), -60)
+            ax.set_ylim(lo, max(-lo * 0.8, 3)); ax.set_xlim(r[0], min(r[-1], 6 * float(SS.sim_rad)))
+            ax.set_xlabel("r (µm)"); ax.set_ylabel("U(r) / k$_B$T")
+            ax.set_title(f"pair potential  ·  B$_2^*$ = {b2:.2f}  ·  min {U.min():.2f} k$_B$T", fontsize=9, loc="left")
+            for sp in ("top", "right"):
+                ax.spines[sp].set_visible(False)
+            pc1.pyplot(fig); plt.close(fig)
+        except Exception as ex:
+            pc1.warning(f"potential: {ex}")
+        try:
+            fig, ax = plt.subplots(figsize=(4.2, 3.0), constrained_layout=True)
+            sg._with(cfg)
+            yy = np.linspace(-cfg["box_half"], cfg["box_half"], 400)
+            ax.plot(sg.bd.arf_force(yy, cfg["dn_nm"]), yy, c="#eb6834", lw=2)
+            ax.axvline(0, c="#999", lw=0.8)
+            ax.set_xlabel("F$_y$ (k$_B$T/µm)"); ax.set_ylabel("y (µm)")
+            ax.set_title("acoustic force" + ("" if field else " (off)"), fontsize=9, loc="left")
+            for sp in ("top", "right"):
+                ax.spines[sp].set_visible(False)
+            pc2.pyplot(fig); plt.close(fig)
+        except Exception as ex:
+            pc2.warning(f"force: {ex}")
+        n_part = 0
+        try:
+            P0 = sg.start_preview(cfg, seeds[0] if seeds else 1)
+            n_part = len(P0)
+            fig, ax = plt.subplots(figsize=(3.4, 3.2), constrained_layout=True)
+            from matplotlib.patches import Circle, Rectangle
+            from matplotlib.collections import PatchCollection
+            b = cfg["box_half"]
+            ax.add_patch(Rectangle((-b, -b), 2 * b, 2 * b, fill=False, ec="#c3c2b7"))
+            ax.add_collection(PatchCollection([Circle(p, cfg["radius_um"]) for p in P0], fc="#2a78d6", ec="white", lw=0.3))
+            ax.set_xlim(-b - 1, b + 1); ax.set_ylim(-b - 1, b + 1); ax.set_aspect("equal")
+            ax.set_title(f"start: {n_part} particles", fontsize=9, loc="left"); ax.tick_params(labelsize=7)
+            pc3.pyplot(fig); plt.close(fig)
+        except Exception as ex:
+            pc3.warning(f"start positions: {ex}")
+
+        # ---- runtime, names, start ----
+        n_steps = int(round(cfg["T_tauB"] * cfg["steps_per_tauB"]))
+        sps = sg.seconds_per_step(max(n_part, 2), pot) if n_part else 0.0
+        waves = -(-len(seeds) // max(1, cfg["workers"])) if seeds else 0
+        est = n_steps * sps * waves
+        try:
+            names = sg.run_names(cfg) if seeds else []
+        except Exception as ex:
+            names = []
+            st.error(str(ex))
+        st.markdown(f"**{len(seeds)} run(s)**, {n_steps:,} steps each · estimated "
+                    f"**{est / 60:.1f} min** on this computer ({cfg['workers']} at a time)")
+        if cfg["steps_per_tauB"] % cfg["out_per_tauB"]:
+            st.error("Steps per τ_B must be a multiple of saved frames per τ_B.")
+        if pot == "AO" and cfg["steps_per_tauB"] < sg.suggested_steps(cfg):
+            st.warning(f"AO at q = {cfg['q']:g} needs about τ_B/{sg.suggested_steps(cfg)} to sample the well "
+                       "correctly (the two-particle B₂ check); fewer steps make it less sticky than set.")
+        exist = [os.path.isdir(os.path.join(sim_root, rg, nm)) for rg, nm in names]
+        st.dataframe(pd.DataFrame({"folder": [f"{rg}/{nm}" for rg, nm in names],
+                                   "exists already (skipped)": exist}), use_container_width=True, hide_index=True)
+        ok = bool(seeds) and tag_ok and n_part > 0 and not cfg["steps_per_tauB"] % cfg["out_per_tauB"] and bool(sim_root)
+        if st.button("▶ Start", type="primary", disabled=not ok, key="sim_go"):
+            os.makedirs(sim_root, exist_ok=True)
+            jd = sg.launch(cfg)
+            st.success(f"Started. Follow it in the Jobs tab (job {os.path.basename(jd)}).")
+
+    with tab_jobs:
+        @st.fragment(run_every=3)
+        def _jobs_view():
+            jobs = sg.list_jobs(sim_root)
+            if not jobs:
+                st.info("No jobs in this output folder yet.")
+                return
+            for j in jobs[:15]:
+                c = j["config"]
+                pot_txt = (f"AO q={c['q']:g} φp={c['phi_p']:g}" if c["potential"] == "AO" else
+                           f"LJ A={c['A']:g}" if c["potential"] == "LJ" else "no attraction")
+                fld = f"d_n {c['dn_nm']:g} nm" if c["dn_nm"] > 0 else "field off"
+                fr = np.mean([s.get("frac", 0) for s in j["status"]]) if j["status"] else 0
+                icon = {"done": "✅", "running": "⏳", "failed": "❌", "stopped": "⏹"}[j["state"]]
+                with st.expander(f"{icon} {j['id']} · {pot_txt}, {fld}, {c['T_tauB']:g} τ_B, seeds "
+                                 f"{', '.join(map(str, c['seeds']))} · {fr:.0%}", expanded=j["state"] == "running"):
+                    for s in j["status"]:
+                        eta = s.get("eta")
+                        txt = f"seed {s['seed']}: {s.get('state')}"
+                        if eta is not None and s.get("state") == "running":
+                            txt += f" · about {eta / 60:.1f} min left"
+                        if s.get("capped"):
+                            txt += f" · force cap hit {s['capped']}×"
+                        st.progress(float(s.get("frac", 0)), text=txt)
+                    cols = st.columns(3)
+                    if j["state"] == "running" and cols[0].button("Stop", key=f"stop_{j['id']}"):
+                        sg.stop(j["dir"])
+                    names_done = [s.get("folder") for s in j["status"] if s.get("state") in ("done", "exists")]
+                    if names_done:
+                        cols[1].caption("Open them in **Run viewer** or **Paper figures**: " +
+                                        ", ".join(os.path.basename(n) for n in names_done))
+                    log = sg.read_log(j["dir"])
+                    if "Traceback" in log or j["state"] == "failed":
+                        st.code(log[-3000:])
+        _jobs_view()
     st.stop()
 
 elif plot_mode == "Run viewer":

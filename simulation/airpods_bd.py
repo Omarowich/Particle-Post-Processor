@@ -127,8 +127,9 @@ def pair_forces(P, A, ao=None, core=None):
 
 
 def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, steps_per_tauB=4000, out_per_tauB=100,
-             seed=1, core=None, verbose=True, start=None):
-    """Return x, y (frames x 144, um) and t (s). start: (N, 2) start positions; default the 12 x 12 grid."""
+             seed=1, core=None, verbose=True, start=None, progress=None):
+    """Return x, y (frames x N, um) and t (s). start: (N, 2) start positions; default the 12 x 12 grid.
+    progress(step, n_steps, n_capped) is called at every saved frame (raise inside it to stop)."""
     rng = np.random.default_rng(seed)
     if start is None:
         gx, gy = np.meshgrid(GRID, GRID, indexing="ij")
@@ -163,6 +164,8 @@ def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, steps_per_tauB=4000, o
         if s % every == 0:
             frames.append(P.copy())
             times.append(s * dt)
+            if progress is not None:
+                progress(s, n_steps, clipped)
     if verbose:
         frac = clipped / (n_steps * len(P))
         note = ""
