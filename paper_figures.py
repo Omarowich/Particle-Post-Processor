@@ -66,6 +66,9 @@ FIGURES = {
     "2_python_vs_comsol": "Python vs COMSOL",
     "6b_ao_timestep_full_system": "AO time step, all 144 particles",
     "9_b2_explained": "What B2* is (formula and plots)",
+    "10a_aaf_time_LJ": "Regime III over time, LJ",
+    "10b_aaf_time_AO": "Regime III over time, AO",
+    "10c_aaf_end_state": "Regime III end state vs attraction",
     "3_AO_vs_LJ": "AO vs LJ over time",
     "3b_AO_vs_LJ_pair_distances": "AO vs LJ pair distances g(r)",
     "4_state_map_1_and_10_tauB": "State map at 1 and 10 τB",
@@ -140,7 +143,7 @@ def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=Tru
 
     Returns (df, pairs) with pairs[(regime, name)] = all pair distances at the last frame.
     """
-    runs = rsm.discover_runs(bd_root, regimes=("ARF", "NAF"))
+    runs = rsm.discover_runs(bd_root, regimes=("ARF", "NAF", "AAF"))
     cache_file = os.path.join(bd_root, CACHE_NAME)
     cache = {}
     if use_cache and os.path.isfile(cache_file):
@@ -448,6 +451,85 @@ def fig_b2_explainer(A=3.0, ao=(0.2, 0.633)):
     a.legend(fontsize=8.5, loc="lower left")
     return fig
 
+
+# --------------------------------------------------------------------------- regime III (AAF)
+AAF_METRICS = ("y_spread", "z", "Smax", "hex")
+
+
+def _aaf_groups(df):
+    a = df[df.regime == "AAF"]
+    return a[a.potential == "LJ"], a[a.potential == "AO"]
+
+
+def _comsol_aaf(comsol_root, every=5):
+    """End-state and time series of the COMSOL AAF runs (one run per A, same start band)."""
+    out = {}
+    base = os.path.join(comsol_root or "", "AAF")
+    if not os.path.isdir(base):
+        return out
+    for n in os.listdir(base):
+        p = rsm.parse_run_name("AAF", n)
+        if p is None or not os.path.isfile(os.path.join(base, n, "datax.csv")):
+            continue
+        t, co = comsol_series(os.path.join(base, n), every)
+        out[p["A"]] = (t, co)
+    return out
+
+
+def fig_aaf_time(df, comsol_root=None, potential="LJ"):
+    """Regime III: each metric over time after the field is switched off, one line per A."""
+    plt = _style()
+    import matplotlib as mpl
+    lj, ao = _aaf_groups(df)
+    d = lj if potential == "LJ" else ao
+    As = sorted(d.A.unique())
+    cmap = mpl.colormaps["viridis"]
+    fig, ax = plt.subplots(1, len(AAF_METRICS), figsize=(16, 3.9), constrained_layout=True)
+    for k, A in enumerate(As):
+        col = cmap(k / max(len(As) - 1, 1))
+        for j, m in enumerate(AAF_METRICS):
+            band(ax[j], d[np.isclose(d.A, A)], m, col, f"A = {A:g}" if potential == "LJ" else f"matched to A = {A:g}")
+    for j, m in enumerate(AAF_METRICS):
+        ax[j].set_title(LAB[m], loc="left")
+        ax[j].set_xlabel("t after field off (τ$_B$)")
+    ax[-1].legend(fontsize=7.5, loc="best")
+    what = "LJ" if potential == "LJ" else "AO (q = 0.2, φ$_p$ matched by B$_2$*)"
+    fig.suptitle(f"III  After the acoustic field is switched off: {what}, same start band, 3 seeds per line",
+                 x=0.01, ha="left", fontsize=11)
+    return fig
+
+
+def fig_aaf_end(df, comsol_root=None, t_from=18.0):
+    """Regime III: end state (t > t_from) against attraction, LJ vs AO vs COMSOL."""
+    plt = _style()
+    lj, ao = _aaf_groups(df)
+    co = _comsol_aaf(comsol_root)
+    idx = {"z": 0, "psi6": 1, "Smax": 2, "y_spread": 3, "nn1": 5, "hex": 6}
+    fig, ax = plt.subplots(1, len(AAF_METRICS), figsize=(16, 3.9), constrained_layout=True)
+    for j, m in enumerate(AAF_METRICS):
+        for d, col, lab, mk in ((lj, BLUE, "Python LJ", "o"), (ao, ORANGE, "Python AO (matched B$_2$*)", "s")):
+            if d.empty:
+                continue
+            e = d[d.t > t_from].groupby(["A", "seed"])[m].mean().reset_index()
+            g = e.groupby("A")[m]
+            mu, lo, hi = g.mean(), g.min(), g.max()
+            ax[j].plot(mu.index, mu.values, "-", c=col, lw=1.6, marker=mk, ms=5, label=lab)
+            ax[j].fill_between(mu.index, lo.values, hi.values, color=col, alpha=0.18, lw=0)
+        if co:
+            As = sorted(co)
+            vals = [co[A][1][co[A][0] > t_from, idx[m]].mean() for A in As]
+            ax[j].plot(As, vals, "x", c="#555", ms=7, mew=1.6, label="COMSOL (1 run, identical kicks)")
+        t0 = df[(df.regime == "AAF") & (df.t < 1e-6)][m].mean()
+        if np.isfinite(t0):
+            ax[j].axhline(t0, ls="--", c="#aaa", lw=1)
+            ax[j].text(5.0, t0, " start", va="bottom", ha="right", fontsize=8, color="#888")
+        ax[j].set_title(LAB[m], loc="left")
+        ax[j].set_xlabel("attraction A (k$_B$T; AO matched by B$_2$*)")
+    ax[0].legend(fontsize=8)
+    fig.suptitle(f"III  End state after the field is switched off (mean over t > {t_from:g} τ$_B$; band = min–max over 3 seeds; "
+                 "dashed = start band)", x=0.01, ha="left", fontsize=11)
+    return fig
+
 def fig_vs_comsol(df, comsol_root, cases=((0, 2000), (0, 4000), (5, 2000), (5, 4000))):
     plt = _style()
     fig, ax = plt.subplots(2, len(cases), figsize=(15, 6), constrained_layout=True, sharex=True, squeeze=False)
@@ -622,6 +704,9 @@ FIG_FUNCS = {
     "2_python_vs_comsol": lambda df, pairs, bd, co: fig_vs_comsol(df, co),
     "6b_ao_timestep_full_system": lambda df, pairs, bd, co: fig_ao_timestep(df),
     "9_b2_explained": lambda df, pairs, bd, co: fig_b2_explainer(),
+    "10a_aaf_time_LJ": lambda df, pairs, bd, co: fig_aaf_time(df, co, "LJ"),
+    "10b_aaf_time_AO": lambda df, pairs, bd, co: fig_aaf_time(df, co, "AO"),
+    "10c_aaf_end_state": lambda df, pairs, bd, co: fig_aaf_end(df, co),
     "3_AO_vs_LJ": lambda df, pairs, bd, co: fig_ao_vs_lj(df),
     "3b_AO_vs_LJ_pair_distances": lambda df, pairs, bd, co: fig_pair_distances(df, pairs),
     "4_state_map_1_and_10_tauB": lambda df, pairs, bd, co: fig_state_map(df),

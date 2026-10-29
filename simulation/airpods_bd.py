@@ -20,6 +20,10 @@ Examples
     python airpods_bd.py --plan validation --out "D:\\...\\BD runs"
     python airpods_bd.py --plan validation --out "D:\\...\\BD runs" --compare "D:\\...\\raw csv data"
     python airpods_bd.py --plan revision --out "D:\\...\\BD runs"
+    python airpods_bd.py --plan aaf --workers 6                         # regime III, 6 runs at a time
+
+Regime III (AAF, after the acoustic force): the field is off and the run starts from the
+band in aaf_start.csv (frame 0 of your COMSOL AAF runs), so Python and COMSOL start identically.
 """
 from __future__ import annotations
 
@@ -123,11 +127,14 @@ def pair_forces(P, A, ao=None, core=None):
 
 
 def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, steps_per_tauB=4000, out_per_tauB=100,
-             seed=1, core=None, verbose=True):
-    """Return x, y (frames x 144, um) and t (s)."""
+             seed=1, core=None, verbose=True, start=None):
+    """Return x, y (frames x 144, um) and t (s). start: (N, 2) start positions; default the 12 x 12 grid."""
     rng = np.random.default_rng(seed)
-    gx, gy = np.meshgrid(GRID, GRID, indexing="ij")
-    P = np.c_[gx.ravel(), gy.ravel()].astype(float)
+    if start is None:
+        gx, gy = np.meshgrid(GRID, GRID, indexing="ij")
+        P = np.c_[gx.ravel(), gy.ravel()].astype(float)
+    else:
+        P = np.array(start, float).copy()
     dt = TAUB / steps_per_tauB
     n_steps = int(round(T_tauB * steps_per_tauB))
     every = steps_per_tauB // out_per_tauB
@@ -178,8 +185,8 @@ def write_comsol_csv(folder, x, y, t):
         np.savetxt(os.path.join(folder, name), rows, delimiter=",", header=header, comments="", fmt="%.10g")
 
 
-def run_name(A, T_tauB, dn_nm, ao=None, seed=1, steps=4000):
-    base = f"{A:g}Tkb_{T_tauB:g}TauB" + (f"_{dn_nm:g}nm" if dn_nm > 0 else "_core")
+def run_name(A, T_tauB, dn_nm, ao=None, seed=1, steps=4000, regime=None):
+    base = f"{A:g}Tkb_{T_tauB:g}TauB" + (f"_{dn_nm:g}nm" if dn_nm > 0 else ("" if regime == "AAF" else "_core"))
     base += "_BD"
     if ao:
         base += f"_AO_q{ao[0]:g}_phi{ao[1]:g}"
@@ -202,6 +209,11 @@ AO_Q01 = (0.1, 0.368)
 # under-samples contact unless it is small (verify_ao.py --check b2). At q = 0.2,
 # tau_B/4000 gives only half the B2*, tau_B/32000 gives 93 %. q = 0.1 is twice as narrow.
 AO_STEPS = {0.2: 32000, 0.1: 128000}
+# phi_p (q = 0.2) with the same B2* as LJ at each A, core included (verify_ao.py --check match)
+AO_MATCH_Q02 = {1: 0.357, 2: 0.510, 2.5: 0.573, 3: 0.633, 3.5: 0.690, 4: 0.747, 5: 0.859}
+AAF_A = (0, 1, 2, 2.5, 3, 3.5, 4, 5)   # same attraction values as the COMSOL AAF runs
+AAF_TAUB = 20                           # same length as the COMSOL AAF runs
+AAF_START = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aaf_start.csv")
 
 
 def plan(name):
@@ -225,6 +237,13 @@ def plan(name):
                 L.append(("ARF", 3, dn, T, AO_Q02, s, AO_STEPS[0.2]))
                 L.append(("ARF", 3, dn, T, None, s, N))
         L += [("ARF", 3, 2750, 2, AO_Q01, s, AO_STEPS[0.1]) for s in S]   # q = 0.1 is costly: 2 tau_B
+        return L
+    if name in ("aaf", "aaf_lj", "aaf_ao"):   # regime III: field off, start from the COMSOL AAF band
+        L = []
+        if name != "aaf_ao":
+            L += [("AAF", A, 0, AAF_TAUB, None, s, N) for A in AAF_A for s in S]
+        if name != "aaf_lj":
+            L += [("AAF", A, 0, AAF_TAUB, (0.2, AO_MATCH_Q02[A]), s, AO_STEPS[0.2]) for A in AAF_A if A in AO_MATCH_Q02 for s in S]
         return L
     if name == "ao_dt":          # full 144-particle AO time-step check (reference: the tau_B/32000 runs of plan "ao")
         return [("ARF", 3, 4000, 2, AO_Q02, s, st) for st in (16000, 64000) for s in S]
@@ -263,6 +282,22 @@ def read_comsol(folder):
     return rx[0::2], ry[0::2], rx[1::2, 0]
 
 
+def _run_job(job):
+    """One run of a plan (top level so it can run in a separate process)."""
+    i, n, out, (reg, A, dn, T, ao, seed, steps) = job
+    name = run_name(A, T, dn, ao, seed, steps, reg)
+    folder = os.path.join(out, reg, name)
+    print(f"[{i}/{n}] {reg}/{name}", flush=True)
+    if os.path.isfile(os.path.join(folder, "datax.csv")):
+        print(f"   [{i}] already done, reading it", flush=True)
+        x, y, t = read_comsol(folder)
+    else:
+        start = np.loadtxt(AAF_START, delimiter=",", skiprows=1) if reg == "AAF" else None
+        x, y, t = simulate(0.0 if ao else A, dn, T, ao=ao, steps_per_tauB=steps, seed=seed, start=start)
+        write_comsol_csv(folder, x, y, t)
+    return (reg, A, dn, T, ao), observables(x, y)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--A", type=float, default=0.0, help="LJ attraction (kBT); for AO runs the matched LJ value (name only)")
@@ -272,27 +307,23 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--steps", type=int, default=4000,
                     help="time steps per tau_B (multiple of 100); use 4000+ for AO q=0.2, 5000+ for q=0.1")
-    ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt"], help="run a whole list")
+    ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt", "aaf", "aaf_lj", "aaf_ao"], help="run a whole list")
     ap.add_argument("--out", default="BD runs v2", help="output root; runs go to <out>/<ARF|NAF>/<name>/")
     ap.add_argument("--compare", help="folder with the COMSOL runs (raw csv data) to compare against")
+    ap.add_argument("--workers", type=int, default=1, help="runs at the same time (use about your number of CPU cores)")
     import sys
     a = ap.parse_args(None if len(sys.argv) > 1 else DEFAULT_ARGS)
 
     runs = plan(a.plan) if a.plan else [("ARF" if a.dn > 0 else "NAF", a.A, a.dn, a.T,
                                          tuple(a.ao) if a.ao else None, a.seed, a.steps)]
     print(f"D = {D:.4f} um^2/s, tau_B = {TAUB:.2f} s, {len(runs)} run(s) -> {os.path.abspath(a.out)}")
-    results = []
-    for i, (reg, A, dn, T, ao, seed, steps) in enumerate(runs, 1):
-        name = run_name(A, T, dn, ao, seed, steps)
-        folder = os.path.join(a.out, reg, name)
-        print(f"[{i}/{len(runs)}] {reg}/{name}")
-        if os.path.isfile(os.path.join(folder, "datax.csv")):
-            print("   already done, reading it")
-            x, y, t = read_comsol(folder)
-        else:
-            x, y, t = simulate(0.0 if ao else A, dn, T, ao=ao, steps_per_tauB=steps, seed=seed)
-            write_comsol_csv(folder, x, y, t)
-        results.append(((reg, A, dn, T, ao), observables(x, y)))
+    jobs = [(i, len(runs), a.out, r) for i, r in enumerate(runs, 1)]
+    if a.workers > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=a.workers) as ex:
+            results = list(ex.map(_run_job, jobs))
+    else:
+        results = [_run_job(j) for j in jobs]
 
     if a.compare:
         import collections

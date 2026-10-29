@@ -4053,7 +4053,7 @@ elif plot_mode == "Paper figures":
 
     def _folder_stamp(root):
         out = []
-        for reg in ("ARF", "NAF"):
+        for reg in ("ARF", "NAF", "AAF"):
             d = os.path.join(root, reg)
             if os.path.isdir(d):
                 for n in sorted(os.listdir(d)):
@@ -4063,7 +4063,7 @@ elif plot_mode == "Paper figures":
         return tuple(out)
 
     st.sidebar.header("2. Data folders")
-    pf_bd = st.sidebar.text_input("Python BD runs (folder with ARF / NAF):",
+    pf_bd = st.sidebar.text_input("Python BD runs (folder with ARF / NAF / AAF):",
                                   value=os.path.join(source_root, "BD runs v2") if source_root else "",
                                   key="pf_bd").strip().strip('"').strip("'")
     pf_co = st.sidebar.text_input("COMSOL runs (folder with ARF, for figures 0 and 2):",
