@@ -11,6 +11,7 @@ copy is kept here and reused by both.
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -26,12 +27,30 @@ def rundata_dir(base_dir: str) -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
-def make_rundata_stem(dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None) -> str:
-    third_part = f"_{third_val:g}{third_unit}" if third_val is not None and third_unit else ""
-    return slugify(f"{dataset_tag}_{tkb:g}tkb_{taub:g}taub{third_part}_{metric_label}")
+# Run folders may carry tags after the standard name, e.g. 3Tkb_1TauB_4000nm_BD_seed2 or
+# 3Tkb_2TauB_2750nm_BD_AO_q0.2_phi0.664_seed1. Runs that differ only by tag must not share caches or labels.
+_RUN_TAG_RE = re.compile(
+    r"^[0-9]+(?:\.[0-9]+)?Tkb[ _]*[0-9]+(?:\.[0-9]+)?TauB(?:[ _]*[0-9]+(?:\.[0-9]+)?(?:nm|nn|dn|F))?((?:_[A-Za-z]+[0-9.]*)*)$",
+    re.IGNORECASE,
+)
 
-def rundata_npz_path(base_dir: str, dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None) -> Path:
-    return rundata_dir(base_dir) / (make_rundata_stem(dataset_tag, tkb, taub, metric_label, third_val, third_unit) + ".npz")
+def run_tag(run_name: str) -> str:
+    """Tag part of a run folder name ('' for plain names like 3Tkb_1TauB_4000nm)."""
+    m = _RUN_TAG_RE.match(os.path.basename(str(run_name).rstrip("\\/")))
+    return m.group(1).lstrip("_") if m else ""
+
+def tag_suffix(d: dict) -> str:
+    """' [tag]' for legend labels of a series dict with a 'run' entry."""
+    t = run_tag(d.get("run", "")) if isinstance(d, dict) else ""
+    return f" [{t}]" if t else ""
+
+def make_rundata_stem(dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None, tag: str = "") -> str:
+    third_part = f"_{third_val:g}{third_unit}" if third_val is not None and third_unit else ""
+    tag_part = f"_{tag}" if tag else ""
+    return slugify(f"{dataset_tag}_{tkb:g}tkb_{taub:g}taub{third_part}{tag_part}_{metric_label}")
+
+def rundata_npz_path(base_dir: str, dataset_tag: str, tkb: float, taub: float, metric_label: str, third_val=None, third_unit=None, tag: str = "") -> Path:
+    return rundata_dir(base_dir) / (make_rundata_stem(dataset_tag, tkb, taub, metric_label, third_val, third_unit, tag) + ".npz")
 
 def save_rundata_npz(path: Path, y: np.ndarray):
     y = np.asarray(y, float)
@@ -127,7 +146,7 @@ def get_series_for_metric(
         third_unit = run_tuple[4] if len(run_tuple) > 4 else None
         run_name = os.path.basename(folder_path)
 
-        npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label, third_val, third_unit)
+        npz_path = rundata_npz_path(base_dir, dataset_tag, tkb_val, tau_val, metric_label, third_val, third_unit, run_tag(run_name))
 
         y = None
         loaded = False
