@@ -4038,7 +4038,7 @@ elif plot_mode == "Regime state model":
     st.stop()
 
 # ---------------------------------------------------------------------
-# RUN VIEWER  (particles at a chosen time, side by side, animated GIF)
+# RUN VIEWER  (snapshot, animation, live particle inspector)
 # ---------------------------------------------------------------------
 elif plot_mode == "Run viewer":
 
@@ -4056,23 +4056,54 @@ elif plot_mode == "Run viewer":
     else:
         rv_base = st.sidebar.text_input("Folder with the run folders:", value="", key="rv_custom")
     rv_base = rv_base.strip().strip('"').strip("'")
+    rv_regime = os.path.basename(rv_base.rstrip("\\/")).upper()
 
     rv_all = rv.list_run_folders(rv_base)
     st.sidebar.header("3. Runs (up to 4, shown side by side)")
-    rv_filter = st.sidebar.text_input("Filter names (e.g. 2750nm, AO, seed1):", value="", key="rv_filter")
+    rv_filter = st.sidebar.text_input("Filter names (e.g. 2750nm AO seed1):", value="", key="rv_filter")
     rv_opts = [r for r in rv_all if all(tok.lower() in r.lower() for tok in rv_filter.split())]
     rv_sel = st.sidebar.multiselect("Runs:", rv_opts, default=rv_opts[:1], key="rv_runs")
     if len(rv_sel) > 4:
         st.sidebar.warning("Showing the first 4 selected runs.")
         rv_sel = rv_sel[:4]
 
-    st.sidebar.header("4. Display")
-    rv_mode = st.sidebar.selectbox("Colour particles by:", rv.COLOR_MODES, key="rv_mode")
-    rv_bonds = st.sidebar.checkbox("Show bonds", value=False, key="rv_bonds",
-                                   help="Lines between particles closer than the bond cutoff.")
-    rv_rc = st.sidebar.number_input("Bond cutoff (µm)", 1.0, 10.0, 2.9, 0.1, key="rv_rc")
-    rv_trail = st.sidebar.slider("Trail length (frames)", 0, 100, 0, 5, key="rv_trail",
-                                 help="Draw each particle's path over the previous frames.")
+    st.sidebar.header("4. Colour")
+    rv_metric = st.sidebar.selectbox("Colour particles by:", list(rv.METRICS), key="rv_mode")
+    rv_plain = st.sidebar.color_picker("Particle colour (Plain)", "#2a78d6", key="rv_plain")
+    c1, c2 = st.sidebar.columns(2)
+    rv_edge = c1.color_picker("Outline", "#ffffff", key="rv_edge")
+    rv_bondc = c2.color_picker("Bonds", "#6b6a63", key="rv_bondc")
+    rv_fix = st.sidebar.checkbox("Fixed colour range", value=False, key="rv_fix",
+                                 help="Use the same min/max in every panel and frame.")
+    rv_range = None
+    if rv_fix:
+        c1, c2 = st.sidebar.columns(2)
+        rv_range = (c1.number_input("min", value=0.0, key="rv_rmin"), c2.number_input("max", value=1.0, key="rv_rmax"))
+
+    st.sidebar.header("5. Show")
+    c1, c2 = st.sidebar.columns(2)
+    rv_o = dict(
+        show_run_name=c1.checkbox("Run name", True, key="rv_s_name"),
+        show_time=c2.checkbox("Time stamp", True, key="rv_s_time"),
+        show_stats=c1.checkbox("Mean z / ψ6", True, key="rv_s_stats"),
+        show_legend=c2.checkbox("Legend", True, key="rv_s_leg"),
+        show_colorbar=c1.checkbox("Colour bar", True, key="rv_s_cbar"),
+        show_axes=c2.checkbox("Axes", True, key="rv_s_axes"),
+        show_box=c1.checkbox("Box outline", True, key="rv_s_box"),
+        show_bonds=c2.checkbox("Bonds", False, key="rv_bonds"),
+    )
+    with st.sidebar.expander("More display settings", expanded=False):
+        rv_rc = st.number_input("Bond cutoff (µm)", 1.0, 10.0, 2.9, 0.1, key="rv_rc")
+        rv_trail = st.slider("Trail length (frames)", 0, 200, 0, 5, key="rv_trail")
+        rv_trailc = st.color_picker("Trail colour", "#b8b6ad", key="rv_trailc")
+        rv_scale = st.slider("Particle size (× real size)", 0.3, 1.5, 1.0, 0.05, key="rv_scale")
+        rv_font = st.slider("Font size", 6, 18, 9, key="rv_font")
+        rv_panel = st.slider("Panel size (inches)", 3.0, 8.0, 4.6, 0.2, key="rv_panel")
+
+    rv_opts_draw = rv.DrawOptions(metric=rv_metric, plain_color=rv_plain, edge_color=rv_edge, bond_color=rv_bondc,
+                                  trail_color=rv_trailc, trail=int(rv_trail), rc=float(rv_rc),
+                                  particle_scale=float(rv_scale), font_size=float(rv_font),
+                                  fixed_range=rv_range, panel_size=float(rv_panel), **rv_o)
 
     st.header("Run viewer")
     if not rv_base or not os.path.isdir(rv_base):
@@ -4082,45 +4113,51 @@ elif plot_mode == "Run viewer":
         st.info(f"{len(rv_all)} runs found. Pick one or more in the sidebar.")
         st.stop()
 
-    rv_runs = []
+    rv_runs, rv_models = [], []
     for name in rv_sel:
         f = os.path.join(rv_base, name)
         try:
             rv_runs.append((name, _rv_load(f, os.path.getmtime(os.path.join(f, "datax.csv")))))
+            rv_models.append(rv.RunModel.from_name(rv_regime, name))
         except Exception as e:
             st.error(f"Could not read {name}: {e}")
     if not rv_runs:
         st.stop()
-
     t_max = min(r[1][2][-1] for r in rv_runs) / rv.TAUB_S
-    kw = dict(mode=rv_mode, show_bonds=rv_bonds, trail=int(rv_trail), rc=float(rv_rc))
 
-    tab_snap, tab_anim = st.tabs(["Snapshot", "Animation"])
+    tab_snap, tab_anim, tab_live = st.tabs(["Snapshot", "Animation", "Live view"])
+
     with tab_snap:
-        t_sel = st.slider("Time (τB)", 0.0, float(t_max), float(t_max), float(t_max) / 200 or 0.01,
+        t_sel = st.slider("Time (τB)", 0.0, float(t_max), float(t_max), max(float(t_max) / 200, 0.01),
                           key="rv_time", help="Same time for all selected runs (limited by the shortest run).")
-        fig = rv.make_figure(rv_runs, [rv.frame_at_time(r[1][2], t_sel * rv.TAUB_S) for r in rv_runs], **kw)
+        fig = rv.make_figure(rv_runs, [rv.frame_at_time(r[1][2], t_sel * rv.TAUB_S) for r in rv_runs],
+                             rv_opts_draw, rv_models)
         st.pyplot(fig)
         save_figure_if_requested(fig, f"snapshot_{'_vs_'.join(rv_sel)}_{t_sel:.2f}tauB", save_plots, output_dir)
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
-        st.download_button("Download PNG", buf.getvalue(), f"snapshot_{t_sel:.2f}tauB.png", "image/png",
+        fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+        st.download_button("Download PNG (300 dpi)", buf.getvalue(), f"snapshot_{t_sel:.2f}tauB.png", "image/png",
                            key="rv_dl_png")
         plt.close(fig)
 
     with tab_anim:
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         a0, a1 = c1.slider("Time range (τB)", 0.0, float(t_max), (0.0, float(t_max)), key="rv_arange")
-        n_fr = c2.number_input("Frames", 10, 400, 60, 10, key="rv_nframes")
-        fps = c3.number_input("Frames per second", 2, 30, 12, 1, key="rv_fps")
-        st.caption("Each frame is drawn like the snapshot, so 60 frames of 4 runs take about a minute.")
+        n_fr = c2.number_input("Frames", 5, 400, 60, 5, key="rv_nframes")
+        fps = c3.number_input("Frames per second", 1, 30, 12, 1, key="rv_fps")
+        gif_dpi = c4.number_input("Resolution (dpi)", 50, 200, 90, 10, key="rv_gifdpi")
+        st.caption("Uses all the colour and show settings from the sidebar. "
+                   "With a fixed colour range off, the colour scale is taken from the last frame.")
         if st.button("Make animation", key="rv_make_gif"):
             bar = st.progress(0.0, text="Drawing frames...")
-            gif = rv.make_gif(rv_runs, t_start_s=a0 * rv.TAUB_S, t_end_s=a1 * rv.TAUB_S, n_frames=int(n_fr),
-                              fps=int(fps), progress=lambda p: bar.progress(p, text=f"Drawing frames... {p:.0%}"),
-                              **kw)
+            try:
+                gif = rv.make_gif(rv_runs, rv_opts_draw, t_start_s=a0 * rv.TAUB_S, t_end_s=a1 * rv.TAUB_S,
+                                  n_frames=int(n_fr), fps=int(fps), dpi=int(gif_dpi), models=rv_models,
+                                  progress=lambda p: bar.progress(p, text=f"Drawing frames... {p:.0%}"))
+                st.session_state["rv_gif"] = gif
+            except Exception as e:
+                st.error(f"Could not make the animation: {e}")
             bar.empty()
-            st.session_state["rv_gif"] = gif
         if st.session_state.get("rv_gif"):
             st.image(st.session_state["rv_gif"])
             st.download_button("Download GIF", st.session_state["rv_gif"], "run_animation.gif", "image/gif",
@@ -4134,6 +4171,78 @@ elif plot_mode == "Run viewer":
                     st.info(f"Saved animation to: `{pth}`")
                 except Exception as e:
                     st.warning(f"Could not save the animation: {e}")
+
+    with tab_live:
+        try:
+            import plotly  # noqa: F401
+        except ImportError:
+            st.error("The live view needs plotly: run `pip install plotly` and restart the app.")
+            st.stop()
+        live_name = st.selectbox("Run", [r[0] for r in rv_runs], key="rv_live_run")
+        li = [r[0] for r in rv_runs].index(live_name)
+        lx, ly, lt = rv_runs[li][1]
+        lmodel = rv_models[li]
+        n_frames = len(lt)
+        if "rv_live_k" not in st.session_state or st.session_state["rv_live_k"] >= n_frames:
+            st.session_state["rv_live_k"] = n_frames - 1
+        cA, cB, cC, cD, cE = st.columns([1, 1, 6, 1, 1])
+        step = max(n_frames // 100, 1)
+        if cA.button("⏮", key="rv_first"):
+            st.session_state["rv_live_k"] = 0
+        if cB.button("◀", key="rv_prev"):
+            st.session_state["rv_live_k"] = max(st.session_state["rv_live_k"] - step, 0)
+        if cD.button("▶", key="rv_next"):
+            st.session_state["rv_live_k"] = min(st.session_state["rv_live_k"] + step, n_frames - 1)
+        if cE.button("⏭", key="rv_last"):
+            st.session_state["rv_live_k"] = n_frames - 1
+        k = cC.slider("Frame", 0, n_frames - 1, key="rv_live_k",
+                      help=f"Saved frames; ◀ ▶ move {step} frame(s) = {lt[min(step, n_frames - 1)] / rv.TAUB_S:.2f} τB.")
+        st.caption(f"Model for the forces: {lmodel.label()}." + (" Note: " + "; ".join(lmodel.notes) if lmodel.notes else ""))
+
+        sel_key = f"rv_live_sel_{live_name}"
+        selected = st.session_state.get(sel_key)
+        col_plot, col_info = st.columns([3, 2])
+        with col_plot:
+            show_arrows = st.checkbox("Force arrows on the selected particle", True, key="rv_live_arrows")
+            lfig = rv.live_figure(lx, ly, lt, k, rv_opts_draw, lmodel, selected, show_arrows=show_arrows)
+            event = None
+            try:
+                event = st.plotly_chart(lfig, key=f"rv_live_chart_{live_name}", on_select="rerun",
+                                        selection_mode="points", use_container_width=False)
+            except TypeError:
+                st.plotly_chart(lfig)
+                st.caption("Your Streamlit version can't report clicks; type the particle number on the right.")
+            pts = []
+            try:
+                pts = event.selection.points if event and event.selection else []
+            except Exception:
+                pts = []
+            if pts:
+                cd = pts[0].get("customdata")
+                new = int(cd[0] if isinstance(cd, (list, tuple)) else cd) if cd is not None else None
+                if new is not None and new != selected:
+                    st.session_state[sel_key] = new
+                    st.rerun()
+        with col_info:
+            typed = st.number_input("Particle number (or click one)", 0, lx.shape[1] - 1,
+                                    int(selected) if selected is not None else 0, key=f"rv_live_typed_{live_name}")
+            if st.button("Select", key="rv_live_pick"):
+                st.session_state[sel_key] = int(typed)
+                st.rerun()
+            if selected is None:
+                st.info("Click a particle in the plot (or type its number) to see its values.")
+            else:
+                summary, rows = rv.particle_report(lx, ly, lt, k, int(selected), lmodel, float(rv_rc))
+                st.subheader(f"Particle {selected}")
+                st.table(pd.DataFrame({"value": [str(v) for v in summary.values()]}, index=list(summary.keys())))
+                st.markdown("**Neighbours within 6.5 µm** (bonded = closer than the bond cutoff; "
+                            "forces are the model forces from each neighbour on this particle)")
+                st.dataframe(pd.DataFrame(rows), hide_index=True)
+                st.caption("Measured velocity comes from neighbouring saved frames, so it is dominated by "
+                           "Brownian motion; compare it with the drift D·F and the Brownian speed scale. "
+                           "The repulsive core is stiff (about 140 kBT/µm at contact), so a neighbour that is "
+                           "momentarily closer than 2 µm gives a large, short-lived push; averaged over time, the "
+                           "pair forces in a packed band balance the acoustic force.")
 
     st.stop()
 
