@@ -62,10 +62,10 @@ MAX_STEP_UM = 0.1       # safety cap on the deterministic move per step
 
 # ---- settings used when you press Run without command-line arguments (e.g. in PyCharm) ----
 DEFAULT_ARGS = ["--plan", "validation",
-                "--out", "BD runs v2",
-                "--compare", r"D:\Work\AIRPODS Paper 2627\raw csv data"]
-# other options:  ["--plan", "revision", "--out", "BD runs v2"]
-#                 ["--plan", "ao", "--out", "BD runs v2"]
+                "--out", r"D:\Work\AIRPODS Paper 2627\Data",
+                "--compare", r"D:\Work\AIRPODS Paper 2627\Data"]
+# other options:  ["--plan", "revision"]
+#                 ["--plan", "ao"]
 #                 ["--A", "3", "--dn", "2750", "--T", "2", "--ao", "0.2", "0.664", "--steps", "4000", "--seed", "2"]
 
 
@@ -311,7 +311,8 @@ def main():
     ap.add_argument("--steps", type=int, default=4000,
                     help="time steps per tau_B (multiple of 100); use 4000+ for AO q=0.2, 5000+ for q=0.1")
     ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt", "aaf", "aaf_lj", "aaf_ao"], help="run a whole list")
-    ap.add_argument("--out", default="BD runs v2", help="output root; runs go to <out>/<ARF|NAF>/<name>/")
+    ap.add_argument("--out", default=r"D:\Work\AIRPODS Paper 2627\Data",
+                    help="output root (the merged Data folder); runs go to <out>/<ARF|NAF|AAF>/<name>/")
     ap.add_argument("--compare", help="folder with the COMSOL runs (raw csv data) to compare against")
     ap.add_argument("--workers", type=int, default=1, help="runs at the same time (use about your number of CPU cores)")
     import sys
@@ -343,7 +344,9 @@ def main():
             sd = {k: np.nanstd([o[k] for o in os_]) for k in os_[0]}
             print(f"{label:<26}{'BD':>8}" + "".join(f"{m[k]:7.2f}" if k != 'y_spread' else f"{m[k]:10.2f}" for k in m)
                   + f"   (± {sd['z']:.2f} z, ± {sd['psi6']:.2f} psi6 over {len(os_)} seeds)")
-            cf = os.path.join(a.compare, reg, label)
+            cf = os.path.join(a.compare, reg, label + "_CS")       # merged Data folder
+            if not os.path.isdir(cf):
+                cf = os.path.join(a.compare, reg, label)           # old raw csv data folder
             if os.path.isdir(cf):
                 o = observables(*read_comsol(cf)[:2])
                 print(f"{'':<26}{'COMSOL':>8}" + "".join(f"{o[k]:7.2f}" if k != 'y_spread' else f"{o[k]:10.2f}" for k in o))

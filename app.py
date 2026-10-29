@@ -82,6 +82,16 @@ import pandas as pd
 import regime_state_model as rsm
 
 
+def _default_runs_root(root):
+    """The merged Data folder holds ARF/NAF/AAF itself; older layouts kept Python runs in 'BD runs v2'."""
+    if not root:
+        return ""
+    if any(os.path.isdir(os.path.join(root, r)) for r in ("ARF", "NAF", "AAF")):
+        return root
+    old = os.path.join(root, "BD runs v2")
+    return old if os.path.isdir(old) else root
+
+
 def clean_path(p):
     """Path typed or pasted by the user: drop spaces, any kind of quotes and trailing slashes."""
     p = (p or "").strip().strip('"\'\u201c\u201d\u2018\u2019').strip()
@@ -4091,7 +4101,7 @@ elif plot_mode == "Paper figures":
 
     st.sidebar.header("2. Data folders")
     pf_bd = st.sidebar.text_input("Python BD runs (folder with ARF / NAF / AAF):",
-                                  value=os.path.join(source_root, "BD runs v2") if source_root else "",
+                                  value=_default_runs_root(source_root),
                                   key="pf_bd")
     pf_bd = clean_path(pf_bd)
     pf_co = st.sidebar.text_input("COMSOL runs (folder with ARF, for figures 0 and 2):",
@@ -4244,8 +4254,8 @@ elif plot_mode == "Run simulation":
 
     with st.sidebar:
         st.header("2. Output")
-        sim_root = st.text_input("Output folder:", value=os.path.join(source_root, "BD runs v2") if source_root else
-                                 "BD runs v2", key="sim_root")
+        sim_root = st.text_input("Output folder:", value=_default_runs_root(source_root) or "Data",
+                                 key="sim_root")
         sim_root = clean_path(sim_root)
         with st.expander("Load settings from an existing run"):
             lf = clean_path(st.text_input("Run folder (with sim_config.json):", key="sim_loadfolder"))

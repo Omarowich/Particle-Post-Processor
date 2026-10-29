@@ -12,6 +12,9 @@ Layout of --out:
     index.csv                  one row per run (source, parameters, true length, notes, original path)
     README.md                  naming scheme
 
+After adding runs to --out directly (Run simulation page, airpods_bd.py --out Data, COMSOL exports
+named <...>_CS), refresh the index with:   python merge_runs.py --out "<Data>" --reindex
+
 Only copies; never deletes or changes the source folders. Re-running skips files that are already
 there (same size), so new runs can be added later. --budget stops after that many seconds (resume
 by running again).
@@ -125,8 +128,10 @@ def copy_run(src, dst, deadline):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--comsol", required=True)
-    ap.add_argument("--bd", required=True, action="append", help="Python runs root (can be given several times)")
+    ap.add_argument("--comsol", default=None, help="old COMSOL csv folder (raw csv data)")
+    ap.add_argument("--bd", default=[], action="append", help="Python runs root (can be given several times)")
+    ap.add_argument("--reindex", action="store_true",
+                    help="only rebuild index.csv from what is in --out (after adding new runs there)")
     ap.add_argument("--archive-bd", default=None)
     ap.add_argument("--out", required=True)
     ap.add_argument("--budget", type=float, default=1e9, help="stop after this many seconds")
@@ -136,8 +141,16 @@ def main():
     os.makedirs(out, exist_ok=True)
     rows, done = [], True
 
+    if a.reindex:
+        rows = reindex(out)
+        write_outputs(out, rows)
+        print(f"index.csv rebuilt: {len(rows)} runs")
+        return
+
     # COMSOL
     for reg in REGIMES:
+        if not a.comsol:
+            break
         base = os.path.join(a.comsol, reg)
         if not os.path.isdir(base):
             continue
@@ -205,14 +218,58 @@ def main():
                 if os.path.isfile(os.path.join(src, "datax.csv")):
                     done &= copy_run(src, os.path.join(out, "_archive", "BD runs v1", reg, n), deadline)
 
+    old = {}
+    if os.path.isfile(os.path.join(out, "index.csv")):   # keep rows (and notes) of runs already indexed
+        with open(os.path.join(out, "index.csv"), encoding="utf-8") as f:
+            old = {(r["regime"], r["name"]): r for r in csv.DictReader(f)}
+    new = {(r["regime"], r["name"]) for r in rows}
+    rows += [r for k, r in old.items() if k not in new]
+    write_outputs(out, rows)
+    print(f"{'DONE' if done else 'PARTIAL (time budget) - run again to continue'}: {len(rows)} runs in index.csv")
+
+
+def reindex(out):
+    """Index of everything in the Data folder; keeps notes and original paths of known runs."""
+    old = {}
+    if os.path.isfile(os.path.join(out, "index.csv")):
+        with open(os.path.join(out, "index.csv"), encoding="utf-8") as f:
+            old = {(r["regime"], r["name"]): r for r in csv.DictReader(f)}
+    rows = [r for k, r in old.items() if k[0].startswith("_archive")]
+    for reg in REGIMES:
+        base = os.path.join(out, reg)
+        if not os.path.isdir(base):
+            continue
+        for n in sorted(os.listdir(base)):
+            rd = os.path.join(base, n)
+            if not os.path.isfile(os.path.join(rd, "datax.csv")):
+                continue
+            p = parse_name(n)
+            npart, frames, T = run_info(rd)
+            bd = bool(re.search(r"(^|_)BD(_|$)", n))
+            m = re.search(r"_dt(\d+)", n)
+            prev = old.get((reg, n), {})
+            notes = [prev.get("notes", "")] if prev.get("notes") else []
+            Tn = p.get("T_name")
+            if Tn and abs(T - Tn) > 0.05 * Tn and not any("tau_B, name says" in x for x in notes):
+                notes.append(f"runs {T:.2f} tau_B, name says {Tn:g}")
+            rows.append(dict(regime=reg, name=n, source="BD" if bd else "COMSOL", A=p.get("A"), T_name_tauB=Tn,
+                             T_actual_tauB=round(T, 3), dn_nm=p.get("dn"), F=p.get("F"),
+                             potential=p.get("potential"), q=p.get("q"), phi_p=p.get("phi_p"),
+                             steps_per_tauB=(int(m.group(1)) if m else 4000) if bd else "",
+                             seed=p.get("seed") if bd else "", n_particles=npart, n_frames=frames,
+                             original=prev.get("original", rd), notes="; ".join(notes)))
+    return rows
+
+
+def write_outputs(out, rows):
     rows = [{k: ("" if v is None or (isinstance(v, float) and v != v) else v) for k, v in r.items()} for r in rows]
+    rows.sort(key=lambda r: (r["regime"], r["source"], r["name"]))
     with open(os.path.join(out, "index.csv"), "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
     with open(os.path.join(out, "README.md"), "w", encoding="utf-8") as f:
         f.write(README)
-    print(f"{'DONE' if done else 'PARTIAL (time budget) - run again to continue'}: {len(rows)} runs in index.csv")
 
 
 if __name__ == "__main__":

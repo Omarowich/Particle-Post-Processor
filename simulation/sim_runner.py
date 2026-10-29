@@ -37,7 +37,7 @@ DEFAULTS = {
     "box_half": bd.BOX,
     "T_K": bd.T_K, "eta": bd.ETA, "radius_um": bd.A_P,
     "max_step_um": bd.MAX_STEP_UM,
-    "out_root": "BD runs v2", "regime": "auto", "tag": "", "workers": 1,
+    "out_root": r"D:\Work\AIRPODS Paper 2627\Data", "regime": "auto", "tag": "", "workers": 1,
 }
 
 
