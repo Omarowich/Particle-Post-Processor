@@ -65,6 +65,7 @@ FIGURES = {
     "1_timestep_convergence": "Time-step convergence",
     "2_python_vs_comsol": "Python vs COMSOL",
     "6b_ao_timestep_full_system": "AO time step, all 144 particles",
+    "9_b2_explained": "What B2* is (formula and plots)",
     "3_AO_vs_LJ": "AO vs LJ over time",
     "3b_AO_vs_LJ_pair_distances": "AO vs LJ pair distances g(r)",
     "4_state_map_1_and_10_tauB": "State map at 1 and 10 τB",
@@ -353,6 +354,100 @@ def fig_ao_timestep(df, dn=4000, q=0.2, ref_steps=32000, steps=(16000, 64000)):
                  "band = min–max over 3 seeds). Bottom: difference to the τ$_B$/32000 mean", x=0.01, ha="left", fontsize=11)
     return fig
 
+
+def fig_b2_explainer(A=3.0, ao=(0.2, 0.633)):
+    """What B2* is: the formula with its parts numbered, and the same parts in the plots,
+    computed from the potentials in simulation/airpods_bd.py (core included)."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "simulation"))
+    import airpods_bd as bd
+    plt = _style()
+    r = np.linspace(1.0, 8.0, 700001)
+    trap = getattr(np, "trapezoid", None) or np.trapz
+
+    def pot(args):
+        fr = bd.radial_force(r, *args)
+        U = np.zeros_like(r)
+        U[:-1] = np.cumsum((0.5 * (fr[1:] + fr[:-1]) * np.diff(r))[::-1])[::-1]
+        return U
+    cases = [(f"LJ, A = {A:g} k$_B$T", BLUE, pot((A, None))),
+             (f"AO, q = {ao[0]:g}, φ$_p$ = {ao[1]:g}", ORANGE, pot((0.0, ao)))]
+    s2 = bd.SIGMA ** 2
+    fig = plt.figure(figsize=(15, 5.6))
+    gs = fig.add_gridspec(2, 3, height_ratios=[0.30, 1], hspace=0.12, wspace=0.28,
+                          left=0.05, right=0.99, top=0.98, bottom=0.11)
+    axf = fig.add_subplot(gs[0, :]); axf.set_axis_off()
+    ax = [fig.add_subplot(gs[1, j]) for j in range(3)]
+
+    # formula, built from pieces so each part can be numbered
+    parts = [(r"$B_2^* \,=\, \dfrac{B_2}{B_2^{\rm hard\ disc}} \,=\, \dfrac{2}{\sigma^2}\,$", "k", None),
+             (r"$\int_0^\infty$", "#6250d6", "③"),
+             (r"$\left[\,1 - \exp\left(-\right.\right.$", "#c0397a", "②"),
+             (r"$U(r)$", "#333333", "①"),
+             (r"$\left.\left./\,k_BT\,\right)\right]\, r$", "#c0397a", None),
+             (r"$\;dr$", "#6250d6", None),
+             (r"$\qquad B_2^{\rm hard\ disc} = \pi\sigma^2/2,\;\; \sigma = 2\,\mu m$", "#555555", None)]
+    fig.canvas.draw()
+    rend = fig.canvas.get_renderer()
+    x = 0.01
+    for txt, col, tag in parts:
+        t = axf.text(x, 0.38, txt, fontsize=19, color=col, va="center", transform=axf.transAxes)
+        bb = t.get_window_extent(rend).transformed(axf.transAxes.inverted())
+        if tag:
+            axf.text(0.5 * (bb.x0 + bb.x1), 0.84, tag, fontsize=15, color=col, ha="center", va="center",
+                     transform=axf.transAxes, fontweight="bold")
+        x = bb.x1
+    axf.text(x + 0.01, 0.55, "", transform=axf.transAxes)
+
+    # ① potential
+    a = ax[0]
+    a.axvspan(1.9, 2.0, color="#eeeeee", zorder=0)
+    a.text(1.93, -6.2, "core", ha="center", fontsize=9, color="#777")
+    for lab, col, U in cases:
+        a.plot(r, U, c=col, lw=2, label=lab)
+    a.axhline(0, c="#999", lw=0.8)
+    a.set_xlim(1.9, 4.0); a.set_ylim(-6.5, 5.5)
+    a.set_xlabel("centre distance r (µm)"); a.set_ylabel("U(r) / k$_B$T")
+    a.set_title("①  the pair potential", loc="left", color="#333333", fontweight="bold")
+    a.annotate("AO: −5.4 at contact,\nnarrow (gone by 2.4 µm)", (2.0, -5.38), (2.35, -5.6), fontsize=9, color=ORANGE,
+               arrowprops=dict(arrowstyle="-", color=ORANGE, lw=0.8))
+    a.annotate("LJ: −3.0 at 2.24 µm,\nwide", (2.245, -2.98), (2.75, -3.7), fontsize=9, color=BLUE,
+               arrowprops=dict(arrowstyle="-", color=BLUE, lw=0.8))
+    a.legend(fontsize=9, loc="upper right")
+
+    # ② integrand, area = B2*
+    a = ax[1]
+    out = []
+    for lab, col, U in cases:
+        h = (2 / s2) * (1 - np.exp(-U)) * r
+        a.plot(r, h, c=col, lw=1.8)
+        a.fill_between(r, 0, h, where=U < 0, color=col, alpha=0.22, lw=0)
+        rep = trap(np.where(U > 0, h, 0), r) + (2 / s2) * r[0] ** 2 / 2
+        att = trap(np.where(U < 0, h, 0), r)
+        out.append((lab, col, rep, att))
+    a.fill_between(r, 0, np.where(r < 2.0, (2 / s2) * r, 0), color="#bbbbbb", alpha=0.6, lw=0)
+    a.set_yscale("symlog", linthresh=1.0)
+    a.axhline(0, c="#999", lw=0.8)
+    a.set_xlim(1.0, 4.0); a.set_ylim(-400, 5)
+    a.set_xlabel("centre distance r (µm)"); a.set_ylabel("(2/σ²) [1 − e$^{-U/k_BT}$] r   (µm$^{-1}$)")
+    a.set_title("②  what is integrated  (area = B$_2^*$)", loc="left", color="#c0397a", fontweight="bold")
+    a.text(1.5, 1.6, "core: particles cannot\noverlap → area ≈ +1", ha="center", fontsize=9, color="#555")
+    a.text(2.75, -60, "attraction: pairs\nmore likely together\n→ negative area", ha="left", fontsize=9, color="#555")
+
+    # ③ running integral -> B2*
+    a = ax[2]
+    for (lab, col, U), (_, _, rep, att) in zip(cases, out):
+        h = (2 / s2) * (1 - np.exp(-U)) * r
+        run = np.concatenate([[0], np.cumsum(0.5 * (h[1:] + h[:-1]) * np.diff(r))]) + (2 / s2) * r[0] ** 2 / 2
+        a.plot(r, run, c=col, lw=2, label=f"{lab}:  +{rep:.1f} core − {-att:.1f} attraction = {rep + att:.1f}")
+    a.axhline(1, ls="--", c="#999", lw=0.8)
+    a.text(5.95, 1.4, "hard discs: B$_2^*$ = 1", ha="right", fontsize=9, color="#777")
+    a.set_xlim(1.0, 6.0); a.set_ylim(-12, 2.5)
+    a.set_xlabel("integrated up to r (µm)"); a.set_ylabel("running integral  →  B$_2^*$")
+    a.set_title("③  the integral: both end at B$_2^*$ ≈ −10", loc="left", color="#6250d6", fontweight="bold")
+    a.legend(fontsize=8.5, loc="lower left")
+    return fig
+
 def fig_vs_comsol(df, comsol_root, cases=((0, 2000), (0, 4000), (5, 2000), (5, 4000))):
     plt = _style()
     fig, ax = plt.subplots(2, len(cases), figsize=(15, 6), constrained_layout=True, sharex=True, squeeze=False)
@@ -528,6 +623,7 @@ FIG_FUNCS = {
     "1_timestep_convergence": lambda df, pairs, bd, co: fig_timestep(df),
     "2_python_vs_comsol": lambda df, pairs, bd, co: fig_vs_comsol(df, co),
     "6b_ao_timestep_full_system": lambda df, pairs, bd, co: fig_ao_timestep(df),
+    "9_b2_explained": lambda df, pairs, bd, co: fig_b2_explainer(),
     "3_AO_vs_LJ": lambda df, pairs, bd, co: fig_ao_vs_lj(df),
     "3b_AO_vs_LJ_pair_distances": lambda df, pairs, bd, co: fig_pair_distances(df, pairs),
     "4_state_map_1_and_10_tauB": lambda df, pairs, bd, co: fig_state_map(df),
