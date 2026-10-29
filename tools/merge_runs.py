@@ -24,12 +24,27 @@ import hashlib
 import os
 import re
 import shutil
-import sys
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
-import regime_state_model as rsm  # noqa: E402
+# same run-name rule as the analyser (regime_state_model.parse_run_name); kept here so this
+# script needs nothing but Python itself
+_NAME_RE = re.compile(r"^([\d.]+)Tkb_([\d.]+)TauB(?:_(\d+(?:\.\d+)?)(nm|nn|F))?((?:_[A-Za-z]+[\d.]*)*)$", re.I)
+
+
+def _tag(tags, key, cast):
+    m = re.search(rf"_{key}([\d.]+)(?=_|$)", tags or "")
+    return cast(m.group(1)) if m else None
+
+
+def parse_name(name):
+    m = _NAME_RE.match(name)
+    if not m:
+        return {}
+    unit, val, tags = (m.group(4) or "").lower(), (float(m.group(3)) if m.group(3) else None), m.group(5) or ""
+    return {"A": float(m.group(1)), "T_name": float(m.group(2)),
+            "dn": val if unit in ("nm", "nn") else None, "F": val if unit == "f" else None,
+            "potential": "AO" if re.search(r"(^|_)AO(_|$)", tags) else "LJ",
+            "q": _tag(tags, "q", float), "phi_p": _tag(tags, "phi", float), "seed": _tag(tags, "seed", int)}
 
 REGIMES = ("ARF", "NAF", "AAF", "ASF")
 TAUB_S = 13.514
@@ -147,7 +162,7 @@ def main():
                 seen[h] = new
                 dst = os.path.join(out, reg, new)
             npart, frames, T = run_info(src)
-            p = rsm.parse_run_name(reg, new) or {}
+            p = parse_name(new)
             Tn = p.get("T_name", float("nan"))
             if Tn and abs(T - Tn) > 0.05 * Tn:
                 notes.append(f"runs {T:.2f} tau_B, name says {Tn:g}")
@@ -169,7 +184,7 @@ def main():
                 src = os.path.join(base, n)
                 if not os.path.isfile(os.path.join(src, "datax.csv")):
                     continue
-                p = rsm.parse_run_name(reg, n) or {}
+                p = parse_name(n)
                 m = re.search(r"_dt(\d+)", n)
                 npart, frames, T = run_info(src)
                 done &= copy_run(src, os.path.join(out, reg, n), deadline)
