@@ -23,6 +23,7 @@ Figure list (file names as in the deck):
     4_state_map_1_and_10_tauB    state of every run
     5_confinement_vs_attraction  NAF vs band only vs band + attraction
     5b_snapshots_10tauB          snapshots coloured by psi6
+    6b_ao_timestep_full_system   AO with all 144 particles at tau_B/16000, /32000, /64000 (plan ao_dt)
     7_hexagonal_fraction         analyser rule and strict rule
     8_orientation                lattice orientation (grains), LJ vs AO
     8b_hexmask                   hexagonal / not hexagonal, LJ vs AO
@@ -63,6 +64,7 @@ FIGURES = {
     "0_seeds": "Random seeds: COMSOL vs Python",
     "1_timestep_convergence": "Time-step convergence",
     "2_python_vs_comsol": "Python vs COMSOL",
+    "6b_ao_timestep_full_system": "AO time step, all 144 particles",
     "3_AO_vs_LJ": "AO vs LJ over time",
     "3b_AO_vs_LJ_pair_distances": "AO vs LJ pair distances g(r)",
     "4_state_map_1_and_10_tauB": "State map at 1 and 10 τB",
@@ -318,6 +320,39 @@ def fig_timestep(df, A=3, dn=4000):
     return fig
 
 
+
+def fig_ao_timestep(df, dn=4000, q=0.2, ref_steps=32000, steps=(16000, 64000)):
+    """Full 144-particle AO system at three time steps, 3 seeds each (plan "ao_dt" + plan "ao")."""
+    plt = _style()
+    mets = ["z", "psi6", "Smax", "nn1"]
+    fig, ax = plt.subplots(2, 4, figsize=(15, 6.2), constrained_layout=True, sharex=True,
+                           gridspec_kw=dict(height_ratios=[1.3, 1]))
+    ao = df[(df.regime == "ARF") & (df.potential == "AO") & np.isclose(df.dn, dn) & np.isclose(df.q, q)]
+    ref = ao[np.isclose(ao.T_name, 10) & ao.base_tags.str.endswith(f"_dt{ref_steps}")]
+    tmax = ao[np.isclose(ao.T_name, 2)].t.max() if (np.isclose(ao.T_name, 2)).any() else 2.0
+    ref = ref[ref.t <= tmax + 1e-4]
+    cols = {steps[0]: YELLOW, ref_steps: BLUE, steps[-1]: ORANGE}
+    for j, m in enumerate(mets):
+        mu = ref.pivot_table(index="t", columns="seed", values=m).mean(axis=1)
+        for st in (steps[0], ref_steps, steps[-1]):
+            d = ref if st == ref_steps else ao[np.isclose(ao.T_name, 2) & ao.base_tags.str.endswith(f"_dt{st}")]
+            if d.empty:
+                continue
+            band(ax[0, j], d, m, cols[st], f"τ$_B$/{st}")
+            piv = d.pivot_table(index="t", columns="seed", values=m)
+            dm = piv.sub(np.interp(piv.index, mu.index, mu.values), axis=0)
+            ax[1, j].plot(dm.index, dm.mean(axis=1), c=cols[st], lw=1.8)
+            if piv.shape[1] > 1:
+                ax[1, j].fill_between(dm.index, dm.min(axis=1), dm.max(axis=1), color=cols[st], alpha=0.15, lw=0)
+        ax[1, j].axhline(0, c="#999", lw=0.8)
+        ax[0, j].set_title(LAB[m], loc="left")
+        ax[1, j].set_xlabel("t (τ$_B$)")
+    ax[1, 0].set_ylabel(f"difference to the\nτ$_B$/{ref_steps} mean")
+    ax[0, 0].legend(fontsize=8)
+    fig.suptitle(f"6b  AO time-step check with all 144 particles (AO q = {q:g}, φ$_p$ = 0.633, d$_n$ = {dn:g} nm; "
+                 "band = min–max over 3 seeds). Bottom: difference to the τ$_B$/32000 mean", x=0.01, ha="left", fontsize=11)
+    return fig
+
 def fig_vs_comsol(df, comsol_root, cases=((0, 2000), (0, 4000), (5, 2000), (5, 4000))):
     plt = _style()
     fig, ax = plt.subplots(2, len(cases), figsize=(15, 6), constrained_layout=True, sharex=True, squeeze=False)
@@ -492,6 +527,7 @@ FIG_FUNCS = {
     "0_seeds": lambda df, pairs, bd, co: fig_seeds(df, bd, co),
     "1_timestep_convergence": lambda df, pairs, bd, co: fig_timestep(df),
     "2_python_vs_comsol": lambda df, pairs, bd, co: fig_vs_comsol(df, co),
+    "6b_ao_timestep_full_system": lambda df, pairs, bd, co: fig_ao_timestep(df),
     "3_AO_vs_LJ": lambda df, pairs, bd, co: fig_ao_vs_lj(df),
     "3b_AO_vs_LJ_pair_distances": lambda df, pairs, bd, co: fig_pair_distances(df, pairs),
     "4_state_map_1_and_10_tauB": lambda df, pairs, bd, co: fig_state_map(df),

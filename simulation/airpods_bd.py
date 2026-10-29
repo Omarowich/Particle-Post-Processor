@@ -225,6 +225,8 @@ def plan(name):
                 L.append(("ARF", 3, dn, T, None, s, N))
         L += [("ARF", 3, 2750, 2, AO_Q01, s, AO_STEPS[0.1]) for s in S]   # q = 0.1 is costly: 2 tau_B
         return L
+    if name == "ao_dt":          # full 144-particle AO time-step check (reference: the tau_B/32000 runs of plan "ao")
+        return [("ARF", 3, 4000, 2, AO_Q02, s, st) for st in (16000, 64000) for s in S]
     raise ValueError(f"unknown plan {name}")
 
 
@@ -269,7 +271,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--steps", type=int, default=4000,
                     help="time steps per tau_B (multiple of 100); use 4000+ for AO q=0.2, 5000+ for q=0.1")
-    ap.add_argument("--plan", choices=["validation", "revision", "ao"], help="run a whole list")
+    ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt"], help="run a whole list")
     ap.add_argument("--out", default="BD runs v2", help="output root; runs go to <out>/<ARF|NAF>/<name>/")
     ap.add_argument("--compare", help="folder with the COMSOL runs (raw csv data) to compare against")
     import sys
