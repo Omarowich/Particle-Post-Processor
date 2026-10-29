@@ -572,7 +572,8 @@ def main():
     for key in a.only or FIGURES:
         try:
             fig = make_figure(key, df, pairs, a.bd, a.comsol)
-            fig.savefig(os.path.join(a.out, key + ".png"), dpi=150 if key.startswith(("5b", "8")) else a.dpi)
+            fig.savefig(os.path.join(a.out, key + ".png"), dpi=150 if key.startswith(("5b", "8")) else a.dpi,
+                        bbox_inches="tight", pad_inches=0.1)
             plt.close(fig)
             print("  ✓", key)
         except Exception as ex:

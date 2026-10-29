@@ -4097,13 +4097,13 @@ elif plot_mode == "Paper figures":
             st.pyplot(fig)
             buf = io.BytesIO()
             dpi = 150 if key.startswith(("5b", "8")) else pf_dpi
-            fig.savefig(buf, format="png", dpi=dpi)
+            fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.1)
             st.download_button(f"Download {key}.png", buf.getvalue(), file_name=f"{key}.png",
                                mime="image/png", key=f"pf_dl_{key}")
             if pf_save:
                 try:
                     os.makedirs(pf_save, exist_ok=True)
-                    fig.savefig(os.path.join(pf_save, key + ".png"), dpi=dpi)
+                    fig.savefig(os.path.join(pf_save, key + ".png"), dpi=dpi, bbox_inches="tight", pad_inches=0.1)
                 except OSError as ex:
                     st.warning(f"could not save: {ex}")
             plt.close(fig)
