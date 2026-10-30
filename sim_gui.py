@@ -22,7 +22,7 @@ POTENTIALS = {"LJ": "Lennard-Jones (ε = A k_BT, σ = 2a)", "AO": "Asakura–Oos
 CORES = {"coulomb": "Coulomb, Z = 100, below 2a (= COMSOL)", "phs": "pseudo-hard sphere (Mie 50/49)",
          "wca": "soft WCA (old)", "none": "no core"}
 STARTS = {"grid": "square grid (like COMSOL)", "random": "random, minimum distance",
-          "aaf": "band of the COMSOL AAF runs (regime III)", "run": "a frame of an existing run",
+          "aaf": "band of the COMSOL Regime III runs", "run": "a frame of an existing run",
           "file": "CSV file with x, y columns"}
 
 

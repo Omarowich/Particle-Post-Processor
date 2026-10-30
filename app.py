@@ -931,7 +931,7 @@ st.title("Acoustic Particles Analyzer")
 # ========== STEP 0: Source root ==========
 st.sidebar.header("0. Source root")
 source_root = st.sidebar.text_input(
-    "Base root folder (where ARF / ASF / NAF live):",
+    "Base root folder (Data folder with the regime folders NAF / ARF / AAF / ASF = Regime I–IV):",
     value=HIWI_ROOT,
     key="source_root",
 )
@@ -3913,7 +3913,7 @@ elif plot_mode == "Regime state model":
 
     st.sidebar.header("2. Data folder")
     rsm_source = st.sidebar.radio(
-        "Folder with AAF / ARF / ASF / NAF:",
+        "Folder with the regime folders (NAF / ARF / AAF / ASF = Regime I–IV):",
         ["Source root", "Custom path"],
         key="rsm_folder_source",
     )
@@ -3928,7 +3928,7 @@ elif plot_mode == "Regime state model":
         "3. Regimes to include:",
         rsm_found,
         default=rsm_found,
-        format_func=lambda r: f"{r} ({rsm.REGIME_NAMES[r]})",
+        format_func=lambda r: rsm.regime_label(r, long=True),
         key=f"rsm_regimes__{rsm_root}",   # per folder, so a newly typed folder starts with all regimes
     )
 
@@ -3957,7 +3957,7 @@ elif plot_mode == "Regime state model":
     )
 
     if not rsm_root or not os.path.isdir(rsm_root):
-        st.info("Choose a folder that contains the AAF / ARF / ASF / NAF subfolders.")
+        st.info("Choose a folder that contains the regime folders NAF / ARF / AAF / ASF (Regime I–IV).")
         st.stop()
     if not rsm_regimes:
         st.warning("No regime folders selected (or none found in this folder).")
@@ -4039,7 +4039,7 @@ elif plot_mode == "Regime state model":
     with tab_trans:
         tr_regs = [r for r in ("AAF", "NAF", "ASF") if r in rsm_regimes]
         if not tr_regs:
-            st.info("Select AAF, NAF or ASF to see how the state changes with A.")
+            st.info("Select Regime I, III or IV to see how the state changes with A.")
         else:
             labels = {"psi6": "ψ6 (local hexagonal order)", "z_mean": "Mean coordination number",
                       "Smax": "Largest cluster fraction", "bond_persist": "Bond persistence",
@@ -4100,11 +4100,11 @@ elif plot_mode == "Paper figures":
         return tuple(out)
 
     st.sidebar.header("2. Data folders")
-    pf_bd = st.sidebar.text_input("Python BD runs (folder with ARF / NAF / AAF):",
+    pf_bd = st.sidebar.text_input("Python BD runs (folder with the regime folders):",
                                   value=_default_runs_root(source_root),
                                   key="pf_bd")
     pf_bd = clean_path(pf_bd)
-    pf_co = st.sidebar.text_input("COMSOL runs (folder with ARF, for figures 0 and 2):",
+    pf_co = st.sidebar.text_input("COMSOL runs (folder with the regime folders, for figures 0, 2 and 10):",
                                   value=source_root or "", key="pf_co")
     pf_co = clean_path(pf_co)
     st.sidebar.header("3. Figures")
@@ -4121,12 +4121,12 @@ elif plot_mode == "Paper figures":
     pf_found = [r for r in ("ARF", "NAF", "AAF") if pf_bd and os.path.isdir(os.path.join(pf_bd, r))]
     if not pf_found:
         if not pf_bd:
-            st.info("Set the Python BD runs folder (the one that contains ARF / NAF / AAF).")
+            st.info("Set the Python BD runs folder (the one that contains the regime folders).")
         elif not os.path.isdir(pf_bd):
             st.error(f"This folder does not exist (as the app sees it): `{pf_bd}`")
         else:
             subs = sorted(d for d in os.listdir(pf_bd) if os.path.isdir(os.path.join(pf_bd, d)))[:20]
-            st.error(f"`{pf_bd}` exists but has no ARF / NAF / AAF folder inside. Subfolders found: "
+            st.error(f"`{pf_bd}` exists but has no regime folder (NAF / ARF / AAF / ASF) inside. Subfolders found: "
                      + (", ".join(subs) if subs else "none"))
         st.stop()
     df_pf, pairs_pf = _pf_series(pf_bd, _folder_stamp(pf_bd))
@@ -4249,7 +4249,7 @@ elif plot_mode == "Run simulation":
 
     st.header("Run simulation")
     st.caption("Python Brownian dynamics (`simulation/airpods_bd.py`), the same code as the BD runs. "
-               "Runs go into `<output>/<ARF|NAF|AAF>/<run name>/` as datax.csv / datay.csv, so every other page "
+               "Runs go into `<output>/<regime folder>/<run name>/` (NAF = Regime I, ARF = II, AAF = III) as datax.csv / datay.csv, so every other page "
                "reads them. Each run folder also gets `sim_config.json` with all settings, to repeat it exactly.")
 
     with st.sidebar:
@@ -4307,7 +4307,7 @@ elif plot_mode == "Run simulation":
                 st.number_input("Charge number Z", 1, 1000, step=10, key="sim_Z")
         with c2:
             st.subheader("Acoustic field")
-            field = st.checkbox("Field on (ARF)", key="sim_field")
+            field = st.checkbox("Acoustic radiation force on", key="sim_field")
             if field:
                 st.number_input("d_n (nm)", 1.0, 20000.0, step=250.0, key="sim_dn",
                                 help="Inward wall displacement; the force scales with d_n².")
@@ -4333,7 +4333,7 @@ elif plot_mode == "Run simulation":
                 start = {"kind": "file", "path": clean_path(SS.sim_file)}
             else:
                 start = {"kind": "aaf"}
-                st.caption("Frame 0 of your COMSOL AAF runs (`simulation/aaf_start.csv`); use with the field off.")
+                st.caption("Frame 0 of your COMSOL Regime III runs (`simulation/aaf_start.csv`); use with the field off.")
         with c3:
             st.subheader("Time and seeds")
             st.number_input("Run length (τ_B)", 0.01, 1000.0, step=1.0, key="sim_T")
@@ -4347,8 +4347,9 @@ elif plot_mode == "Run simulation":
             st.text_input("Seeds (comma separated, one run each)", key="sim_seeds")
             st.number_input("Runs at the same time", 1, max(1, os.cpu_count() or 1), key="sim_workers",
                             help=f"This computer has {os.cpu_count()} CPU cores.")
-            st.selectbox("Regime folder", ["auto", "ARF", "NAF", "AAF"], key="sim_regime",
-                         help="auto: ARF if the field is on, AAF if starting from a band or a run, else NAF.")
+            st.selectbox("Regime", ["auto", "NAF", "ARF", "AAF"], key="sim_regime",
+                         format_func=lambda r: "auto" if r == "auto" else rsm.regime_label(r, long=True),
+                         help="auto: Regime II (ARF) if the field is on, Regime III (AAF) if starting from a band or a run, else Regime I (NAF).")
             st.text_input("Extra name tag (letters, then digits)", key="sim_tag")
             with st.expander("Physics constants (change with care)"):
                 st.number_input("Box half-width (µm)", 5.0, 500.0, step=5.0, key="sim_box")

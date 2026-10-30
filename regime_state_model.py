@@ -34,13 +34,24 @@ from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
 TAUB_S = 13.514          # Brownian time in seconds (same constant as the rest of the app)
-REGIMES = ("AAF", "ARF", "ASF", "NAF")
+REGIMES = ("NAF", "ARF", "AAF", "ASF")   # Regime I-IV
+# Folder names stay NAF / ARF / AAF / ASF (they are the data keys); everything shown to the user
+# uses the paper's terminology: Regime I-IV.
 REGIME_NAMES = {
-    "NAF": "no acoustic force",
-    "AAF": "after acoustic force",
+    "NAF": "Brownian aggregation, no acoustic force",
     "ARF": "acoustic radiation force",
+    "AAF": "post-acoustic relaxation",
     "ASF": "acoustic streaming flow",
 }
+REGIME_NUMBER = {"NAF": "I", "ARF": "II", "AAF": "III", "ASF": "IV"}
+
+
+def regime_label(regime: str, long: bool = False) -> str:
+    """'Regime II' (long: 'Regime II (acoustic radiation force)') for a folder name like ARF."""
+    r = str(regime).upper()
+    if r not in REGIME_NUMBER:
+        return str(regime)
+    return f"Regime {REGIME_NUMBER[r]}" + (f" ({REGIME_NAMES[r]})" if long else "")
 _NAME_RE = re.compile(r"^([\d.]+)Tkb_([\d.]+)TauB(?:_(\d+(?:\.\d+)?)(nm|nn|F))?((?:_[A-Za-z]+[\d.]*)*)$",
                       re.IGNORECASE)   # optional tags: _core, _dt50, _seed2, _AO_q0.2_phi0.664, ...
 
@@ -262,7 +273,7 @@ def fit_boundary(df, regime="ARF", param="dn", common_time_tauB=1.0) -> Boundary
     d = boundary_data(df, regime, param, common_time_tauB)
     y = (d.state != "fluid").astype(int).values
     if len(d) < 6 or y.min() == y.max():
-        raise ValueError(f"Need runs of both outcomes in {regime} at t = {common_time_tauB} τB "
+        raise ValueError(f"Need runs of both outcomes in {regime_label(regime)} at t = {common_time_tauB} τB "
                          f"(found {len(d)} runs, {int(y.sum())} non-fluid).")
     X = np.c_[np.log10(d[param].values), d.A.values]
     mu, sd = X.mean(0), X.std(0)
@@ -337,7 +348,7 @@ def data_checks(root: str, regimes=REGIMES) -> pd.DataFrame:
     for (reg, _), lst in first.items():
         same = [a for (a, da), (b, db) in zip(lst, lst[1:]) if np.allclose(da, db, atol=1e-6)]
         if len(same) >= 2:
-            rows.append(dict(run=f"{reg} ({len(lst)} runs)",
+            rows.append(dict(run=f"{regime_label(reg)} ({len(lst)} runs)",
                              issue="first step identical across runs: same random seed, no independent repeats"))
     return pd.DataFrame(rows, columns=["run", "issue"])
 
@@ -384,7 +395,7 @@ def fig_state_map(model: BoundaryModel, plan: pd.DataFrame | None = None, figsiz
         s = d[d.state == c]
         ax[0].scatter(pos(s[prm]), s.A, c=STATE_COLORS.get(c, "#888"), marker=STATE_MARKERS.get(c, "o"),
                       s=80, edgecolors="white", linewidths=1.2, label=c, zorder=3)
-    ax[0].set_title(f"State after {d.t_eval_tauB.round(1).iloc[0]:g} τ$_B$ ({model.regime})",
+    ax[0].set_title(f"State after {d.t_eval_tauB.round(1).iloc[0]:g} τ$_B$ ({regime_label(model.regime)})",
                     loc="left", fontsize=11, pad=30)
     cs = ax[1].contourf(GU, GA, H, levels=np.linspace(0, 1, 11), cmap=ListedColormap(_BLUE_RAMP))
     ax[1].scatter(pos(d[prm]), d.A, c="#555", s=16, zorder=3, label="existing run")
@@ -432,7 +443,7 @@ def fig_transitions(df: pd.DataFrame, metric="psi6", threshold=None, regimes=("A
             if len(s) < 2 or k >= len(pal):
                 continue
             ax.plot(s.A, s[metric], "-o", c=pal[k], lw=2, ms=6, mec="white",
-                    label=f"{reg}, after {T:g} τ$_B$")
+                    label=f"{regime_label(reg)}, after {T:g} τ$_B$")
             amax = max(amax, s.A.max())
             k += 1
     if threshold is not None:

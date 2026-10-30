@@ -57,9 +57,9 @@ class RunModel:
         if regime != "ARF":
             m.dn = 0.0
             if regime == "ASF":
-                m.notes.append("acoustic streaming is not modelled here: no field force shown")
+                m.notes.append("Regime IV: acoustic streaming is not modelled here, no field force shown")
             if regime == "AAF":
-                m.notes.append("AAF: field assumed off at this time")
+                m.notes.append("Regime III: field off")
         if not p:
             m.notes.append("could not read parameters from the folder name")
         return m

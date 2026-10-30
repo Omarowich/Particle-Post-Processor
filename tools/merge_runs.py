@@ -57,12 +57,12 @@ README = """# AIRPODS run data (COMSOL + Python)
 
 All runs, one folder per regime:
 
-| Folder | Regime |
+| Folder | Regime (paper) |
 |---|---|
-| ARF | acoustic radiation force on |
-| NAF | no acoustic force |
-| AAF | after the acoustic force (regime III: field switched off, start from an assembled band) |
-| ASF | acoustic streaming flow |
+| NAF | Regime I: Brownian aggregation, no acoustic force |
+| ARF | Regime II: aggregation under the acoustic radiation force |
+| AAF | Regime III: post-acoustic relaxation (field switched off, start from an assembled band) |
+| ASF | Regime IV: destabilization by acoustic streaming flow |
 
 ## Run names
 

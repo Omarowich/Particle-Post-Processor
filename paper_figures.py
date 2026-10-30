@@ -498,47 +498,15 @@ def fig_aaf_time(df, comsol_root=None, potential="LJ"):
     for k, A in enumerate(As):
         col = cmap(k / max(len(As) - 1, 1))
         for j, m in enumerate(AAF_METRICS):
-            band(ax[j], d[np.isclose(d.A, A)], m, col, f"A = {A:g}" if potential == "LJ" else
-                 f"B$_2^*$ of LJ A = {A:g}  (φ$_p$ = {d[np.isclose(d.A, A)].phi_p.iloc[0]:g})")
+            band(ax[j], d[np.isclose(d.A, A)], m, col, f"A = {A:g}" if potential == "LJ" else f"matched to A = {A:g}")
     for j, m in enumerate(AAF_METRICS):
         ax[j].set_title(LAB[m], loc="left")
         ax[j].set_xlabel("t after field off (τ$_B$)")
     ax[-1].legend(fontsize=7.5, loc="best")
     what = "LJ" if potential == "LJ" else "AO (q = 0.2, φ$_p$ matched by B$_2$*)"
-    fig.suptitle(f"III  After the acoustic field is switched off: {what}, same start band, 3 seeds per line",
+    fig.suptitle(f"Regime III  After the acoustic field is switched off: {what}, same start band, 3 seeds per line",
                  x=0.01, ha="left", fontsize=11)
     return fig
-
-
-_B2_TABLE = None
-
-
-def _b2_top_axis(ax):
-    """Second x axis on top: B2* of LJ at each A (= the B2* the AO runs are matched to)."""
-    global _B2_TABLE
-    try:
-        if _B2_TABLE is None:
-            import sys
-            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "simulation"))
-            import airpods_bd as bd
-            trap = getattr(np, "trapezoid", None) or np.trapz
-            r = np.linspace(1.5, 10, 100001)
-            As, Bs = np.linspace(0, 6, 25), []
-            for A in As:
-                fr = bd.radial_force(r, A, None)
-                U = np.zeros_like(r)
-                U[:-1] = np.cumsum((0.5 * (fr[1:] + fr[:-1]) * np.diff(r))[::-1])[::-1]
-                Bs.append((trap((1 - np.exp(-U)) * r, r) + r[0] ** 2 / 2) / (bd.SIGMA ** 2 / 2))
-            _B2_TABLE = (As, np.array(Bs))
-        As, Bs = _B2_TABLE
-        top = ax.secondary_xaxis("top")
-        ticks = [A for A in (0, 1, 2, 3, 4, 5) if ax.get_xlim()[0] <= A <= ax.get_xlim()[1]]
-        top.set_xticks(ticks)
-        top.set_xticklabels([f"{np.interp(A, As, Bs):.0f}" if abs(np.interp(A, As, Bs)) >= 10
-                             else f"{np.interp(A, As, Bs):.1f}" for A in ticks], fontsize=8, color="#777")
-        top.set_xlabel("B$_2^*$", fontsize=8, color="#777", labelpad=1)
-    except Exception:
-        pass
 
 
 def fig_aaf_end(df, comsol_root=None, t_from=18.0):
@@ -549,7 +517,7 @@ def fig_aaf_end(df, comsol_root=None, t_from=18.0):
     idx = {"z": 0, "psi6": 1, "Smax": 2, "y_spread": 3, "nn1": 5, "hex": 6}
     fig, ax = plt.subplots(1, len(AAF_METRICS), figsize=(16, 3.9), constrained_layout=True)
     for j, m in enumerate(AAF_METRICS):
-        for d, col, lab, mk in ((lj, BLUE, "Python LJ", "o"), (ao, ORANGE, "Python AO, same B$_2^*$ as LJ at that A", "s")):
+        for d, col, lab, mk in ((lj, BLUE, "Python LJ", "o"), (ao, ORANGE, "Python AO (matched B$_2$*)", "s")):
             if d.empty:
                 continue
             e = d[d.t > t_from].groupby(["A", "seed"])[m].mean().reset_index()
@@ -566,10 +534,9 @@ def fig_aaf_end(df, comsol_root=None, t_from=18.0):
             ax[j].axhline(t0, ls="--", c="#aaa", lw=1)
             ax[j].text(5.0, t0, " start", va="bottom", ha="right", fontsize=8, color="#888")
         ax[j].set_title(LAB[m], loc="left")
-        ax[j].set_xlabel("LJ depth A (k$_B$T); AO: same B$_2^*$")
-        _b2_top_axis(ax[j])
+        ax[j].set_xlabel("attraction A (k$_B$T; AO matched by B$_2$*)")
     ax[0].legend(fontsize=8)
-    fig.suptitle(f"III  End state after the field is switched off (mean over t > {t_from:g} τ$_B$; band = min–max over 3 seeds; "
+    fig.suptitle(f"Regime III  End state after the field is switched off (mean over t > {t_from:g} τ$_B$; band = min–max over 3 seeds; "
                  "dashed = start band)", x=0.01, ha="left", fontsize=11)
     return fig
 
@@ -676,7 +643,7 @@ def fig_state_map(df, times=(1.0, 10.0), dns=(2000, 2250, 2750, 3000, 4000, 5000
 
 def _confinement_cases(df, palette=(None, None, None)):
     """No field / field without attraction / field + the strongest attraction (AO), all at d_n = 4000 nm."""
-    return [("no field (NAF), no attraction", sel(df, regime="NAF", A=0, T=10), palette[0]),
+    return [("Regime I: no field, no attraction", sel(df, regime="NAF", A=0, T=10), palette[0]),
             ("field (4000 nm), no attraction", sel(df, A=0, dn=4000, T=10, tags="BD"), palette[1]),
             ("field (4000 nm) + AO attraction", sel(df, "AO", dn=4000, T=10, q=0.2), palette[2])]
 
@@ -721,7 +688,7 @@ def fig_hexfrac(df, dns=(2000, 2750, 4000), A=3):
     return fig
 
 
-SNAPSHOT_RUNS = (("NAF control, A = 0", "NAF", "0Tkb_10TauB_core_BD_seed1"),
+SNAPSHOT_RUNS = (("Regime I (no field), A = 0", "NAF", "0Tkb_10TauB_core_BD_seed1"),
                  ("band only, 5000 nm, A = 0", "ARF", "0Tkb_10TauB_5000nm_BD_seed1"),
                  ("LJ, 4000 nm, A = 3", "ARF", "3Tkb_10TauB_4000nm_BD_seed1"),
                  ("AO, 4000 nm, matched to A = 3", "ARF", "3Tkb_10TauB_4000nm_BD_AO_q0.2_phi0.633_dt32000_seed1"))
@@ -770,7 +737,7 @@ def make_figure(key, df, pairs, bd_root, comsol_root=None):
         lj, ao = _aaf_groups(df)
         need = {"10a_aaf_time_LJ": lj, "10b_aaf_time_AO": ao, "10c_aaf_end_state": pd.concat([lj, ao])}[key]
         if need.empty:
-            raise FileNotFoundError("no regime III runs (AAF folder) for this figure in the BD runs folder yet")
+            raise FileNotFoundError("no Regime III runs (AAF folder) for this figure in the BD runs folder yet")
     if key.startswith("6b") and not ((df.potential == "AO") & np.isclose(df.T_name, 2) & np.isclose(df.dn, 4000)).any():
         raise FileNotFoundError("needs the AO time-step runs (airpods_bd.py --plan ao_dt)")
     return FIG_FUNCS[key](df, pairs, bd_root, comsol_root)
@@ -786,8 +753,8 @@ def summary_table(df, t_from=9.5):
 # --------------------------------------------------------------------------- CLI
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bd", required=True, help='folder with ARF/ and NAF/ BD runs ("BD runs v2")')
-    ap.add_argument("--comsol", default=None, help="COMSOL csv folder with ARF/ (figures 0 and 2)")
+    ap.add_argument("--bd", required=True, help="Data folder with the regime folders (NAF, ARF, AAF)")
+    ap.add_argument("--comsol", default=None, help="COMSOL csv folder with the regime folders (figures 0, 2 and 10)")
     ap.add_argument("--out", default="paper_figures_out")
     ap.add_argument("--only", nargs="*", default=None, help="figure keys, default all")
     ap.add_argument("--dpi", type=int, default=170)
