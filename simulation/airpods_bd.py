@@ -58,10 +58,44 @@ ASF_U_PER_1000F = 0.36  # um/s
 ASF_W, ASF_H = 25.0, 50.0
 
 
+# The COMSOL flow itself (preferred): stationary Laminar Flow of 50x50_10Tkb_20TauB_ASFx10.mph,
+# body force F0 = 1e5 N/m^3, exported on a 201 x 201 grid. Stokes flow is linear in the body force,
+# so the field is scaled by F / 1e5. Falls back to the fit above if the file is missing.
+ASF_FIELD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "asf_flow_F100000.csv")
+ASF_FIELD_F = 1e5
+ASF_SOURCE = "comsol"        # "comsol" (exported field) or "fit" (two-vortex formula)
+_ASF_GRID = None
+
+
+def _asf_grid():
+    global _ASF_GRID
+    if _ASF_GRID is None:
+        a = np.loadtxt(ASF_FIELD_FILE, delimiter=",", skiprows=1)
+        xs, ys = np.unique(a[:, 0]), np.unique(a[:, 1])
+        order = np.lexsort((a[:, 0], a[:, 1]))          # rows: y, columns: x
+        U = a[order, 2].reshape(len(ys), len(xs))
+        V = a[order, 3].reshape(len(ys), len(xs))
+        _ASF_GRID = (xs, ys, U, V)
+    return _ASF_GRID
+
+
+def _bilinear(xs, ys, G, x, y):
+    fx = np.clip((x - xs[0]) / (xs[1] - xs[0]), 0, len(xs) - 1.000001)
+    fy = np.clip((y - ys[0]) / (ys[1] - ys[0]), 0, len(ys) - 1.000001)
+    i, j = fx.astype(int), fy.astype(int)
+    tx, ty = fx - i, fy - j
+    return ((1 - tx) * (1 - ty) * G[j, i] + tx * (1 - ty) * G[j, i + 1]
+            + (1 - tx) * ty * G[j + 1, i] + tx * ty * G[j + 1, i + 1])
+
+
 def asf_flow(P, F):
     """Streaming velocity (um/s) at positions P for streaming parameter F (0 = no flow)."""
     if not F:
         return np.zeros_like(P)
+    if ASF_SOURCE == "comsol" and os.path.isfile(ASF_FIELD_FILE):
+        xs, ys, U, V = _asf_grid()
+        s = F / ASF_FIELD_F
+        return np.c_[s * _bilinear(xs, ys, U, P[:, 0], P[:, 1]), s * _bilinear(xs, ys, V, P[:, 0], P[:, 1])]
     U = ASF_U_PER_1000F * F / 1000.0
     x, y = P[:, 0], P[:, 1]
     return np.c_[U * np.sin(np.pi * x / ASF_W) * np.sin(np.pi * y / ASF_H),

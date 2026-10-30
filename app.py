@@ -4315,13 +4315,14 @@ elif plot_mode == "Run simulation":
                     st.number_input("F₀ at 4000 nm (k_BT/µm)", 0.0, 1000.0, step=0.5, key="sim_F0")
                     st.number_input("k (1/µm)", 0.0, 2.0, step=0.001, format="%.3f", key="sim_k")
             stream = st.checkbox("Acoustic streaming flow (Regime IV)", key="sim_stream",
-                                 help="Two counter-rotating vortices fitted to your COMSOL ASF runs "
-                                      "(u = U sin(πx/25) sin(πy/50), v = 2U cos(πx/25) cos(πy/50)).")
+                                 help="The streaming flow of your COMSOL Regime IV model (stationary Laminar Flow with the body force F0), "
+                                      "exported on a 201 × 201 grid; F is the body force density in N/m³.")
             if stream:
-                st.number_input("Streaming parameter F (as in COMSOL)", 0.0, 1e6, step=1000.0, key="sim_F")
-                st.caption(f"U = {sg.bd.ASF_U_PER_1000F * SS.sim_F / 1000:.2f} µm/s, fastest "
-                           f"{2 * sg.bd.ASF_U_PER_1000F * SS.sim_F / 1000:.2f} µm/s along the centre line. "
-                           "The band breaks within ~1 τ_B from F ≈ 3000 (LJ A = 3).")
+                st.number_input("Body force F0 (N/m³, as in COMSOL)", 0.0, 1e6, step=1000.0, key="sim_F")
+                st.caption(("Flow exported from your COMSOL model (Laminar Flow, F0 = 1e5 N/m³), scaled by F / 1e5: "
+                            f"fastest {78.8 * SS.sim_F / 1e5:.2f} µm/s. ") if sg.bd.ASF_SOURCE == "comsol" and
+                           os.path.isfile(sg.bd.ASF_FIELD_FILE) else
+                           f"Fitted two-vortex flow: fastest {2 * sg.bd.ASF_U_PER_1000F * SS.sim_F / 1000:.2f} µm/s. ")
             st.subheader("Start")
             sk = st.selectbox("Start positions", list(sg.STARTS), format_func=sg.STARTS.get, key="sim_start")
             if sk == "grid":
