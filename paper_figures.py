@@ -47,6 +47,7 @@ import regime_state_model as rsm
 import run_viewer as rv
 
 TAUB = 13.514           # s
+D_UM2S = 0.0740         # um^2/s, Stokes-Einstein diffusion coefficient of the particles
 RC = 2.9                # bond cutoff (µm)
 HEX_EPS, HEX_THR = 3.043, 0.65   # analyser "Detect crystals" rule
 EVERY = 10              # use every 10th saved frame (= 0.1 tau_B)
@@ -72,6 +73,7 @@ FIGURES = {
     "11a_asf_breakup": "Regime IV break-up, LJ vs AO",
     "11b_asf_cores": "Regime IV re-clustering in the vortex cores",
     "11c_asf_snapshots": "Regime IV end snapshots",
+    "11d_asf_breakup_vs_F": "Regime IV break-up time vs flow strength",
     "12_asf_flow": "Regime IV streaming flow (COMSOL export)",
     "13a_naf_time": "Regime I cluster formation, LJ vs AO",
     "13b_naf_bonds_snapshots": "Regime I bond lifetime and end state",
@@ -729,6 +731,7 @@ FIG_FUNCS = {
     "11a_asf_breakup": lambda df, pairs, bd, co: fig_asf_breakup(df),
     "11b_asf_cores": lambda df, pairs, bd, co: fig_asf_cores(df, bd),
     "11c_asf_snapshots": lambda df, pairs, bd, co: fig_asf_snapshots(df, bd),
+    "11d_asf_breakup_vs_F": lambda df, pairs, bd, co: fig_asf_breakup_vs_F(df),
     "12_asf_flow": lambda df, pairs, bd, co: fig_asf_flow(),
     "13a_naf_time": lambda df, pairs, bd, co: fig_naf_time(df),
     "13b_naf_bonds_snapshots": lambda df, pairs, bd, co: fig_naf_bonds(df, bd),
@@ -829,6 +832,56 @@ def fig_naf_bonds(df, bd_root, A=3.0, max_lag_tauB=2.0):
 
 
 # --------------------------------------------------------------------------- Regime IV (ASF)
+ASF_VMAX_PER_F = 78.8e-5   # fastest flow speed (um/s) per N/m^3 of body force, from the COMSOL export
+
+
+def fig_asf_breakup_vs_F(df):
+    """Regime IV: break-up time against body force F0 (and flow Peclet number), LJ vs AO, plus the order kept."""
+    plt = _style()
+    from matplotlib.lines import Line2D
+    a = df[df.regime == "ASF"]
+    As = sorted(a.A.unique())
+    fig, ax = plt.subplots(1, 2, figsize=(12.5, 4.6), constrained_layout=True)
+    mk = {A: m for A, m in zip(As, ("o", "s", "D", "^"))}
+    for pot, col in (("LJ", BLUE), ("AO", ORANGE)):
+        for A in As:
+            d = a[np.isclose(a.A, A) & (a.potential == pot)]
+            Fs, med, hx = sorted(d.F.unique()), [], []
+            for F in Fs:
+                g = d[np.isclose(d.F, F)]
+                T = g.t.max()
+                tb = np.array(list(breakup_time(g).values()), float)
+                for v in tb:
+                    if np.isfinite(v):
+                        ax[0].scatter(F * (0.93 if pot == "LJ" else 1.07), v, marker=mk[A], s=22, c=col, alpha=0.45, lw=0)
+                    else:
+                        ax[0].scatter(F * (0.93 if pot == "LJ" else 1.07), T, marker=mk[A], s=34, facecolors="white",
+                                      edgecolors=col, lw=1.2, zorder=3)
+                med.append(np.median(np.where(np.isfinite(tb), tb, np.inf)))
+                hx.append(g[g.t > T - 0.5].hex.mean())
+            med = np.array(med); ok = np.isfinite(med)
+            ls = "-" if A == As[-1] else "--"
+            ax[0].plot(np.array(Fs)[ok], med[ok], ls, c=col, lw=1.6, marker=mk[A], ms=6)
+            ax[1].plot(Fs, hx, ls, c=col, lw=1.6, marker=mk[A], ms=6)
+    for x in ax:
+        x.set_xscale("log"); x.set_xlabel("streaming body force F$_0$ (N/m³)")
+        sec = x.secondary_xaxis("top", functions=(lambda F: F * ASF_VMAX_PER_F / D_UM2S, lambda P: P * D_UM2S / ASF_VMAX_PER_F))
+        sec.set_xlabel("flow Péclet number Pe = v$_{max}$ a / D")
+    from matplotlib.ticker import FuncFormatter
+    ax[0].set_yscale("log"); ax[0].set_ylabel("break-up time (τ$_B$)")
+    ax[0].set_yticks([0.2, 0.5, 1, 2, 5]); ax[0].yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax[0].yaxis.set_minor_formatter(FuncFormatter(lambda v, _: ""))
+    ax[0].set_title("time until the largest cluster < 50 % (line = median over 3 seeds)", loc="left")
+    ax[1].set_ylabel(LAB["hex"]); ax[1].set_ylim(0, 1)
+    ax[1].set_title("order kept at the end (mean over the last 0.5 τ$_B$)", loc="left")
+    h = [Line2D([], [], c=BLUE, lw=2, label="LJ"), Line2D([], [], c=ORANGE, lw=2, label="AO, same B$_2$*")]
+    h += [Line2D([], [], c="#555", ls="-" if A == As[-1] else "--", marker=mk[A], label=f"A = {A:g}") for A in As]
+    h += [Line2D([], [], ls="", marker="o", mfc="white", mec="#555", label="no break-up within the run")]
+    ax[0].legend(handles=h, fontsize=8, loc="lower left")
+    fig.suptitle("Regime IV  Break-up against flow strength, LJ vs AO at the same B$_2$*", x=0.01, ha="left", fontsize=11)
+    return fig
+
+
 def fig_asf_flow(flow_csv=None, start_csv=None):
     """The streaming flow exported from COMSOL (stationary laminar flow, F0 = 1e5 N/m^3) with the start band."""
     plt = _style()
