@@ -299,6 +299,10 @@ def plan(name):
                 L.append(("ARF", 3, dn, T, None, s, N))
         L += [("ARF", 3, 2750, 2, AO_Q01, s, AO_STEPS[0.1]) for s in S]   # q = 0.1 is costly: 2 tau_B
         return L
+    if name == "naf_ref":   # Regime I (no field) partners for the state map: same A values as the ARF columns
+        L = [("NAF", A, 0, T, None, s, N) for A in (1, 2.5, 3, 5) for s in S]
+        L += [("NAF", 3, 0, T, AO_Q02, s, AO_STEPS[0.2]) for s in S]
+        return L
     if name == "asf":   # Regime IV: AO vs LJ at the same B2*, streaming F, start from the COMSOL band
         # tuple field "dn" carries the streaming parameter F for ASF runs; same small step for LJ and AO
         return [("ASF", A, F, ASF_TAUB, ao, s, AO_STEPS[0.2])
@@ -377,7 +381,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--steps", type=int, default=4000,
                     help="time steps per tau_B (multiple of 100); use 4000+ for AO q=0.2, 5000+ for q=0.1")
-    ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt", "aaf", "aaf_lj", "aaf_ao", "aaf_ao_fine", "asf"], help="run a whole list")
+    ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt", "aaf", "aaf_lj", "aaf_ao", "aaf_ao_fine", "asf", "naf_ref"], help="run a whole list")
     ap.add_argument("--out", default=r"D:\Work\AIRPODS Paper 2627\Data",
                     help="output root (the merged Data folder); runs go to <out>/<ARF|NAF|AAF>/<name>/")
     ap.add_argument("--compare", help="folder with the COMSOL runs (raw csv data) to compare against")

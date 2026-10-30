@@ -601,14 +601,15 @@ def fig_pair_distances(df, pairs, dns=(2000, 2750, 4000), A=3):
     return fig
 
 
-def fig_state_map(df, times=(1.0, 10.0), dns=(2000, 2250, 2750, 3000, 4000, 5000)):
+def fig_state_map(df, times=(1.0, 10.0), dns=(0, 2000, 2250, 2750, 3000, 4000, 5000)):
     plt = _style()
     from matplotlib.lines import Line2D
     COL = {"fluid": BLUE, "disordered network": ORANGE, "ordered network": AQUA,
            "disordered clusters": YELLOW, "ordered clusters": VIOLET}
     MK = {"fluid": "o", "disordered network": "s", "ordered network": "D",
           "disordered clusters": "^", "ordered clusters": "v"}
-    arf = df[(df.regime == "ARF") & ~df.tags.str.contains("dt2000|dt8000")]
+    arf = df[(df.regime.isin(["ARF", "NAF"])) & ~df.tags.str.contains("dt2000|dt8000")].copy()
+    arf.loc[arf.regime == "NAF", "dn"] = 0.0          # Regime I = no field = d_n 0
     fig, ax = plt.subplots(1, len(times), figsize=(13, 4.6), constrained_layout=True, sharey=True, squeeze=False)
     ax = ax[0]
     pos = {d: i for i, d in enumerate(dns)}
@@ -625,7 +626,9 @@ def fig_state_map(df, times=(1.0, 10.0), dns=(2000, 2250, 2750, 3000, 4000, 5000
             a.scatter(xx, yy, marker=MK[r.state], s=70, c="white" if ao else COL[r.state], edgecolors=COL[r.state],
                       linewidths=1.8 if ao else 0.8, zorder=3)
         a.set_xticks(range(len(dns)))
-        a.set_xticklabels([f"{d:g}" for d in dns])
+        a.set_xticklabels([f"{d:g}" if d else "0\n(no field)" for d in dns])
+        if 0 in pos:
+            a.axvline(pos[0] + 0.5, color="#bbb", lw=0.8, ls=":")
         a.set_xlim(-0.6, len(dns) - 0.4)
         a.set_xlabel("inward displacement d$_n$ (nm)")
         a.set_title(f"t = {tt:g} τ$_B$", loc="left")
