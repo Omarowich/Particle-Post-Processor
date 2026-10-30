@@ -4218,7 +4218,7 @@ elif plot_mode == "Run simulation":
                  "sim_F0": float(DEF["arf_F0_ref"]), "sim_k": float(DEF["arf_k"]), "sim_start": "grid",
                  "sim_nside": 12, "sim_spacing": 4.0, "sim_nrand": 144, "sim_dmin": 2.2, "sim_runfolder": "",
                  "sim_runt": 1000.0, "sim_file": "", "sim_T": 1.0, "sim_steps_auto": True, "sim_steps": 4000,
-                 "sim_out": 100, "sim_seeds": "1, 2, 3", "sim_workers": max(1, min(3, (os.cpu_count() or 2) - 1)),
+                 "sim_out": 100, "sim_seeds": "1, 2, 3", "sim_stream": False, "sim_F": 3000.0, "sim_workers": max(1, min(3, (os.cpu_count() or 2) - 1)),
                  "sim_regime": "auto", "sim_tag": "", "sim_box": float(DEF["box_half"]), "sim_TK": float(DEF["T_K"]),
                  "sim_eta": float(DEF["eta"]) * 1e3, "sim_rad": float(DEF["radius_um"]),
                  "sim_cap": float(DEF["max_step_um"])}.items():
@@ -4249,7 +4249,7 @@ elif plot_mode == "Run simulation":
 
     st.header("Run simulation")
     st.caption("Python Brownian dynamics (`simulation/airpods_bd.py`), the same code as the BD runs. "
-               "Runs go into `<output>/<regime folder>/<run name>/` (NAF = Regime I, ARF = II, AAF = III) as datax.csv / datay.csv, so every other page "
+               "Runs go into `<output>/<regime folder>/<run name>/` (NAF = Regime I, ARF = II, AAF = III, ASF = IV) as datax.csv / datay.csv, so every other page "
                "reads them. Each run folder also gets `sim_config.json` with all settings, to repeat it exactly.")
 
     with st.sidebar:
@@ -4314,6 +4314,14 @@ elif plot_mode == "Run simulation":
                 with st.expander("Force law F_y = −F₀ (d_n/4000 nm)² sin(k y)"):
                     st.number_input("F₀ at 4000 nm (k_BT/µm)", 0.0, 1000.0, step=0.5, key="sim_F0")
                     st.number_input("k (1/µm)", 0.0, 2.0, step=0.001, format="%.3f", key="sim_k")
+            stream = st.checkbox("Acoustic streaming flow (Regime IV)", key="sim_stream",
+                                 help="Two counter-rotating vortices fitted to your COMSOL ASF runs "
+                                      "(u = U sin(πx/25) sin(πy/50), v = 2U cos(πx/25) cos(πy/50)).")
+            if stream:
+                st.number_input("Streaming parameter F (as in COMSOL)", 0.0, 1e6, step=1000.0, key="sim_F")
+                st.caption(f"U = {sg.bd.ASF_U_PER_1000F * SS.sim_F / 1000:.2f} µm/s, fastest "
+                           f"{2 * sg.bd.ASF_U_PER_1000F * SS.sim_F / 1000:.2f} µm/s along the centre line. "
+                           "The band breaks within ~1 τ_B from F ≈ 3000 (LJ A = 3).")
             st.subheader("Start")
             sk = st.selectbox("Start positions", list(sg.STARTS), format_func=sg.STARTS.get, key="sim_start")
             if sk == "grid":
@@ -4347,9 +4355,10 @@ elif plot_mode == "Run simulation":
             st.text_input("Seeds (comma separated, one run each)", key="sim_seeds")
             st.number_input("Runs at the same time", 1, max(1, os.cpu_count() or 1), key="sim_workers",
                             help=f"This computer has {os.cpu_count()} CPU cores.")
-            st.selectbox("Regime", ["auto", "NAF", "ARF", "AAF"], key="sim_regime",
+            st.selectbox("Regime", ["auto", "NAF", "ARF", "AAF", "ASF"], key="sim_regime",
                          format_func=lambda r: "auto" if r == "auto" else rsm.regime_label(r, long=True),
-                         help="auto: Regime II (ARF) if the field is on, Regime III (AAF) if starting from a band or a run, else Regime I (NAF).")
+                         help="auto: Regime IV (ASF) with streaming, Regime II (ARF) if the field is on, Regime III (AAF) if starting "
+                              "from a band or a run, else Regime I (NAF).")
             st.text_input("Extra name tag (letters, then digits)", key="sim_tag")
             with st.expander("Physics constants (change with care)"):
                 st.number_input("Box half-width (µm)", 5.0, 500.0, step=5.0, key="sim_box")
@@ -4370,7 +4379,7 @@ elif plot_mode == "Run simulation":
             st.error("The tag must be letters followed by digits (e.g. test2), so the run picker can read it.")
         cfg = {"potential": pot, "A": float(A), "q": float(SS.sim_q), "phi_p": float(SS.sim_phi),
                "core": SS.sim_core, "core_Z": int(SS.sim_Z), "lj_cutoff_sigma": float(SS.sim_ljcut),
-               "dn_nm": float(SS.sim_dn) if field else 0.0, "arf_F0_ref": float(SS.sim_F0), "arf_k": float(SS.sim_k),
+               "dn_nm": float(SS.sim_dn) if field else 0.0, "flow_F": float(SS.sim_F) if stream else 0.0, "arf_F0_ref": float(SS.sim_F0), "arf_k": float(SS.sim_k),
                "start": start, "T_tauB": float(SS.sim_T), "steps_per_tauB": int(SS.sim_steps),
                "out_per_tauB": int(SS.sim_out), "seeds": seeds, "workers": int(SS.sim_workers),
                "regime": SS.sim_regime, "tag": SS.sim_tag.strip().strip("_"), "out_root": sim_root,

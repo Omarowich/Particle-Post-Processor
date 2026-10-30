@@ -30,6 +30,7 @@ DEFAULTS = {
     "core_Z": 100,
     "lj_cutoff_sigma": 3.0,       # LJ cut off at this many sigma
     "dn_nm": 4000.0,              # field amplitude (inward wall displacement); 0 = field off
+    "flow_F": 0.0,                # acoustic streaming parameter F (as in COMSOL); 0 = no streaming
     "arf_F0_ref": bd.ARF_F0_REF, "arf_k": bd.ARF_K,
     "start": {"kind": "grid", "n_side": 12, "spacing": 4.0},
     "T_tauB": 1.0, "steps_per_tauB": 4000, "out_per_tauB": 100,
@@ -106,6 +107,8 @@ def start_positions(st, run_seed):
 def regime_of(c):
     if c["regime"] != "auto":
         return c["regime"]
+    if float(c.get("flow_F", 0)) > 0:
+        return "ASF"
     if float(c["dn_nm"]) > 0:
         return "ARF"
     return "AAF" if c["start"].get("kind") in ("aaf", "run") else "NAF"
@@ -115,7 +118,7 @@ def run_folder_name(c, seed):
     ao = (float(c["q"]), float(c["phi_p"])) if c["potential"] == "AO" else None
     reg = regime_of(c)
     name = bd.run_name(float(c["A"]) if c["potential"] != "none" else 0.0, float(c["T_tauB"]), float(c["dn_nm"]),
-                       ao, seed, int(c["steps_per_tauB"]), reg)
+                       ao, seed, int(c["steps_per_tauB"]), reg, float(c.get("flow_F", 0)))
     tag = c.get("tag", "").strip().strip("_")
     if tag:
         name = name.replace(f"_seed{seed}", f"_{tag}_seed{seed}")
@@ -162,7 +165,7 @@ def run_one(args):
         x, y, t = bd.simulate(A, float(c["dn_nm"]), float(c["T_tauB"]), ao=ao,
                               steps_per_tauB=int(c["steps_per_tauB"]), out_per_tauB=int(c["out_per_tauB"]),
                               seed=seed, core=c["core"] if c["core"] != "none" else "off", verbose=False,
-                              start=P0, progress=progress)
+                              start=P0, progress=progress, flow_F=float(c.get("flow_F", 0)))
     except KeyboardInterrupt:
         _status(job_dir, seed, state="stopped", name=name, folder=folder, frac=0.0)
         return name, "stopped"

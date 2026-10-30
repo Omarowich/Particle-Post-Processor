@@ -49,6 +49,25 @@ ARF_F0_REF = 18.4       # kBT/um at d_n = 4000 nm
 ARF_K = 0.124           # 1/um  (half wavelength ~ 25 um, node at y = 0)
 ARF_DN_REF = 4000.0     # nm
 
+# ---- acoustic streaming flow (Regime IV), fitted to the COMSOL ASF runs ----
+# Two counter-rotating vortices (left / right), incompressible:
+#     u = U sin(pi x / W) sin(pi y / H),   v = 2U cos(pi x / W) cos(pi y / H),   W = 25 um, H = 50 um
+# U = ASF_U_PER_1000F * F / 1000 (the COMSOL streaming parameter F). Fit: R^2 = 0.97 for every
+# 100000F run, same U for A = 1 ... 100; no acoustic radiation force in those runs.
+ASF_U_PER_1000F = 0.36  # um/s
+ASF_W, ASF_H = 25.0, 50.0
+
+
+def asf_flow(P, F):
+    """Streaming velocity (um/s) at positions P for streaming parameter F (0 = no flow)."""
+    if not F:
+        return np.zeros_like(P)
+    U = ASF_U_PER_1000F * F / 1000.0
+    x, y = P[:, 0], P[:, 1]
+    return np.c_[U * np.sin(np.pi * x / ASF_W) * np.sin(np.pi * y / ASF_H),
+                 2 * U * np.cos(np.pi * x / ASF_W) * np.cos(np.pi * y / ASF_H)]
+
+
 # ---- repulsive core: same as COMSOL "Particle-Particle Interaction 2" ----
 # Coulomb force between particles of charge number Z = 100 (Particle Properties 1),
 # applied only below the cutoff 2 r_p. In kBT/um: F = CORE_K / r^2 for r < 2a.
@@ -127,7 +146,7 @@ def pair_forces(P, A, ao=None, core=None):
 
 
 def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, steps_per_tauB=4000, out_per_tauB=100,
-             seed=1, core=None, verbose=True, start=None, progress=None):
+             seed=1, core=None, verbose=True, start=None, progress=None, flow_F=0.0):
     """Return x, y (frames x N, um) and t (s). start: (N, 2) start positions; default the 12 x 12 grid.
     progress(step, n_steps, n_capped) is called at every saved frame (raise inside it to stop)."""
     rng = np.random.default_rng(seed)
@@ -157,7 +176,7 @@ def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, steps_per_tauB=4000, o
         if big.any():
             clipped += int(big.sum())
             move[big] *= (MAX_STEP_UM / mag[big])[:, None]
-        P += move + noise * rng.standard_normal(P.shape)
+        P += move + asf_flow(P, flow_F) * dt + noise * rng.standard_normal(P.shape)   # flow is not capped
         # reflecting walls
         P = np.where(P > BOX, 2 * BOX - P, P)
         P = np.where(P < -BOX, -2 * BOX - P, P)
@@ -188,8 +207,11 @@ def write_comsol_csv(folder, x, y, t):
         np.savetxt(os.path.join(folder, name), rows, delimiter=",", header=header, comments="", fmt="%.10g")
 
 
-def run_name(A, T_tauB, dn_nm, ao=None, seed=1, steps=4000, regime=None):
-    base = f"{A:g}Tkb_{T_tauB:g}TauB" + (f"_{dn_nm:g}nm" if dn_nm > 0 else ("" if regime == "AAF" else "_core"))
+def run_name(A, T_tauB, dn_nm, ao=None, seed=1, steps=4000, regime=None, flow_F=0.0):
+    if regime == "ASF":
+        base = f"{A:g}Tkb_{T_tauB:g}TauB_{flow_F:g}F"
+    else:
+        base = f"{A:g}Tkb_{T_tauB:g}TauB" + (f"_{dn_nm:g}nm" if dn_nm > 0 else ("" if regime == "AAF" else "_core"))
     base += "_BD"
     if ao:
         base += f"_AO_q{ao[0]:g}_phi{ao[1]:g}"
@@ -217,6 +239,7 @@ AO_MATCH_Q02 = {1: 0.357, 1.25: 0.401, 1.5: 0.440, 1.75: 0.476, 2: 0.510, 2.5: 0
                 4: 0.747, 5: 0.859}
 AAF_A = (0, 1, 2, 2.5, 3, 3.5, 4, 5)   # same attraction values as the COMSOL AAF runs
 AAF_TAUB = 20                           # same length as the COMSOL AAF runs
+ASF_TAUB = 3                            # COMSOL ASF runs are 0.75 tau_B; longer here to see re-clustering
 AAF_START = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aaf_start.csv")
 
 
@@ -242,6 +265,10 @@ def plan(name):
                 L.append(("ARF", 3, dn, T, None, s, N))
         L += [("ARF", 3, 2750, 2, AO_Q01, s, AO_STEPS[0.1]) for s in S]   # q = 0.1 is costly: 2 tau_B
         return L
+    if name == "asf":   # Regime IV: AO vs LJ at the same B2*, streaming F, start from the COMSOL band
+        # tuple field "dn" carries the streaming parameter F for ASF runs; same small step for LJ and AO
+        return [("ASF", A, F, ASF_TAUB, ao, s, AO_STEPS[0.2])
+                for A in (3, 5) for F in (3000, 10000) for ao in (None, (0.2, AO_MATCH_Q02[A])) for s in S]
     if name == "aaf_ao_fine":   # regime III, AO between A = 1 and 2 (where AO jumps from loose to crystalline)
         return [("AAF", A, 0, AAF_TAUB, (0.2, AO_MATCH_Q02[A]), s, AO_STEPS[0.2]) for A in (1.25, 1.5, 1.75) for s in S]
     if name in ("aaf", "aaf_lj", "aaf_ao"):   # regime III: field off, start from the COMSOL AAF band
@@ -291,15 +318,18 @@ def read_comsol(folder):
 def _run_job(job):
     """One run of a plan (top level so it can run in a separate process)."""
     i, n, out, (reg, A, dn, T, ao, seed, steps) = job
-    name = run_name(A, T, dn, ao, seed, steps, reg)
+    flow_F = dn if reg == "ASF" else 0.0
+    dn = 0.0 if reg == "ASF" else dn
+    name = run_name(A, T, dn, ao, seed, steps, reg, flow_F)
     folder = os.path.join(out, reg, name)
     print(f"[{i}/{n}] {reg}/{name}", flush=True)
     if os.path.isfile(os.path.join(folder, "datax.csv")):
         print(f"   [{i}] already done, reading it", flush=True)
         x, y, t = read_comsol(folder)
     else:
-        start = np.loadtxt(AAF_START, delimiter=",", skiprows=1) if reg == "AAF" else None
-        x, y, t = simulate(0.0 if ao else A, dn, T, ao=ao, steps_per_tauB=steps, seed=seed, start=start)
+        start = np.loadtxt(AAF_START, delimiter=",", skiprows=1) if reg in ("AAF", "ASF") else None
+        x, y, t = simulate(0.0 if ao else A, dn, T, ao=ao, steps_per_tauB=steps, seed=seed, start=start,
+                           flow_F=flow_F, out_per_tauB=1000 if reg == "ASF" else 100)
         write_comsol_csv(folder, x, y, t)
     return (reg, A, dn, T, ao), observables(x, y)
 
@@ -313,7 +343,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--steps", type=int, default=4000,
                     help="time steps per tau_B (multiple of 100); use 4000+ for AO q=0.2, 5000+ for q=0.1")
-    ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt", "aaf", "aaf_lj", "aaf_ao", "aaf_ao_fine"], help="run a whole list")
+    ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt", "aaf", "aaf_lj", "aaf_ao", "aaf_ao_fine", "asf"], help="run a whole list")
     ap.add_argument("--out", default=r"D:\Work\AIRPODS Paper 2627\Data",
                     help="output root (the merged Data folder); runs go to <out>/<ARF|NAF|AAF>/<name>/")
     ap.add_argument("--compare", help="folder with the COMSOL runs (raw csv data) to compare against")

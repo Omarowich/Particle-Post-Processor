@@ -69,6 +69,9 @@ FIGURES = {
     "10a_aaf_time_LJ": "Regime III over time, LJ",
     "10b_aaf_time_AO": "Regime III over time, AO",
     "10c_aaf_end_state": "Regime III end state vs attraction",
+    "11a_asf_breakup": "Regime IV break-up, LJ vs AO",
+    "11b_asf_cores": "Regime IV re-clustering in the vortex cores",
+    "11c_asf_snapshots": "Regime IV end snapshots",
     "3_AO_vs_LJ": "AO vs LJ over time",
     "3b_AO_vs_LJ_pair_distances": "AO vs LJ pair distances g(r)",
     "4_state_map_1_and_10_tauB": "State map at 1 and 10 τB",
@@ -144,7 +147,7 @@ def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=Tru
     Returns (df, pairs) with pairs[(regime, name)] = all pair distances at the last frame.
     """
     # only the Python runs: the folder may also hold COMSOL runs (_CS) since the data merge
-    runs = [(q, rd) for q, rd in rsm.discover_runs(bd_root, regimes=("ARF", "NAF", "AAF")) if q.get("source") == "BD"]
+    runs = [(q, rd) for q, rd in rsm.discover_runs(bd_root, regimes=("ARF", "NAF", "AAF", "ASF")) if q.get("source") == "BD"]
     cache_file = os.path.join(bd_root, CACHE_NAME)
     cache = {}
     if use_cache and os.path.isfile(cache_file):
@@ -190,7 +193,7 @@ def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=Tru
             pass
     rows = [r for (_, rr, _) in out.values() for r in rr]
     df = pd.DataFrame(rows, columns=["regime", "name", "t", *OBS])
-    meta = pd.DataFrame([{k: p[k] for k in ("regime", "name", "A", "T_name", "dn", "tags", "seed",
+    meta = pd.DataFrame([{k: p[k] for k in ("regime", "name", "A", "T_name", "dn", "F", "tags", "seed",
                                              "potential", "q", "phi_p")} for p, _ in runs])
     df = df.merge(meta, on=["regime", "name"]).sort_values(["regime", "name", "t"]).reset_index(drop=True)
     df["base_tags"] = df.tags.str.replace(r"_?seed\d+", "", regex=True)
@@ -717,6 +720,9 @@ FIG_FUNCS = {
     "10a_aaf_time_LJ": lambda df, pairs, bd, co: fig_aaf_time(df, co, "LJ"),
     "10b_aaf_time_AO": lambda df, pairs, bd, co: fig_aaf_time(df, co, "AO"),
     "10c_aaf_end_state": lambda df, pairs, bd, co: fig_aaf_end(df, co),
+    "11a_asf_breakup": lambda df, pairs, bd, co: fig_asf_breakup(df),
+    "11b_asf_cores": lambda df, pairs, bd, co: fig_asf_cores(df, bd),
+    "11c_asf_snapshots": lambda df, pairs, bd, co: fig_asf_snapshots(df, bd),
     "3_AO_vs_LJ": lambda df, pairs, bd, co: fig_ao_vs_lj(df),
     "3b_AO_vs_LJ_pair_distances": lambda df, pairs, bd, co: fig_pair_distances(df, pairs),
     "4_state_map_1_and_10_tauB": lambda df, pairs, bd, co: fig_state_map(df),
@@ -730,6 +736,112 @@ FIG_FUNCS = {
 }
 
 
+# --------------------------------------------------------------------------- Regime IV (ASF)
+ASF_CORES = ((-12.5, 0.0), (12.5, 0.0))   # centres of the left / right streaming vortex
+ASF_CORE_R = 8.0                          # µm
+
+
+def core_stats(P, rc=RC):
+    """Particles in the two vortex cores: fraction of all, their mean coordination and the
+    largest-cluster fraction inside each core (averaged over the two cores)."""
+    out_n, out_z, out_s = 0, [], []
+    for cx, cy in ASF_CORES:
+        m = np.hypot(P[:, 0] - cx, P[:, 1] - cy) < ASF_CORE_R
+        Q = P[m]
+        out_n += m.sum()
+        if len(Q) >= 3:
+            b = cKDTree(Q).query_pairs(rc, output_type="ndarray")
+            z = np.bincount(b.ravel(), minlength=len(Q))
+            _, lab = connected_components(coo_matrix((np.ones(len(b)), (b[:, 0], b[:, 1])), shape=(len(Q),) * 2),
+                                          directed=False)
+            out_z.append(z.mean())
+            out_s.append(np.bincount(lab).max() / len(Q))
+    return out_n / len(P), (np.mean(out_z) if out_z else np.nan), (np.mean(out_s) if out_s else np.nan)
+
+
+def _asf_core_series(bd_root, df, every=10):
+    rows = []
+    for name in df[df.regime == "ASF"].name.unique():
+        x, y, t = rv.load_run(_run_dir(bd_root, "ASF", name))
+        for k in range(0, len(t), every):
+            rows.append((name, t[k] / TAUB, *core_stats(np.c_[x[k], y[k]])))
+    c = pd.DataFrame(rows, columns=["name", "t", "core_frac", "core_z", "core_Smax"])
+    meta = df[df.regime == "ASF"].drop_duplicates("name")[["name", "A", "F", "potential", "seed"]]
+    return c.merge(meta, on="name")
+
+
+def breakup_time(d, thr=0.5):
+    """Per seed: first time the largest cluster holds less than thr of all particles (NaN: never)."""
+    out = {}
+    for s, e in d.sort_values("t").groupby("seed"):
+        below = e[e.Smax < thr]
+        out[s] = below.t.iloc[0] if len(below) else np.nan
+    return out
+
+
+def fig_asf_breakup(df):
+    """Regime IV, question 1: do AO or LJ bands break faster under streaming?"""
+    plt = _style()
+    a = df[df.regime == "ASF"]
+    combos = sorted({(A, F) for A, F in zip(a.A, a.F)})
+    fig, ax = plt.subplots(2, len(combos), figsize=(4.2 * len(combos), 6.4), constrained_layout=True,
+                           sharex=True, squeeze=False)
+    for j, (A, F) in enumerate(combos):
+        for pot, col, lab in (("LJ", BLUE, f"LJ, A = {A:g}"), ("AO", ORANGE, "AO (matched B$_2$*)")):
+            d = a[np.isclose(a.A, A) & np.isclose(a.F, F) & (a.potential == pot)]
+            if d.empty:
+                continue
+            tb = breakup_time(d)
+            vals = [v for v in tb.values() if np.isfinite(v)]
+            txt = (f"{np.mean(vals):.2f} τ$_B$" + (f" ({len(vals)}/{len(tb)})" if len(vals) < len(tb) else "")) if vals else "no breakup"
+            band(ax[0, j], d, "Smax", col, f"{lab}: breakup {txt}")
+            band(ax[1, j], d, "hex", col, lab)
+        ax[0, j].axhline(0.5, ls="--", c="#999", lw=0.8)
+        ax[0, j].set_title(f"A = {A:g}, streaming F = {F:g}", loc="left")
+        ax[0, j].legend(fontsize=7.5, loc="upper right")
+        ax[1, j].set_xlabel("t in the streaming flow (τ$_B$)")
+    ax[0, 0].set_ylabel(LAB["Smax"]); ax[1, 0].set_ylabel(LAB["hex"])
+    fig.suptitle("Regime IV  Break-up under acoustic streaming, LJ vs AO at the same B$_2$* (band = min–max over 3 seeds; "
+                 "breakup = largest cluster < 50 %)", x=0.01, ha="left", fontsize=11)
+    return fig
+
+
+def fig_asf_cores(df, bd_root):
+    """Regime IV, question 2: do the broken-up particles re-cluster in the two vortex cores?"""
+    plt = _style()
+    c = _asf_core_series(bd_root, df)
+    combos = sorted({(A, F) for A, F in zip(c.A, c.F)})
+    fig, ax = plt.subplots(3, len(combos), figsize=(4.2 * len(combos), 8.6), constrained_layout=True,
+                           sharex=True, squeeze=False)
+    for j, (A, F) in enumerate(combos):
+        for pot, col, lab in (("LJ", BLUE, f"LJ, A = {A:g}"), ("AO", ORANGE, "AO (matched B$_2$*)")):
+            d = c[np.isclose(c.A, A) & np.isclose(c.F, F) & (c.potential == pot)]
+            for i, m in enumerate(("core_frac", "core_z", "core_Smax")):
+                band(ax[i, j], d, m, col, lab)
+        ax[0, j].set_title(f"A = {A:g}, streaming F = {F:g}", loc="left")
+        ax[-1, j].set_xlabel("t in the streaming flow (τ$_B$)")
+    ax[0, 0].set_ylabel("fraction of particles\nin the vortex cores")
+    ax[1, 0].set_ylabel("mean coordination number\ninside the cores")
+    ax[2, 0].set_ylabel("largest cluster fraction\ninside a core")
+    ax[0, 0].legend(fontsize=8)
+    fig.suptitle(f"Regime IV  Re-clustering in the two vortex cores (circles of {ASF_CORE_R:g} µm around x = ±12.5 µm, "
+                 "y = 0; band = 3 seeds)", x=0.01, ha="left", fontsize=11)
+    return fig
+
+
+def fig_asf_snapshots(df, bd_root, F=None, A=None):
+    """End frames, LJ vs AO, coloured by cluster, for one streaming strength and attraction."""
+    a = df[(df.regime == "ASF") & (df.seed == 1)]
+    F = F if F is not None else sorted(a.F.unique())[0]
+    A = A if A is not None else sorted(a.A.unique())[0]
+    runs = []
+    for pot, lab in (("LJ", f"LJ, A = {A:g}"), ("AO", f"AO matched to A = {A:g}")):
+        n = a[np.isclose(a.A, A) & np.isclose(a.F, F) & (a.potential == pot)].name.unique()
+        if len(n):
+            runs.append((f"{lab}, F = {F:g}", "ASF", n[0]))
+    return fig_snapshots(bd_root, runs, "Clusters", title=f"Regime IV  End of the streaming runs (seed 1)")
+
+
 def make_figure(key, df, pairs, bd_root, comsol_root=None):
     if key in NEEDS_COMSOL and not (comsol_root and os.path.isdir(comsol_root)):
         raise FileNotFoundError(f"{key} needs the COMSOL runs folder (with ARF/ inside)")
@@ -738,6 +850,8 @@ def make_figure(key, df, pairs, bd_root, comsol_root=None):
         need = {"10a_aaf_time_LJ": lj, "10b_aaf_time_AO": ao, "10c_aaf_end_state": pd.concat([lj, ao])}[key]
         if need.empty:
             raise FileNotFoundError("no Regime III runs (AAF folder) for this figure in the BD runs folder yet")
+    if key.startswith("11") and not (df.regime == "ASF").any():
+        raise FileNotFoundError("no Regime IV runs (ASF folder) yet: airpods_bd.py --plan asf")
     if key.startswith("6b") and not ((df.potential == "AO") & np.isclose(df.T_name, 2) & np.isclose(df.dn, 4000)).any():
         raise FileNotFoundError("needs the AO time-step runs (airpods_bd.py --plan ao_dt)")
     return FIG_FUNCS[key](df, pairs, bd_root, comsol_root)
