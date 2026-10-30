@@ -22,7 +22,7 @@ POTENTIALS = {"LJ": "Lennard-Jones (ε = A k_BT, σ = 2a)", "AO": "Asakura–Oos
 CORES = {"coulomb": "Coulomb, Z = 100, below 2a (= COMSOL)", "phs": "pseudo-hard sphere (Mie 50/49)",
          "wca": "soft WCA (old)", "none": "no core"}
 STARTS = {"grid": "square grid (like COMSOL)", "random": "random, minimum distance",
-          "aaf": "band of the COMSOL AAF runs (regime III)", "run": "a frame of an existing run",
+          "aaf": "band of the COMSOL Regime III runs", "run": "a frame of an existing run",
           "file": "CSV file with x, y columns"}
 
 
@@ -59,7 +59,7 @@ def match_phi(c, A_target):
     target = b2_star({**c, "potential": "LJ", "A": A_target})
     f = lambda p: b2_star({**c, "potential": "AO", "phi_p": p}) - target
     try:
-        return brentq(f, 1e-3, 3.0, xtol=1e-4), target
+        return brentq(f, 1e-3, 20.0, xtol=1e-4), target
     except ValueError:
         return float("nan"), target
 

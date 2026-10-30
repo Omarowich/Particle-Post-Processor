@@ -222,7 +222,7 @@ def observables_over_time(x, y, t, times_tauB):
     return out
 
 
-def check_comsol(comsol_root, seeds=(1, 2, 3), bd_root="BD runs v2"):
+def check_comsol(comsol_root, seeds=(1, 2, 3), bd_root=r"D:\Work\AIRPODS Paper 2627\Data"):
     print("\n3. COMSOL AO run vs Python (same AO, same field, same start)")
     folder = os.path.join(comsol_root, "ARF", COMSOL_NAME)
     if not os.path.isfile(os.path.join(folder, "datax.csv")):

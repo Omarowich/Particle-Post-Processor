@@ -80,6 +80,22 @@ from metric_caching import (
 )
 import pandas as pd
 import regime_state_model as rsm
+
+
+def _default_runs_root(root):
+    """The merged Data folder holds ARF/NAF/AAF itself; older layouts kept Python runs in 'BD runs v2'."""
+    if not root:
+        return ""
+    if any(os.path.isdir(os.path.join(root, r)) for r in ("ARF", "NAF", "AAF")):
+        return root
+    old = os.path.join(root, "BD runs v2")
+    return old if os.path.isdir(old) else root
+
+
+def clean_path(p):
+    """Path typed or pasted by the user: drop spaces, any kind of quotes and trailing slashes."""
+    p = (p or "").strip().strip('"\'\u201c\u201d\u2018\u2019').strip()
+    return p.rstrip("\\/") if len(p) > 3 else p
 import run_viewer as rv
 import io
 from pptx_export import build_pptx_from_images
@@ -620,6 +636,18 @@ def sidebar_runs_common_ui(
         all_units = sorted({r[4] for r in available_runs if r[4] is not None})
 
         st.sidebar.markdown("**Filter runs:**")
+        _is_bd = lambda r: bool(re.search(r"(^|_)BD(_|$)", run_tag(r[0])))
+        if any(_is_bd(r) for r in available_runs) and not all(_is_bd(r) for r in available_runs):
+            src = st.sidebar.radio("Source", ["COMSOL and Python", "COMSOL only", "Python (BD) only"],
+                                   horizontal=False, key=f"multi_filter_src__{dataset_tag}")
+            if src == "COMSOL only":
+                available_runs = [r for r in available_runs if not _is_bd(r)]
+            elif src == "Python (BD) only":
+                available_runs = [r for r in available_runs if _is_bd(r)]
+            all_tkbs = sorted({r[1] for r in available_runs})
+            all_taus = sorted({r[2] for r in available_runs})
+            all_thirds = sorted({r[3] for r in available_runs if r[3] is not None})
+            all_units = sorted({r[4] for r in available_runs if r[4] is not None})
         # Widget keys are namespaced by dataset_tag so switching data folders
         # always starts with everything selected instead of carrying over the
         # previous folder's (likely mismatched) TkB/TauB/run selections.
@@ -903,7 +931,7 @@ st.title("Acoustic Particles Analyzer")
 # ========== STEP 0: Source root ==========
 st.sidebar.header("0. Source root")
 source_root = st.sidebar.text_input(
-    "Base root folder (where ARF / ASF / NAF live):",
+    "Base root folder (Data folder with the regime folders NAF / ARF / AAF / ASF = Regime I–IV):",
     value=HIWI_ROOT,
     key="source_root",
 )
@@ -3885,7 +3913,7 @@ elif plot_mode == "Regime state model":
 
     st.sidebar.header("2. Data folder")
     rsm_source = st.sidebar.radio(
-        "Folder with AAF / ARF / ASF / NAF:",
+        "Folder with the regime folders (NAF / ARF / AAF / ASF = Regime I–IV):",
         ["Source root", "Custom path"],
         key="rsm_folder_source",
     )
@@ -3900,8 +3928,8 @@ elif plot_mode == "Regime state model":
         "3. Regimes to include:",
         rsm_found,
         default=rsm_found,
-        format_func=lambda r: f"{r} ({rsm.REGIME_NAMES[r]})",
-        key="rsm_regimes",
+        format_func=lambda r: rsm.regime_label(r, long=True),
+        key=f"rsm_regimes__{rsm_root}",   # per folder, so a newly typed folder starts with all regimes
     )
 
     with st.sidebar.expander("4. Analysis settings", expanded=False):
@@ -3929,7 +3957,7 @@ elif plot_mode == "Regime state model":
     )
 
     if not rsm_root or not os.path.isdir(rsm_root):
-        st.info("Choose a folder that contains the AAF / ARF / ASF / NAF subfolders.")
+        st.info("Choose a folder that contains the regime folders NAF / ARF / AAF / ASF (Regime I–IV).")
         st.stop()
     if not rsm_regimes:
         st.warning("No regime folders selected (or none found in this folder).")
@@ -3945,6 +3973,15 @@ elif plot_mode == "Regime state model":
     if rsm_obs.empty:
         st.warning("No runs found. Folder names must look like 3Tkb_1TauB_2000nm, 50Tkb_0.75TauB_1000F or 5Tkb_2TauB.")
         st.stop()
+    if "source" in rsm_obs and rsm_obs.source.nunique() > 1:
+        rsm_src = st.sidebar.radio("6. Runs to use", ["COMSOL only", "COMSOL and Python", "Python (BD) only"],
+                                   key="rsm_source",
+                                   help="The folder holds both COMSOL (_CS) and Python (_BD) runs. "
+                                        "The original boundary model is fitted on the COMSOL runs.")
+        if rsm_src == "COMSOL only":
+            rsm_obs = rsm_obs[rsm_obs.source == "COMSOL"]
+        elif rsm_src == "Python (BD) only":
+            rsm_obs = rsm_obs[rsm_obs.source == "BD"]
     rsm_df = rsm.label_runs(rsm_obs, rsm_th)
 
     tab_states, tab_map, tab_trans, tab_next, tab_checks = st.tabs(
@@ -4002,7 +4039,7 @@ elif plot_mode == "Regime state model":
     with tab_trans:
         tr_regs = [r for r in ("AAF", "NAF", "ASF") if r in rsm_regimes]
         if not tr_regs:
-            st.info("Select AAF, NAF or ASF to see how the state changes with A.")
+            st.info("Select Regime I, III or IV to see how the state changes with A.")
         else:
             labels = {"psi6": "ψ6 (local hexagonal order)", "z_mean": "Mean coordination number",
                       "Smax": "Largest cluster fraction", "bond_persist": "Bond persistence",
@@ -4063,11 +4100,13 @@ elif plot_mode == "Paper figures":
         return tuple(out)
 
     st.sidebar.header("2. Data folders")
-    pf_bd = st.sidebar.text_input("Python BD runs (folder with ARF / NAF / AAF):",
-                                  value=os.path.join(source_root, "BD runs v2") if source_root else "",
-                                  key="pf_bd").strip().strip('"').strip("'")
-    pf_co = st.sidebar.text_input("COMSOL runs (folder with ARF, for figures 0 and 2):",
-                                  value=source_root or "", key="pf_co").strip().strip('"').strip("'")
+    pf_bd = st.sidebar.text_input("Python BD runs (folder with the regime folders):",
+                                  value=_default_runs_root(source_root),
+                                  key="pf_bd")
+    pf_bd = clean_path(pf_bd)
+    pf_co = st.sidebar.text_input("COMSOL runs (folder with the regime folders, for figures 0, 2 and 10):",
+                                  value=source_root or "", key="pf_co")
+    pf_co = clean_path(pf_co)
     st.sidebar.header("3. Figures")
     pf_keys = st.sidebar.multiselect("Figures:", list(pf.FIGURES), default=list(pf.FIGURES),
                                      format_func=lambda k: f"{k.split('_')[0]}  {pf.FIGURES[k]}", key="pf_keys")
@@ -4079,8 +4118,16 @@ elif plot_mode == "Paper figures":
                "`python paper_figures.py`). Figures 6 / 6a (two-particle B₂ and AO force check) come from "
                "`verify_ao.py` in the BD simulation folder. Snapshots (5b, 8, 8b) use the Run viewer code, "
                "so you can also make them there and change colours.")
-    if not (pf_bd and os.path.isdir(os.path.join(pf_bd, "ARF"))):
-        st.info("Set the BD runs folder (it must contain ARF/ and NAF/).")
+    pf_found = [r for r in ("ARF", "NAF", "AAF") if pf_bd and os.path.isdir(os.path.join(pf_bd, r))]
+    if not pf_found:
+        if not pf_bd:
+            st.info("Set the Python BD runs folder (the one that contains the regime folders).")
+        elif not os.path.isdir(pf_bd):
+            st.error(f"This folder does not exist (as the app sees it): `{pf_bd}`")
+        else:
+            subs = sorted(d for d in os.listdir(pf_bd) if os.path.isdir(os.path.join(pf_bd, d)))[:20]
+            st.error(f"`{pf_bd}` exists but has no regime folder (NAF / ARF / AAF / ASF) inside. Subfolders found: "
+                     + (", ".join(subs) if subs else "none"))
         st.stop()
     df_pf, pairs_pf = _pf_series(pf_bd, _folder_stamp(pf_bd))
     st.write(f"{df_pf.name.nunique()} runs loaded.")
@@ -4171,7 +4218,7 @@ elif plot_mode == "Run simulation":
                  "sim_F0": float(DEF["arf_F0_ref"]), "sim_k": float(DEF["arf_k"]), "sim_start": "grid",
                  "sim_nside": 12, "sim_spacing": 4.0, "sim_nrand": 144, "sim_dmin": 2.2, "sim_runfolder": "",
                  "sim_runt": 1000.0, "sim_file": "", "sim_T": 1.0, "sim_steps_auto": True, "sim_steps": 4000,
-                 "sim_out": 100, "sim_seeds": "1, 2, 3", "sim_workers": max(1, min(3, (os.cpu_count() or 2) - 1)),
+                 "sim_out": 100, "sim_seeds": "1, 2, 3", "sim_stream": False, "sim_F": 3000.0, "sim_workers": max(1, min(3, (os.cpu_count() or 2) - 1)),
                  "sim_regime": "auto", "sim_tag": "", "sim_box": float(DEF["box_half"]), "sim_TK": float(DEF["T_K"]),
                  "sim_eta": float(DEF["eta"]) * 1e3, "sim_rad": float(DEF["radius_um"]),
                  "sim_cap": float(DEF["max_step_um"])}.items():
@@ -4202,15 +4249,16 @@ elif plot_mode == "Run simulation":
 
     st.header("Run simulation")
     st.caption("Python Brownian dynamics (`simulation/airpods_bd.py`), the same code as the BD runs. "
-               "Runs go into `<output>/<ARF|NAF|AAF>/<run name>/` as datax.csv / datay.csv, so every other page "
+               "Runs go into `<output>/<regime folder>/<run name>/` (NAF = Regime I, ARF = II, AAF = III, ASF = IV) as datax.csv / datay.csv, so every other page "
                "reads them. Each run folder also gets `sim_config.json` with all settings, to repeat it exactly.")
 
     with st.sidebar:
         st.header("2. Output")
-        sim_root = st.text_input("Output folder:", value=os.path.join(source_root, "BD runs v2") if source_root else
-                                 "BD runs v2", key="sim_root").strip().strip('"').strip("'")
+        sim_root = st.text_input("Output folder:", value=_default_runs_root(source_root) or "Data",
+                                 key="sim_root")
+        sim_root = clean_path(sim_root)
         with st.expander("Load settings from an existing run"):
-            lf = st.text_input("Run folder (with sim_config.json):", key="sim_loadfolder").strip().strip('"')
+            lf = clean_path(st.text_input("Run folder (with sim_config.json):", key="sim_loadfolder"))
             if st.button("Load settings", key="sim_load_btn"):
                 try:
                     _apply_config(sg.load_config_from_run(lf))
@@ -4229,15 +4277,17 @@ elif plot_mode == "Run simulation":
         with c1:
             st.subheader("Interaction")
             pot = st.radio("Attraction", list(sg.POTENTIALS), format_func=sg.POTENTIALS.get, key="sim_pot")
+            match_failed = False
             if pot == "LJ":
                 A = st.number_input("A (k_BT)", 0.0, 50.0, step=0.25, key="sim_A")
                 st.number_input("LJ cut-off (σ)", 1.5, 10.0, step=0.5, key="sim_ljcut")
             elif pot == "AO":
-                st.number_input("q = δ/a (polymer / particle size)", 0.02, 1.0, step=0.05, key="sim_q",
+                st.number_input("q = δ/a (polymer / particle size)", 0.05, 1.0, step=0.05, key="sim_q",
                                 help="AO range is 2δ; q = 0.2 → 0.4 µm. Smaller q needs a smaller time step.")
                 match = st.checkbox("Match φ_p to an LJ depth by B₂*", key="sim_match")
                 A = st.number_input("matched LJ A (k_BT)" if match else "A for the run name (k_BT)",
                                     0.0, 50.0, step=0.25, key="sim_A")
+                match_failed = False
                 if match:
                     phi, tgt = sg.match_phi({"q": SS.sim_q, "core": SS.sim_core, "core_Z": SS.sim_Z}, A) \
                         if A > 0 else (float("nan"), 1.0)
@@ -4245,9 +4295,11 @@ elif plot_mode == "Run simulation":
                         SS.sim_phi = round(float(phi), 3)
                         st.caption(f"φ_p = **{phi:.3f}** gives B₂* = {tgt:.2f} (= LJ A = {A:g}).")
                     else:
-                        st.warning("No φ_p found for this A (A = 0 means no attraction: use 'none').")
-                st.number_input("φ_p (polymer reservoir volume fraction)", 0.0, 3.0, step=0.01, format="%.4f",
-                                key="sim_phi", disabled=match)
+                        match_failed = True
+                        st.warning("No φ_p matches this A. A = 0 means no attraction (choose 'no attraction'); "
+                                   "otherwise untick the box and set φ_p yourself.")
+                st.number_input("φ_p (polymer reservoir volume fraction)", 0.0, 20.0, step=0.01, format="%.3f",
+                                key="sim_phi", disabled=match and not match_failed)
             else:
                 A = 0.0
             st.selectbox("Repulsive core", list(sg.CORES), format_func=sg.CORES.get, key="sim_core")
@@ -4255,13 +4307,22 @@ elif plot_mode == "Run simulation":
                 st.number_input("Charge number Z", 1, 1000, step=10, key="sim_Z")
         with c2:
             st.subheader("Acoustic field")
-            field = st.checkbox("Field on (ARF)", key="sim_field")
+            field = st.checkbox("Acoustic radiation force on", key="sim_field")
             if field:
                 st.number_input("d_n (nm)", 1.0, 20000.0, step=250.0, key="sim_dn",
                                 help="Inward wall displacement; the force scales with d_n².")
                 with st.expander("Force law F_y = −F₀ (d_n/4000 nm)² sin(k y)"):
                     st.number_input("F₀ at 4000 nm (k_BT/µm)", 0.0, 1000.0, step=0.5, key="sim_F0")
                     st.number_input("k (1/µm)", 0.0, 2.0, step=0.001, format="%.3f", key="sim_k")
+            stream = st.checkbox("Acoustic streaming flow (Regime IV)", key="sim_stream",
+                                 help="The streaming flow of your COMSOL Regime IV model (stationary Laminar Flow with the body force F0), "
+                                      "exported on a 201 × 201 grid; F is the body force density in N/m³.")
+            if stream:
+                st.number_input("Body force F0 (N/m³, as in COMSOL)", 0.0, 1e6, step=1000.0, key="sim_F")
+                st.caption(("Flow exported from your COMSOL model (Laminar Flow, F0 = 1e5 N/m³), scaled by F / 1e5: "
+                            f"fastest {78.8 * SS.sim_F / 1e5:.2f} µm/s. ") if sg.bd.ASF_SOURCE == "comsol" and
+                           os.path.isfile(sg.bd.ASF_FIELD_FILE) else
+                           f"Fitted two-vortex flow: fastest {2 * sg.bd.ASF_U_PER_1000F * SS.sim_F / 1000:.2f} µm/s. ")
             st.subheader("Start")
             sk = st.selectbox("Start positions", list(sg.STARTS), format_func=sg.STARTS.get, key="sim_start")
             if sk == "grid":
@@ -4275,13 +4336,13 @@ elif plot_mode == "Run simulation":
             elif sk == "run":
                 st.text_input("Run folder (with datax.csv):", key="sim_runfolder")
                 st.number_input("Time of the frame (τ_B; large = last frame)", 0.0, 1e6, step=1.0, key="sim_runt")
-                start = {"kind": "run", "folder": SS.sim_runfolder.strip().strip('"'), "t_tauB": float(SS.sim_runt)}
+                start = {"kind": "run", "folder": clean_path(SS.sim_runfolder), "t_tauB": float(SS.sim_runt)}
             elif sk == "file":
                 st.text_input("CSV file (header line, then x, y in µm):", key="sim_file")
-                start = {"kind": "file", "path": SS.sim_file.strip().strip('"')}
+                start = {"kind": "file", "path": clean_path(SS.sim_file)}
             else:
                 start = {"kind": "aaf"}
-                st.caption("Frame 0 of your COMSOL AAF runs (`simulation/aaf_start.csv`); use with the field off.")
+                st.caption("Frame 0 of your COMSOL Regime III runs (`simulation/aaf_start.csv`); use with the field off.")
         with c3:
             st.subheader("Time and seeds")
             st.number_input("Run length (τ_B)", 0.01, 1000.0, step=1.0, key="sim_T")
@@ -4295,8 +4356,10 @@ elif plot_mode == "Run simulation":
             st.text_input("Seeds (comma separated, one run each)", key="sim_seeds")
             st.number_input("Runs at the same time", 1, max(1, os.cpu_count() or 1), key="sim_workers",
                             help=f"This computer has {os.cpu_count()} CPU cores.")
-            st.selectbox("Regime folder", ["auto", "ARF", "NAF", "AAF"], key="sim_regime",
-                         help="auto: ARF if the field is on, AAF if starting from a band or a run, else NAF.")
+            st.selectbox("Regime", ["auto", "NAF", "ARF", "AAF", "ASF"], key="sim_regime",
+                         format_func=lambda r: "auto" if r == "auto" else rsm.regime_label(r, long=True),
+                         help="auto: Regime IV (ASF) with streaming, Regime II (ARF) if the field is on, Regime III (AAF) if starting "
+                              "from a band or a run, else Regime I (NAF).")
             st.text_input("Extra name tag (letters, then digits)", key="sim_tag")
             with st.expander("Physics constants (change with care)"):
                 st.number_input("Box half-width (µm)", 5.0, 500.0, step=5.0, key="sim_box")
@@ -4317,7 +4380,7 @@ elif plot_mode == "Run simulation":
             st.error("The tag must be letters followed by digits (e.g. test2), so the run picker can read it.")
         cfg = {"potential": pot, "A": float(A), "q": float(SS.sim_q), "phi_p": float(SS.sim_phi),
                "core": SS.sim_core, "core_Z": int(SS.sim_Z), "lj_cutoff_sigma": float(SS.sim_ljcut),
-               "dn_nm": float(SS.sim_dn) if field else 0.0, "arf_F0_ref": float(SS.sim_F0), "arf_k": float(SS.sim_k),
+               "dn_nm": float(SS.sim_dn) if field else 0.0, "flow_F": float(SS.sim_F) if stream else 0.0, "arf_F0_ref": float(SS.sim_F0), "arf_k": float(SS.sim_k),
                "start": start, "T_tauB": float(SS.sim_T), "steps_per_tauB": int(SS.sim_steps),
                "out_per_tauB": int(SS.sim_out), "seeds": seeds, "workers": int(SS.sim_workers),
                "regime": SS.sim_regime, "tag": SS.sim_tag.strip().strip("_"), "out_root": sim_root,
@@ -4391,7 +4454,27 @@ elif plot_mode == "Run simulation":
         exist = [os.path.isdir(os.path.join(sim_root, rg, nm)) for rg, nm in names]
         st.dataframe(pd.DataFrame({"folder": [f"{rg}/{nm}" for rg, nm in names],
                                    "exists already (skipped)": exist}), use_container_width=True, hide_index=True)
-        ok = bool(seeds) and tag_ok and n_part > 0 and not cfg["steps_per_tauB"] % cfg["out_per_tauB"] and bool(sim_root)
+        problems = []
+        if not seeds:
+            problems.append("enter at least one seed")
+        if not tag_ok:
+            problems.append("fix the name tag")
+        if n_part < 2:
+            problems.append("the start positions could not be made (see the preview)")
+        if cfg["steps_per_tauB"] % cfg["out_per_tauB"]:
+            problems.append("steps per τ_B must be a multiple of saved frames per τ_B")
+        if cfg["T_tauB"] * cfg["out_per_tauB"] < 2:
+            problems.append(f"run length × saved frames per τ_B is {cfg['T_tauB'] * cfg['out_per_tauB']:g}: "
+                            "at least 2 frames must be saved")
+        if pot == "AO" and match_failed:
+            problems.append("no φ_p matches the chosen A")
+        if pot == "AO" and cfg["phi_p"] <= 0:
+            problems.append("φ_p must be above 0 for AO")
+        if not sim_root:
+            problems.append("set the output folder")
+        if problems:
+            st.error("Cannot start yet: " + "; ".join(problems) + ".")
+        ok = not problems
         if st.button("▶ Start", type="primary", disabled=not ok, key="sim_go"):
             os.makedirs(sim_root, exist_ok=True)
             jd = sg.launch(cfg)

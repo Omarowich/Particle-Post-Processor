@@ -69,6 +69,9 @@ FIGURES = {
     "10a_aaf_time_LJ": "Regime III over time, LJ",
     "10b_aaf_time_AO": "Regime III over time, AO",
     "10c_aaf_end_state": "Regime III end state vs attraction",
+    "11a_asf_breakup": "Regime IV break-up, LJ vs AO",
+    "11b_asf_cores": "Regime IV re-clustering in the vortex cores",
+    "11c_asf_snapshots": "Regime IV end snapshots",
     "3_AO_vs_LJ": "AO vs LJ over time",
     "3b_AO_vs_LJ_pair_distances": "AO vs LJ pair distances g(r)",
     "4_state_map_1_and_10_tauB": "State map at 1 and 10 τB",
@@ -143,7 +146,8 @@ def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=Tru
 
     Returns (df, pairs) with pairs[(regime, name)] = all pair distances at the last frame.
     """
-    runs = rsm.discover_runs(bd_root, regimes=("ARF", "NAF", "AAF"))
+    # only the Python runs: the folder may also hold COMSOL runs (_CS) since the data merge
+    runs = [(q, rd) for q, rd in rsm.discover_runs(bd_root, regimes=("ARF", "NAF", "AAF", "ASF")) if q.get("source") == "BD"]
     cache_file = os.path.join(bd_root, CACHE_NAME)
     cache = {}
     if use_cache and os.path.isfile(cache_file):
@@ -189,7 +193,7 @@ def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=Tru
             pass
     rows = [r for (_, rr, _) in out.values() for r in rr]
     df = pd.DataFrame(rows, columns=["regime", "name", "t", *OBS])
-    meta = pd.DataFrame([{k: p[k] for k in ("regime", "name", "A", "T_name", "dn", "tags", "seed",
+    meta = pd.DataFrame([{k: p[k] for k in ("regime", "name", "A", "T_name", "dn", "F", "tags", "seed",
                                              "potential", "q", "phi_p")} for p, _ in runs])
     df = df.merge(meta, on=["regime", "name"]).sort_values(["regime", "name", "t"]).reset_index(drop=True)
     df["base_tags"] = df.tags.str.replace(r"_?seed\d+", "", regex=True)
@@ -224,6 +228,15 @@ def band(ax, d, m, col, label, ls="-"):
         ax.fill_between(t, piv.min(axis=1).values, piv.max(axis=1).values, color=col, alpha=0.18, lw=0)
 
 
+def comsol_dir(root, regime, base):
+    """COMSOL run folder: <base>_CS (merged Data folder) or <base> (old raw csv data folder)."""
+    for n in (base + "_CS", base):
+        d = os.path.join(root, regime, n)
+        if os.path.isfile(os.path.join(d, "datax.csv")):
+            return d
+    raise FileNotFoundError(f"COMSOL run {regime}/{base}(_CS) not found in {root}")
+
+
 def comsol_series(run_dir, every=5):
     x, y, t = rv.load_run(run_dir)
     co = np.array([frame_obs(np.c_[x[k], y[k]]) for k in range(0, len(t), every)])
@@ -252,8 +265,8 @@ def fig_seeds(df, bd_root, comsol_root,
               bd_runs=("2.5Tkb_10TauB_2750nm_BD_seed1", "2.5Tkb_10TauB_2750nm_BD_seed2"),
               A=2.5, dn=2750):
     plt = _style()
-    a = first_step(os.path.join(comsol_root, "ARF", comsol_runs[0]))
-    b = first_step(os.path.join(comsol_root, "ARF", comsol_runs[1]))
+    a = first_step(comsol_dir(comsol_root, "ARF", comsol_runs[0]))
+    b = first_step(comsol_dir(comsol_root, "ARF", comsol_runs[1]))
     c = first_step(_run_dir(bd_root, "ARF", bd_runs[0]))
     d = first_step(_run_dir(bd_root, "ARF", bd_runs[1]))
     fig, ax = plt.subplots(1, 3, figsize=(15, 4.2), constrained_layout=True,
@@ -469,7 +482,7 @@ def _comsol_aaf(comsol_root, every=5):
         return out
     for n in os.listdir(base):
         p = rsm.parse_run_name("AAF", n)
-        if p is None or not os.path.isfile(os.path.join(base, n, "datax.csv")):
+        if p is None or p.get("source") != "COMSOL" or not os.path.isfile(os.path.join(base, n, "datax.csv")):
             continue
         t, co = comsol_series(os.path.join(base, n), every)
         out[p["A"]] = (t, co)
@@ -494,7 +507,7 @@ def fig_aaf_time(df, comsol_root=None, potential="LJ"):
         ax[j].set_xlabel("t after field off (τ$_B$)")
     ax[-1].legend(fontsize=7.5, loc="best")
     what = "LJ" if potential == "LJ" else "AO (q = 0.2, φ$_p$ matched by B$_2$*)"
-    fig.suptitle(f"III  After the acoustic field is switched off: {what}, same start band, 3 seeds per line",
+    fig.suptitle(f"Regime III  After the acoustic field is switched off: {what}, same start band, 3 seeds per line",
                  x=0.01, ha="left", fontsize=11)
     return fig
 
@@ -526,7 +539,7 @@ def fig_aaf_end(df, comsol_root=None, t_from=18.0):
         ax[j].set_title(LAB[m], loc="left")
         ax[j].set_xlabel("attraction A (k$_B$T; AO matched by B$_2$*)")
     ax[0].legend(fontsize=8)
-    fig.suptitle(f"III  End state after the field is switched off (mean over t > {t_from:g} τ$_B$; band = min–max over 3 seeds; "
+    fig.suptitle(f"Regime III  End state after the field is switched off (mean over t > {t_from:g} τ$_B$; band = min–max over 3 seeds; "
                  "dashed = start band)", x=0.01, ha="left", fontsize=11)
     return fig
 
@@ -534,7 +547,7 @@ def fig_vs_comsol(df, comsol_root, cases=((0, 2000), (0, 4000), (5, 2000), (5, 4
     plt = _style()
     fig, ax = plt.subplots(2, len(cases), figsize=(15, 6), constrained_layout=True, sharex=True, squeeze=False)
     for j, (A, dn) in enumerate(cases):
-        tc, co = comsol_series(os.path.join(comsol_root, "ARF", f"{A:g}Tkb_1TauB_{dn:g}nm"))
+        tc, co = comsol_series(comsol_dir(comsol_root, "ARF", f"{A:g}Tkb_1TauB_{dn:g}nm"))
         d = sel(df, A=A, dn=dn, T=1, tags="BD")
         for i, (m, ci) in enumerate((("z", 0), ("y_spread", 3))):
             band(ax[i, j], d, m, BLUE, "Python BD")
@@ -588,14 +601,15 @@ def fig_pair_distances(df, pairs, dns=(2000, 2750, 4000), A=3):
     return fig
 
 
-def fig_state_map(df, times=(1.0, 10.0), dns=(2000, 2250, 2750, 3000, 4000, 5000)):
+def fig_state_map(df, times=(1.0, 10.0), dns=(0, 2000, 2250, 2750, 3000, 4000, 5000)):
     plt = _style()
     from matplotlib.lines import Line2D
     COL = {"fluid": BLUE, "disordered network": ORANGE, "ordered network": AQUA,
            "disordered clusters": YELLOW, "ordered clusters": VIOLET}
     MK = {"fluid": "o", "disordered network": "s", "ordered network": "D",
           "disordered clusters": "^", "ordered clusters": "v"}
-    arf = df[(df.regime == "ARF") & ~df.tags.str.contains("dt2000|dt8000")]
+    arf = df[(df.regime.isin(["ARF", "NAF"])) & ~df.tags.str.contains("dt2000|dt8000")].copy()
+    arf.loc[arf.regime == "NAF", "dn"] = 0.0          # Regime I = no field = d_n 0
     fig, ax = plt.subplots(1, len(times), figsize=(13, 4.6), constrained_layout=True, sharey=True, squeeze=False)
     ax = ax[0]
     pos = {d: i for i, d in enumerate(dns)}
@@ -612,7 +626,9 @@ def fig_state_map(df, times=(1.0, 10.0), dns=(2000, 2250, 2750, 3000, 4000, 5000
             a.scatter(xx, yy, marker=MK[r.state], s=70, c="white" if ao else COL[r.state], edgecolors=COL[r.state],
                       linewidths=1.8 if ao else 0.8, zorder=3)
         a.set_xticks(range(len(dns)))
-        a.set_xticklabels([f"{d:g}" for d in dns])
+        a.set_xticklabels([f"{d:g}" if d else "0\n(no field)" for d in dns])
+        if 0 in pos:
+            a.axvline(pos[0] + 0.5, color="#bbb", lw=0.8, ls=":")
         a.set_xlim(-0.6, len(dns) - 0.4)
         a.set_xlabel("inward displacement d$_n$ (nm)")
         a.set_title(f"t = {tt:g} τ$_B$", loc="left")
@@ -633,7 +649,7 @@ def fig_state_map(df, times=(1.0, 10.0), dns=(2000, 2250, 2750, 3000, 4000, 5000
 
 def _confinement_cases(df, palette=(None, None, None)):
     """No field / field without attraction / field + the strongest attraction (AO), all at d_n = 4000 nm."""
-    return [("no field (NAF), no attraction", sel(df, regime="NAF", A=0, T=10), palette[0]),
+    return [("Regime I: no field, no attraction", sel(df, regime="NAF", A=0, T=10), palette[0]),
             ("field (4000 nm), no attraction", sel(df, A=0, dn=4000, T=10, tags="BD"), palette[1]),
             ("field (4000 nm) + AO attraction", sel(df, "AO", dn=4000, T=10, q=0.2), palette[2])]
 
@@ -678,7 +694,7 @@ def fig_hexfrac(df, dns=(2000, 2750, 4000), A=3):
     return fig
 
 
-SNAPSHOT_RUNS = (("NAF control, A = 0", "NAF", "0Tkb_10TauB_core_BD_seed1"),
+SNAPSHOT_RUNS = (("Regime I (no field), A = 0", "NAF", "0Tkb_10TauB_core_BD_seed1"),
                  ("band only, 5000 nm, A = 0", "ARF", "0Tkb_10TauB_5000nm_BD_seed1"),
                  ("LJ, 4000 nm, A = 3", "ARF", "3Tkb_10TauB_4000nm_BD_seed1"),
                  ("AO, 4000 nm, matched to A = 3", "ARF", "3Tkb_10TauB_4000nm_BD_AO_q0.2_phi0.633_dt32000_seed1"))
@@ -707,6 +723,9 @@ FIG_FUNCS = {
     "10a_aaf_time_LJ": lambda df, pairs, bd, co: fig_aaf_time(df, co, "LJ"),
     "10b_aaf_time_AO": lambda df, pairs, bd, co: fig_aaf_time(df, co, "AO"),
     "10c_aaf_end_state": lambda df, pairs, bd, co: fig_aaf_end(df, co),
+    "11a_asf_breakup": lambda df, pairs, bd, co: fig_asf_breakup(df),
+    "11b_asf_cores": lambda df, pairs, bd, co: fig_asf_cores(df, bd),
+    "11c_asf_snapshots": lambda df, pairs, bd, co: fig_asf_snapshots(df, bd),
     "3_AO_vs_LJ": lambda df, pairs, bd, co: fig_ao_vs_lj(df),
     "3b_AO_vs_LJ_pair_distances": lambda df, pairs, bd, co: fig_pair_distances(df, pairs),
     "4_state_map_1_and_10_tauB": lambda df, pairs, bd, co: fig_state_map(df),
@@ -720,9 +739,124 @@ FIG_FUNCS = {
 }
 
 
+# --------------------------------------------------------------------------- Regime IV (ASF)
+ASF_CORES = ((-12.5, 0.0), (12.5, 0.0))   # centres of the left / right streaming vortex
+ASF_CORE_R = 8.0                          # µm
+
+
+def core_stats(P, rc=RC):
+    """Particles in the two vortex cores: fraction of all, their mean coordination and the
+    largest-cluster fraction inside each core (averaged over the two cores)."""
+    out_n, out_z, out_s = 0, [], []
+    for cx, cy in ASF_CORES:
+        m = np.hypot(P[:, 0] - cx, P[:, 1] - cy) < ASF_CORE_R
+        Q = P[m]
+        out_n += m.sum()
+        if len(Q) >= 3:
+            b = cKDTree(Q).query_pairs(rc, output_type="ndarray")
+            z = np.bincount(b.ravel(), minlength=len(Q))
+            _, lab = connected_components(coo_matrix((np.ones(len(b)), (b[:, 0], b[:, 1])), shape=(len(Q),) * 2),
+                                          directed=False)
+            out_z.append(z.mean())
+            out_s.append(np.bincount(lab).max() / len(Q))
+    return out_n / len(P), (np.mean(out_z) if out_z else np.nan), (np.mean(out_s) if out_s else np.nan)
+
+
+def _asf_core_series(bd_root, df, every=10):
+    rows = []
+    for name in df[df.regime == "ASF"].name.unique():
+        x, y, t = rv.load_run(_run_dir(bd_root, "ASF", name))
+        for k in range(0, len(t), every):
+            rows.append((name, t[k] / TAUB, *core_stats(np.c_[x[k], y[k]])))
+    c = pd.DataFrame(rows, columns=["name", "t", "core_frac", "core_z", "core_Smax"])
+    meta = df[df.regime == "ASF"].drop_duplicates("name")[["name", "A", "F", "potential", "seed"]]
+    return c.merge(meta, on="name")
+
+
+def breakup_time(d, thr=0.5):
+    """Per seed: first time the largest cluster holds less than thr of all particles (NaN: never)."""
+    out = {}
+    for s, e in d.sort_values("t").groupby("seed"):
+        below = e[e.Smax < thr]
+        out[s] = below.t.iloc[0] if len(below) else np.nan
+    return out
+
+
+def fig_asf_breakup(df):
+    """Regime IV, question 1: do AO or LJ bands break faster under streaming?"""
+    plt = _style()
+    a = df[df.regime == "ASF"]
+    combos = sorted({(A, F) for A, F in zip(a.A, a.F)})
+    fig, ax = plt.subplots(2, len(combos), figsize=(4.2 * len(combos), 6.4), constrained_layout=True,
+                           sharex=True, squeeze=False)
+    for j, (A, F) in enumerate(combos):
+        for pot, col, lab in (("LJ", BLUE, f"LJ, A = {A:g}"), ("AO", ORANGE, "AO (matched B$_2$*)")):
+            d = a[np.isclose(a.A, A) & np.isclose(a.F, F) & (a.potential == pot)]
+            if d.empty:
+                continue
+            tb = breakup_time(d)
+            vals = [v for v in tb.values() if np.isfinite(v)]
+            txt = (f"{np.mean(vals):.2f} τ$_B$" + (f" ({len(vals)}/{len(tb)})" if len(vals) < len(tb) else "")) if vals else "no breakup"
+            band(ax[0, j], d, "Smax", col, f"{lab}: breakup {txt}")
+            band(ax[1, j], d, "hex", col, lab)
+        ax[0, j].axhline(0.5, ls="--", c="#999", lw=0.8)
+        ax[0, j].set_title(f"A = {A:g}, streaming F = {F:g}", loc="left")
+        ax[0, j].legend(fontsize=7.5, loc="upper right")
+        ax[1, j].set_xlabel("t in the streaming flow (τ$_B$)")
+    ax[0, 0].set_ylabel(LAB["Smax"]); ax[1, 0].set_ylabel(LAB["hex"])
+    fig.suptitle("Regime IV  Break-up under acoustic streaming, LJ vs AO at the same B$_2$* (band = min–max over 3 seeds; "
+                 "breakup = largest cluster < 50 %)", x=0.01, ha="left", fontsize=11)
+    return fig
+
+
+def fig_asf_cores(df, bd_root):
+    """Regime IV, question 2: do the broken-up particles re-cluster in the two vortex cores?"""
+    plt = _style()
+    c = _asf_core_series(bd_root, df)
+    combos = sorted({(A, F) for A, F in zip(c.A, c.F)})
+    fig, ax = plt.subplots(3, len(combos), figsize=(4.2 * len(combos), 8.6), constrained_layout=True,
+                           sharex=True, squeeze=False)
+    for j, (A, F) in enumerate(combos):
+        for pot, col, lab in (("LJ", BLUE, f"LJ, A = {A:g}"), ("AO", ORANGE, "AO (matched B$_2$*)")):
+            d = c[np.isclose(c.A, A) & np.isclose(c.F, F) & (c.potential == pot)]
+            for i, m in enumerate(("core_frac", "core_z", "core_Smax")):
+                band(ax[i, j], d, m, col, lab)
+        ax[0, j].set_title(f"A = {A:g}, streaming F = {F:g}", loc="left")
+        ax[-1, j].set_xlabel("t in the streaming flow (τ$_B$)")
+    ax[0, 0].set_ylabel("fraction of particles\nin the vortex cores")
+    ax[1, 0].set_ylabel("mean coordination number\ninside the cores")
+    ax[2, 0].set_ylabel("largest cluster fraction\ninside a core")
+    ax[0, 0].legend(fontsize=8)
+    fig.suptitle(f"Regime IV  Re-clustering in the two vortex cores (circles of {ASF_CORE_R:g} µm around x = ±12.5 µm, "
+                 "y = 0; band = 3 seeds)", x=0.01, ha="left", fontsize=11)
+    return fig
+
+
+def fig_asf_snapshots(df, bd_root, F=None, A=None):
+    """End frames, LJ vs AO, coloured by cluster, for one streaming strength and attraction."""
+    a = df[(df.regime == "ASF") & (df.seed == 1)]
+    F = F if F is not None else sorted(a.F.unique())[0]
+    A = A if A is not None else sorted(a.A.unique())[0]
+    runs = []
+    for pot, lab in (("LJ", f"LJ, A = {A:g}"), ("AO", f"AO matched to A = {A:g}")):
+        n = a[np.isclose(a.A, A) & np.isclose(a.F, F) & (a.potential == pot)].name.unique()
+        if len(n):
+            runs.append((f"{lab}, F = {F:g}", "ASF", n[0]))
+    return fig_snapshots(bd_root, runs, "Clusters", title=f"Regime IV  End of the streaming runs (seed 1)")
+
+
 def make_figure(key, df, pairs, bd_root, comsol_root=None):
     if key in NEEDS_COMSOL and not (comsol_root and os.path.isdir(comsol_root)):
         raise FileNotFoundError(f"{key} needs the COMSOL runs folder (with ARF/ inside)")
+    if key.startswith("10"):
+        lj, ao = _aaf_groups(df)
+        need = {"10a_aaf_time_LJ": lj, "10b_aaf_time_AO": ao, "10c_aaf_end_state": pd.concat([lj, ao])}[key]
+        if need.empty:
+            raise FileNotFoundError("no Regime III runs (AAF folder) for this figure in the BD runs folder yet")
+    if key.startswith("11") and not (df.regime == "ASF").any():
+        raise FileNotFoundError("no Regime IV runs (ASF folder) yet: airpods_bd.py --plan asf")
+    if key.startswith("6b") and not ((df.potential == "AO") & np.isclose(df.T_name, 2) & np.isclose(df.dn, 4000)).any():
+        raise FileNotFoundError("needs the AO time-step runs (airpods_bd.py --plan ao_dt)")
     return FIG_FUNCS[key](df, pairs, bd_root, comsol_root)
 
 
@@ -736,8 +870,8 @@ def summary_table(df, t_from=9.5):
 # --------------------------------------------------------------------------- CLI
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bd", required=True, help='folder with ARF/ and NAF/ BD runs ("BD runs v2")')
-    ap.add_argument("--comsol", default=None, help="COMSOL csv folder with ARF/ (figures 0 and 2)")
+    ap.add_argument("--bd", required=True, help="Data folder with the regime folders (NAF, ARF, AAF)")
+    ap.add_argument("--comsol", default=None, help="COMSOL csv folder with the regime folders (figures 0, 2 and 10)")
     ap.add_argument("--out", default="paper_figures_out")
     ap.add_argument("--only", nargs="*", default=None, help="figure keys, default all")
     ap.add_argument("--dpi", type=int, default=170)
