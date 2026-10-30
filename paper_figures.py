@@ -498,7 +498,8 @@ def fig_aaf_time(df, comsol_root=None, potential="LJ"):
     for k, A in enumerate(As):
         col = cmap(k / max(len(As) - 1, 1))
         for j, m in enumerate(AAF_METRICS):
-            band(ax[j], d[np.isclose(d.A, A)], m, col, f"A = {A:g}" if potential == "LJ" else f"matched to A = {A:g}")
+            band(ax[j], d[np.isclose(d.A, A)], m, col, f"A = {A:g}" if potential == "LJ" else
+                 f"B$_2^*$ of LJ A = {A:g}  (φ$_p$ = {d[np.isclose(d.A, A)].phi_p.iloc[0]:g})")
     for j, m in enumerate(AAF_METRICS):
         ax[j].set_title(LAB[m], loc="left")
         ax[j].set_xlabel("t after field off (τ$_B$)")
@@ -509,6 +510,37 @@ def fig_aaf_time(df, comsol_root=None, potential="LJ"):
     return fig
 
 
+_B2_TABLE = None
+
+
+def _b2_top_axis(ax):
+    """Second x axis on top: B2* of LJ at each A (= the B2* the AO runs are matched to)."""
+    global _B2_TABLE
+    try:
+        if _B2_TABLE is None:
+            import sys
+            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "simulation"))
+            import airpods_bd as bd
+            trap = getattr(np, "trapezoid", None) or np.trapz
+            r = np.linspace(1.5, 10, 100001)
+            As, Bs = np.linspace(0, 6, 25), []
+            for A in As:
+                fr = bd.radial_force(r, A, None)
+                U = np.zeros_like(r)
+                U[:-1] = np.cumsum((0.5 * (fr[1:] + fr[:-1]) * np.diff(r))[::-1])[::-1]
+                Bs.append((trap((1 - np.exp(-U)) * r, r) + r[0] ** 2 / 2) / (bd.SIGMA ** 2 / 2))
+            _B2_TABLE = (As, np.array(Bs))
+        As, Bs = _B2_TABLE
+        top = ax.secondary_xaxis("top")
+        ticks = [A for A in (0, 1, 2, 3, 4, 5) if ax.get_xlim()[0] <= A <= ax.get_xlim()[1]]
+        top.set_xticks(ticks)
+        top.set_xticklabels([f"{np.interp(A, As, Bs):.0f}" if abs(np.interp(A, As, Bs)) >= 10
+                             else f"{np.interp(A, As, Bs):.1f}" for A in ticks], fontsize=8, color="#777")
+        top.set_xlabel("B$_2^*$", fontsize=8, color="#777", labelpad=1)
+    except Exception:
+        pass
+
+
 def fig_aaf_end(df, comsol_root=None, t_from=18.0):
     """Regime III: end state (t > t_from) against attraction, LJ vs AO vs COMSOL."""
     plt = _style()
@@ -517,7 +549,7 @@ def fig_aaf_end(df, comsol_root=None, t_from=18.0):
     idx = {"z": 0, "psi6": 1, "Smax": 2, "y_spread": 3, "nn1": 5, "hex": 6}
     fig, ax = plt.subplots(1, len(AAF_METRICS), figsize=(16, 3.9), constrained_layout=True)
     for j, m in enumerate(AAF_METRICS):
-        for d, col, lab, mk in ((lj, BLUE, "Python LJ", "o"), (ao, ORANGE, "Python AO (matched B$_2$*)", "s")):
+        for d, col, lab, mk in ((lj, BLUE, "Python LJ", "o"), (ao, ORANGE, "Python AO, same B$_2^*$ as LJ at that A", "s")):
             if d.empty:
                 continue
             e = d[d.t > t_from].groupby(["A", "seed"])[m].mean().reset_index()
@@ -534,7 +566,8 @@ def fig_aaf_end(df, comsol_root=None, t_from=18.0):
             ax[j].axhline(t0, ls="--", c="#aaa", lw=1)
             ax[j].text(5.0, t0, " start", va="bottom", ha="right", fontsize=8, color="#888")
         ax[j].set_title(LAB[m], loc="left")
-        ax[j].set_xlabel("attraction A (k$_B$T; AO matched by B$_2$*)")
+        ax[j].set_xlabel("LJ depth A (k$_B$T); AO: same B$_2^*$")
+        _b2_top_axis(ax[j])
     ax[0].legend(fontsize=8)
     fig.suptitle(f"III  End state after the field is switched off (mean over t > {t_from:g} τ$_B$; band = min–max over 3 seeds; "
                  "dashed = start band)", x=0.01, ha="left", fontsize=11)

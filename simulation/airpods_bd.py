@@ -213,7 +213,8 @@ AO_Q01 = (0.1, 0.368)
 # tau_B/4000 gives only half the B2*, tau_B/32000 gives 93 %. q = 0.1 is twice as narrow.
 AO_STEPS = {0.2: 32000, 0.1: 128000}
 # phi_p (q = 0.2) with the same B2* as LJ at each A, core included (verify_ao.py --check match)
-AO_MATCH_Q02 = {1: 0.357, 2: 0.510, 2.5: 0.573, 3: 0.633, 3.5: 0.690, 4: 0.747, 5: 0.859}
+AO_MATCH_Q02 = {1: 0.357, 1.25: 0.401, 1.5: 0.440, 1.75: 0.476, 2: 0.510, 2.5: 0.573, 3: 0.633, 3.5: 0.690,
+                4: 0.747, 5: 0.859}
 AAF_A = (0, 1, 2, 2.5, 3, 3.5, 4, 5)   # same attraction values as the COMSOL AAF runs
 AAF_TAUB = 20                           # same length as the COMSOL AAF runs
 AAF_START = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aaf_start.csv")
@@ -241,6 +242,8 @@ def plan(name):
                 L.append(("ARF", 3, dn, T, None, s, N))
         L += [("ARF", 3, 2750, 2, AO_Q01, s, AO_STEPS[0.1]) for s in S]   # q = 0.1 is costly: 2 tau_B
         return L
+    if name == "aaf_ao_fine":   # regime III, AO between A = 1 and 2 (where AO jumps from loose to crystalline)
+        return [("AAF", A, 0, AAF_TAUB, (0.2, AO_MATCH_Q02[A]), s, AO_STEPS[0.2]) for A in (1.25, 1.5, 1.75) for s in S]
     if name in ("aaf", "aaf_lj", "aaf_ao"):   # regime III: field off, start from the COMSOL AAF band
         L = []
         if name != "aaf_ao":
@@ -310,7 +313,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--steps", type=int, default=4000,
                     help="time steps per tau_B (multiple of 100); use 4000+ for AO q=0.2, 5000+ for q=0.1")
-    ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt", "aaf", "aaf_lj", "aaf_ao"], help="run a whole list")
+    ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt", "aaf", "aaf_lj", "aaf_ao", "aaf_ao_fine"], help="run a whole list")
     ap.add_argument("--out", default=r"D:\Work\AIRPODS Paper 2627\Data",
                     help="output root (the merged Data folder); runs go to <out>/<ARF|NAF|AAF>/<name>/")
     ap.add_argument("--compare", help="folder with the COMSOL runs (raw csv data) to compare against")
