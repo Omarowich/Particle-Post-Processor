@@ -4090,7 +4090,7 @@ elif plot_mode == "Paper figures":
 
     def _folder_stamp(root):
         out = []
-        for reg in ("ARF", "NAF", "AAF"):
+        for reg in ("ARF", "NAF", "AAF", "ASF"):
             d = os.path.join(root, reg)
             if os.path.isdir(d):
                 for n in sorted(os.listdir(d)):
@@ -4118,7 +4118,7 @@ elif plot_mode == "Paper figures":
                "`python paper_figures.py`). Figures 6 / 6a (two-particle B₂ and AO force check) come from "
                "`verify_ao.py` in the BD simulation folder. Snapshots (5b, 8, 8b) use the Run viewer code, "
                "so you can also make them there and change colours.")
-    pf_found = [r for r in ("ARF", "NAF", "AAF") if pf_bd and os.path.isdir(os.path.join(pf_bd, r))]
+    pf_found = [r for r in ("ARF", "NAF", "AAF", "ASF") if pf_bd and os.path.isdir(os.path.join(pf_bd, r))]
     if not pf_found:
         if not pf_bd:
             st.info("Set the Python BD runs folder (the one that contains the regime folders).")
