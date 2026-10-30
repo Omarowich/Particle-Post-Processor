@@ -635,10 +635,10 @@ def fig_state_map(df, times=(1.0, 10.0), dns=(0, 2000, 2250, 2750, 3000, 4000, 5
         a.grid(axis="x", color="#eee", zorder=0)
     ax[0].set_ylabel("attraction A (k$_B$T)")
     ax[0].set_yticks([0, 1, 2.5, 3, 5])
-    ax[0].text(0.01, -0.2, "filled = LJ, hollow (drawn just above A = 3) = AO matched to A = 3; "
-               "three markers side by side = three seeds", transform=ax[0].transAxes, fontsize=8, color="#555")
+    fig.text(0.01, -0.02, "filled = LJ, hollow (drawn just above A = 3) = AO matched to A = 3; "
+             "three markers side by side = three seeds", fontsize=8, color="#555", ha="left", va="top")
     h = [Line2D([], [], marker=MK[k], ls="", mfc=COL[k], mec=COL[k], ms=9, label=k)
-         for k in ("fluid", "disordered clusters", "disordered network", "ordered network")]
+         for k in ("fluid", "disordered clusters", "ordered clusters", "disordered network", "ordered network")]
     h += [Line2D([], [], marker="o", ls="", mfc="white", mec="#555", mew=1.8, ms=9, label="hollow = AO")]
     ax[-1].legend(handles=h, fontsize=8, loc="upper left", bbox_to_anchor=(1.0, 1.0))
     fig.suptitle("4  State of every Python run at " + " and ".join(f"{t:g} τ$_B$" for t in times) +
