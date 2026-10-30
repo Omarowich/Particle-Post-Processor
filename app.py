@@ -861,10 +861,10 @@ def sidebar_runs_common_ui(
 # ---------------------------------------------------------------------
 # Default root directory (used as default value for the user-editable root)
 # ---------------------------------------------------------------------
-HIWI_ROOT = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Students\Omar Elsabbagh\HIWI\Raw Data"
+HIWI_ROOT = r"D:\Work\AIRPODS Paper 2627\Data"
 # app.py
 
-DEFAULT_SAVE_DIR = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Students\Omar Elsabbagh\HIWI\Saved Data for Streamlit"
+DEFAULT_SAVE_DIR = r"D:\Work\AIRPODS Paper 2627\analysis results\streamlit exports"
 
 
 # ---------------------------------------------------------------------
