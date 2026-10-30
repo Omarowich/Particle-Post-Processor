@@ -21,6 +21,8 @@ Examples
     python airpods_bd.py --plan validation --out "D:\\...\\BD runs" --compare "D:\\...\\raw csv data"
     python airpods_bd.py --plan revision --out "D:\\...\\BD runs"
     python airpods_bd.py --plan aaf --workers 6                         # regime III, 6 runs at a time
+    python airpods_bd.py --plan naf_study --workers 4                   # regime I study, LJ vs AO, 30 tau_B
+    python airpods_bd.py --plan asf_low --workers 4                     # regime IV at weak streaming (F0 = 100-1000)
 
 Regime III (AAF, after the acoustic force): the field is off and the run starts from the
 band in aaf_start.csv (frame 0 of your COMSOL AAF runs), so Python and COMSOL start identically.
@@ -274,6 +276,8 @@ AO_MATCH_Q02 = {1: 0.357, 1.25: 0.401, 1.5: 0.440, 1.75: 0.476, 2: 0.510, 2.5: 0
 AAF_A = (0, 1, 2, 2.5, 3, 3.5, 4, 5)   # same attraction values as the COMSOL AAF runs
 AAF_TAUB = 20                           # same length as the COMSOL AAF runs
 ASF_TAUB = 3                            # COMSOL ASF runs are 0.75 tau_B; longer here to see re-clustering
+NAF_STUDY_TAUB = 30                     # Regime I study length (cluster onset, ordering, bond lifetimes)
+ASF_LOW_TAUB = 5                        # weak-streaming runs: slower break-up, so longer
 AAF_START = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aaf_start.csv")
 
 
@@ -303,6 +307,13 @@ def plan(name):
         L = [("NAF", A, 0, T, None, s, N) for A in (1, 2.5, 3, 5) for s in S]
         L += [("NAF", 3, 0, T, AO_Q02, s, AO_STEPS[0.2]) for s in S]
         return L
+    if name == "naf_study":   # Regime I study: who clusters first without field, LJ vs AO at the same B2*, 30 tau_B
+        L = [("NAF", A, 0, NAF_STUDY_TAUB, None, s, N) for A in (2, 3, 4, 5) for s in S]
+        L += [("NAF", A, 0, NAF_STUDY_TAUB, (0.2, AO_MATCH_Q02[A]), s, AO_STEPS[0.2]) for A in (2, 3, 4, 5) for s in S]
+        return L
+    if name == "asf_low":   # Regime IV at weak streaming (Pe ~ 1-11): where does the band start to survive?
+        return [("ASF", A, F, ASF_LOW_TAUB, ao, s, AO_STEPS[0.2])
+                for A in (3, 5) for F in (100, 300, 1000) for ao in (None, (0.2, AO_MATCH_Q02[A])) for s in S]
     if name == "asf":   # Regime IV: AO vs LJ at the same B2*, streaming F, start from the COMSOL band
         # tuple field "dn" carries the streaming parameter F for ASF runs; same small step for LJ and AO
         return [("ASF", A, F, ASF_TAUB, ao, s, AO_STEPS[0.2])
@@ -381,7 +392,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--steps", type=int, default=4000,
                     help="time steps per tau_B (multiple of 100); use 4000+ for AO q=0.2, 5000+ for q=0.1")
-    ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt", "aaf", "aaf_lj", "aaf_ao", "aaf_ao_fine", "asf", "naf_ref"], help="run a whole list")
+    ap.add_argument("--plan", choices=["validation", "revision", "ao", "ao_dt", "aaf", "aaf_lj", "aaf_ao", "aaf_ao_fine", "asf", "naf_ref", "naf_study", "asf_low"], help="run a whole list")
     ap.add_argument("--out", default=r"D:\Work\AIRPODS Paper 2627\Data",
                     help="output root (the merged Data folder); runs go to <out>/<ARF|NAF|AAF>/<name>/")
     ap.add_argument("--compare", help="folder with the COMSOL runs (raw csv data) to compare against")
