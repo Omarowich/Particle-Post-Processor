@@ -4010,7 +4010,19 @@ elif plot_mode == "Regime state model":
             map_pot = m3.radio("Attraction", pots, index=pots.index("LJ") if "LJ" in pots else 0, horizontal=True,
                                key="rsm_map_pot",
                                help="One map per attraction; 'LJ vs AO boundaries' below shows both.") if len(pots) > 1 else pots[0]
-            times_ = rsm.map_times(rsm_df, map_regime)
+            # AO runs at different polymer size ratios q are different physics: one q per map
+            rsm_dfm = rsm_df
+            _ao_q = sorted(set(rsm_df.loc[(rsm_df.regime == map_regime) & (rsm_df.potential == "AO"), "q"].dropna()))
+            map_q = None
+            if len(_ao_q) > 1:
+                _cnt = rsm_df[(rsm_df.regime == map_regime) & (rsm_df.potential == "AO")].groupby("q").name.nunique()
+                map_q = st.radio("AO size ratio q (one per map; LJ is unaffected)", _ao_q,
+                                 index=_ao_q.index(_cnt.idxmax()), horizontal=True, key=f"rsm_map_q_{map_regime}",
+                                 format_func=lambda v: f"q = {v:g} ({_cnt.get(v, 0)} runs)",
+                                 help="AO attraction is matched to each A by B2*, but its range is 2·q·a, so maps "
+                                      "at different q answer different questions. The experiment sits at q ≈ 0.03–0.08.")
+                rsm_dfm = rsm_df[(rsm_df.potential != "AO") | np.isclose(rsm_df.q, map_q)]
+            times_ = rsm.map_times(rsm_dfm, map_regime)
             if map_param != "t_map":
                 t0 = min(times_, key=lambda v: abs(v - float(rsm_tc))) if times_ else float(rsm_tc)
                 map_t = st.select_slider("Time of the map (τ_B)", times_, value=t0, key=f"rsm_map_t_{map_regime}",
@@ -4040,7 +4052,7 @@ elif plot_mode == "Regime state model":
                 if outcome == "custom":
                     o_metric = b2.selectbox("measure", metric_cols, format_func=lambda k_: rsm.METRIC_LABELS.get(k_, k_),
                                             key="rsm_map_ometric")
-                    o_thr = b3.number_input("value", value=float(np.nanmedian(rsm_df[o_metric])), key="rsm_map_othr")
+                    o_thr = b3.number_input("value", value=float(np.nanmedian(rsm_dfm[o_metric])), key="rsm_map_othr")
                 c_ = st.columns(6)
                 sty = dict(show_uncertainty=c_[0].checkbox("uncertainty panel", True, key="rsm_sty_unc"),
                            show_plan=c_[1].checkbox("suggested runs", True, key="rsm_sty_plan"),
@@ -4061,11 +4073,11 @@ elif plot_mode == "Regime state model":
                 with st.popover("State colours"):
                     sty["state_colors"] = {k_: st.color_picker(k_, v_, key=f"rsm_sty_sc_{k_}")
                                            for k_, v_ in rsm.STATE_COLORS.items()}
-            mdata = rsm.map_data(rsm_df, map_regime, map_param, float(map_t), map_pot)
+            mdata = rsm.map_data(rsm_dfm, map_regime, map_param, float(map_t), map_pot)
             st.caption(f"{mdata.name.nunique()} {map_pot} runs" +
                        ("" if map_param == "t_map" else f" at t = {map_t:g} τ_B") +
                        ". Change which runs are used in the sidebar filter (6.).")
-            title_ = f"{rsm.regime_label(map_regime)}, {map_pot}" + ("" if map_param == "t_map" else f", t = {map_t:g} τB")
+            title_ = f"{rsm.regime_label(map_regime)}, {map_pot}" + (f" (q = {map_q:g})" if map_q is not None and map_pot == "AO" else "") + ("" if map_param == "t_map" else f", t = {map_t:g} τB")
             try:
                 if view == "Phase diagram (all states)":
                     p1, p2, p3, p4, p5, p6 = st.columns(6)
@@ -4087,7 +4099,7 @@ elif plot_mode == "Regime state model":
                                "borders are where two states are equally likely. Change the state definitions with the "
                                "thresholds in the sidebar and the state colours under 'Boundary and look'.")
                 if view in ("States + boundary model", "Every run as its own dot", "3D elevation"):
-                    rsm_model = rsm.fit_boundary(rsm_df, map_regime, map_param, float(map_t), map_pot,
+                    rsm_model = rsm.fit_boundary(rsm_dfm, map_regime, map_param, float(map_t), map_pot,
                                                  loo=(map_param != "t_map" and len(mdata) <= 400), data=mdata,
                                                  outcome=outcome, metric=o_metric, threshold=o_thr)
                 if view in ("States + boundary model", "Every run as its own dot"):
@@ -4121,7 +4133,7 @@ elif plot_mode == "Regime state model":
                     models = {}
                     for p_ in pots:
                         try:
-                            models[p_] = rsm.fit_boundary(rsm_df, map_regime, map_param, float(map_t), p_, loo=False,
+                            models[p_] = rsm.fit_boundary(rsm_dfm, map_regime, map_param, float(map_t), p_, loo=False,
                                                           outcome=outcome, metric=o_metric, threshold=o_thr)
                         except ValueError as ex:
                             st.info(f"{p_}: {ex}")
@@ -4133,7 +4145,7 @@ elif plot_mode == "Regime state model":
                         st.caption("Each line is where that attraction's boundary model is 50/50; AO is matched to "
                                    "LJ by B₂* at each A. Filled dots: not fluid, open dots: fluid.")
                 elif view == "Play over time":
-                    st.plotly_chart(rsm.map_animation(rsm_df, map_regime, map_param, map_pot, metric, times_,
+                    st.plotly_chart(rsm.map_animation(rsm_dfm, map_regime, map_param, map_pot, metric, times_,
                                                       title=f"{rsm.regime_label(map_regime)}, {map_pot}: map over time"),
                                     use_container_width=True)
                     st.caption("Press ▶ Play or drag the slider. Each frame uses the runs that reach that time.")

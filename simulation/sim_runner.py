@@ -3,6 +3,13 @@
 
     python sim_runner.py job_folder/config.json
     python sim_runner.py "<Data>/_batches/my_batch.json"      (a batch saved from the app's Batch tab)
+    python sim_runner.py "<Data>/_batches/runs.csv" [--workers 6] [--priority 1,2] [--out "<Data>"]
+
+A CSV has one row per parameter set; its columns are setting names (regime, potential, A, q, phi_p,
+dn_nm, flow_F, T_tauB, steps_per_tauB, seeds, core, tag, ...). Empty cells keep the default, seeds are
+separated by spaces ("1 2 3"), unknown columns (priority, runs, est_core_hours, purpose) are ignored
+except "priority", which --priority filters on. Comma or semicolon separated (German Excel) both work.
+Results go to --out, else to the folder above "_batches" if the CSV sits in one.
 
 The job folder gets  log.txt, status_seed<N>.json  (progress)  and  done / failed  markers.
 A config with a "batch" list runs many settings in one job: every entry overrides some settings
@@ -194,10 +201,67 @@ def expand_jobs(c, job_dir):
     return [(c, int(s), job_dir, int(s)) for s in c["seeds"]]
 
 
-def main(cfg_path):
+CSV_NUMERIC = {"A", "q", "phi_p", "dn_nm", "flow_F", "T_tauB", "steps_per_tauB", "out_per_tauB", "core_Z",
+               "lj_cutoff_sigma"}
+REGIME_START = {"NAF": {"kind": "grid", "n_side": 12, "spacing": 4.0},
+                "ARF": {"kind": "grid", "n_side": 12, "spacing": 4.0},
+                "AAF": {"kind": "aaf"}, "ASF": {"kind": "aaf"}}
+
+
+def load_csv_batch(path, priorities=None):
+    """Batch config from a CSV file (one row per parameter set). priorities: keep only these rows."""
+    import csv
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        text = f.read()
+    delim = ";" if text.splitlines()[0].count(";") > text.splitlines()[0].count(",") else ","
+    rows = list(csv.DictReader(text.splitlines(), delimiter=delim))
+    batch = []
+    for r in rows:
+        r = {k.strip(): (v or "").strip() for k, v in r.items() if k}
+        if not any(r.values()) or r.get("regime", "").startswith("#"):
+            continue
+        if priorities and r.get("priority") and int(float(r["priority"].replace(",", "."))) not in priorities:
+            continue
+        it = {}
+        for k, v in r.items():
+            if v == "" or k in ("priority", "runs", "est_core_hours", "purpose", "est_hours_6_cores"):
+                continue
+            if k == "seeds":
+                it["seeds"] = [int(x) for x in v.replace(",", " ").replace(";", " ").split()]
+            elif k in CSV_NUMERIC:
+                x = float(v.replace(",", "."))
+                it[k] = int(x) if k in ("steps_per_tauB", "out_per_tauB", "core_Z") else x
+            else:
+                it[k] = v
+        reg = it.get("regime", "auto").upper()
+        it["regime"] = reg
+        if reg in REGIME_START and "start" not in it:
+            it["start"] = REGIME_START[reg]
+        if reg in ("NAF", "AAF", "ASF"):
+            it.setdefault("dn_nm", 0.0)        # no radiation-force field unless the row asks for one
+        if reg != "ASF":
+            it.setdefault("flow_F", 0.0)
+        batch.append(it)
+    return {"batch": batch, "batch_source": os.path.abspath(path)}
+
+
+def main(cfg_path, workers=None, priorities=None, out=None):
     job_dir = os.path.dirname(os.path.abspath(cfg_path))
-    with open(cfg_path) as f:
-        c = {**DEFAULTS, **json.load(f)}
+    if cfg_path.lower().endswith(".csv"):
+        c = {**DEFAULTS, **load_csv_batch(cfg_path, priorities)}
+        here = os.path.dirname(os.path.abspath(cfg_path))
+        if os.path.basename(here) == "_batches":
+            c["out_root"] = os.path.dirname(here)
+        if not c["batch"]:
+            print("no rows to run (check the --priority filter)")
+            return
+    else:
+        with open(cfg_path) as f:
+            c = {**DEFAULTS, **json.load(f)}
+    if out:
+        c["out_root"] = out
+    if workers:
+        c["workers"] = int(workers)
     if os.path.basename(os.path.dirname(job_dir)) != "_sim_jobs":
         # started by hand on a saved settings / batch file: make a job folder like the app does
         job_dir = os.path.join(c["out_root"], "_sim_jobs", time.strftime("%Y%m%d-%H%M%S"))
@@ -231,4 +295,12 @@ def main(cfg_path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    import argparse
+    ap = argparse.ArgumentParser(description="Run airpods_bd simulations from a settings / batch file (.json or .csv)")
+    ap.add_argument("file")
+    ap.add_argument("--workers", type=int, help="runs at the same time (default: from the file, else 1)")
+    ap.add_argument("--priority", help="CSV only: run only rows with these priorities, e.g. 1 or 1,2")
+    ap.add_argument("--out", help="data folder for the results (default: from the file / the folder above _batches)")
+    a = ap.parse_args()
+    pr = {int(x) for x in a.priority.split(",")} if a.priority else None
+    main(a.file, a.workers, pr, a.out)

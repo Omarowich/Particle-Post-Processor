@@ -305,13 +305,28 @@ class BoundaryModel:
 
 
 TIMESTEP_TEST_DT = (2000, 8000, 16000, 64000)   # dt tags of the time-step convergence runs (not the standard steps)
+CHECK_TAGS = ("phs", "wca")                      # runs with another core (tag in the name): checks, not map runs
+
+
+def standard_ao_steps(q):
+    return 32000 if q >= 0.2 else (128000 if q >= 0.1 else 256000)
+
+
+def is_check_run(d: pd.DataFrame) -> pd.Series:
+    """Time-step and core checks: kept in the table, left out of maps and boundary fits."""
+    tags = d.tags.fillna("") if "tags" in d else pd.Series("", index=d.index)
+    bad = tags.str.contains("|".join(f"dt{v}(?:_|$)" for v in TIMESTEP_TEST_DT), regex=True)
+    bad |= tags.str.contains("|".join(f"_{t}(?:_|$)" for t in CHECK_TAGS), regex=True)
+    if {"potential", "q", "dt"} <= set(d.columns):
+        ao = (d.potential == "AO") & d.q.notna() & d.dt.notna()
+        std = d.q.where(ao, 0.2).map(standard_ao_steps)
+        bad |= ao & (d.dt != std)
+    return bad
 
 
 def boundary_data(df: pd.DataFrame, regime="ARF", param="dn", common_time_tauB=1.0, potential="LJ"):
     d = df[(df.regime == regime) & np.isfinite(df[param])].copy()
-    if "tags" in d:   # time-step test runs use a non-standard step size: keep them out of the fit
-        bad = d.tags.fillna("").str.contains("|".join(f"dt{v}(?:_|$)" for v in TIMESTEP_TEST_DT), regex=True)
-        d = d[~bad]
+    d = d[~is_check_run(d)]   # time-step / core check runs: keep them out of the fit
     if "potential" in d and potential:   # one boundary per attraction (LJ or AO)
         d = d[d.potential.fillna("LJ") == potential]
     d = d[np.isclose(d.t_eval_tauB, common_time_tauB, atol=max(0.05, 0.03 * common_time_tauB))]
@@ -354,8 +369,7 @@ def map_data(df, regime, x, t_tauB=1.0, potential="LJ"):
     if x != "t_map":
         return boundary_data(df, regime, x, t_tauB, potential)
     d = df[df.regime == regime].copy()
-    if "tags" in d:
-        d = d[~d.tags.fillna("").str.contains("|".join(f"dt{v}(?:_|$)" for v in TIMESTEP_TEST_DT), regex=True)]
+    d = d[~is_check_run(d)]
     if "potential" in d and potential:
         d = d[d.potential.fillna("LJ") == potential]
     d["t_map"] = d.t_eval_tauB.round(2)
