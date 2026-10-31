@@ -4088,13 +4088,50 @@ elif plot_mode == "Regime state model":
                     ph_conf = p5.checkbox("fade where unsure", False, key="rsm_ph_conf")
                     ph_even = p6.checkbox("tested values evenly spaced", True, key="rsm_ph_even",
                                           help="Off: true log scale of the parameter.")
-                    pm = rsm.fit_phase_map(mdata, map_regime, map_param, map_pot)
-                    fig = rsm.fig_phase_map(pm, show_runs=ph_runs, per_run=ph_each, region_labels=ph_lab,
-                                            confidence=ph_conf, borders=ph_borders, even_spacing=ph_even,
-                                            colors=sty.get("state_colors"))
-                    st.pyplot(fig)
-                    save_figure_if_requested(fig, f"phase_diagram_{map_regime}_{map_pot}", save_plots, output_dir)
-                    plt.close(fig)
+                    ph_play = map_param != "t_map" and st.toggle(
+                        "Play the phase diagram over time", False, key="rsm_ph_play",
+                        help="Draws the diagram at every evaluation time on the same axes and plays it as an "
+                             "animation. Each frame uses only the runs that reach that time.")
+                    ph_kw = dict(show_runs=ph_runs, per_run=ph_each, region_labels=ph_lab, confidence=ph_conf,
+                                 borders=ph_borders, even_spacing=ph_even, colors=sty.get("state_colors"))
+                    if not ph_play:
+                        pm = rsm.fit_phase_map(mdata, map_regime, map_param, map_pot)
+                        if len(pm.classes) == 1:
+                            st.info(f"All {len(mdata)} runs here are '{pm.classes[0]}', so the whole map is one state.")
+                        fig = rsm.fig_phase_map(pm, **ph_kw)
+                        st.pyplot(fig)
+                        save_figure_if_requested(fig, f"phase_diagram_{map_regime}_{map_pot}", save_plots, output_dir)
+                        plt.close(fig)
+                    else:
+                        q1, q2, q3 = st.columns([2, 1, 1])
+                        ph_times = q1.multiselect("Times (τ_B)", times_, default=times_, key=f"rsm_ph_times_{map_regime}")
+                        ph_spf = q2.number_input("seconds per frame", 0.2, 5.0, 1.0, 0.1, key="rsm_ph_spf")
+                        ph_key = (map_regime, map_param, map_pot, tuple(ph_times), str(ph_kw),
+                                  len(rsm_dfm), float(rsm_th.z_fluid), float(rsm_th.psi_order), float(rsm_th.smax_span),
+                                  None if map_q is None else float(map_q))
+                        if q3.button("Make animation", type="primary", key="rsm_ph_make") or \
+                                st.session_state.get("rsm_ph_anim", {}).get("key") == ph_key:
+                            if st.session_state.get("rsm_ph_anim", {}).get("key") != ph_key:
+                                bar = st.progress(0.0, text="Drawing the frames…")
+                                frames = rsm.phase_map_frames(rsm_dfm, map_regime, map_param, map_pot, sorted(ph_times),
+                                                              progress=lambda f, t: bar.progress(f, text=f"t = {t:g} τB"),
+                                                              **ph_kw)
+                                bar.empty()
+                                st.session_state["rsm_ph_anim"] = {"key": ph_key, "frames": frames}
+                            frames = st.session_state["rsm_ph_anim"]["frames"]
+                            gif = rsm.frames_to_gif(frames, ph_spf)
+                            st.image(gif, use_container_width=True)
+                            st.caption("Frames: " + ", ".join(f"{t:g} τB ({n} runs)" for t, _, n in frames)
+                                       + ". Later frames contain only the runs that last that long.")
+                            d1, d2 = st.columns([3, 1])
+                            pick = d1.select_slider("Look at one frame (τ_B)", [t for t, _, _ in frames],
+                                                    key="rsm_ph_pick")
+                            d2.download_button("Download GIF", gif, file_name=f"phase_diagram_{map_regime}_{map_pot}_over_time.gif",
+                                               mime="image/gif")
+                            st.image(dict((t, p) for t, p, _ in frames)[pick], use_container_width=True)
+                        else:
+                            st.caption("Choose the times and press 'Make animation' (one model fit per time, a few "
+                                       "seconds each).")
                     st.caption("One model learns all states at once and colours every point by its most likely state; "
                                "borders are where two states are equally likely. Change the state definitions with the "
                                "thresholds in the sidebar and the state colours under 'Boundary and look'.")
