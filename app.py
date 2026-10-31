@@ -1,5 +1,6 @@
 # app.py
 
+import json
 import os
 import re
 from pathlib import Path
@@ -4090,7 +4091,7 @@ elif plot_mode == "Paper figures":
 
     def _folder_stamp(root):
         out = []
-        for reg in ("ARF", "NAF", "AAF"):
+        for reg in ("ARF", "NAF", "AAF", "ASF"):
             d = os.path.join(root, reg)
             if os.path.isdir(d):
                 for n in sorted(os.listdir(d)):
@@ -4108,7 +4109,7 @@ elif plot_mode == "Paper figures":
                                   value=source_root or "", key="pf_co")
     pf_co = clean_path(pf_co)
     st.sidebar.header("3. Figures")
-    pf_keys = st.sidebar.multiselect("Figures:", list(pf.FIGURES), default=list(pf.FIGURES),
+    pf_keys = st.sidebar.multiselect("Fixed deck figures to draw:", list(pf.FIGURES), default=[],
                                      format_func=lambda k: f"{k.split('_')[0]}  {pf.FIGURES[k]}", key="pf_keys")
     pf_dpi = st.sidebar.number_input("Saved PNG dpi", 72, 600, 170, 10, key="pf_dpi")
     pf_save = st.sidebar.text_input("Also save PNGs to folder (optional):", value="", key="pf_save").strip().strip('"')
@@ -4118,7 +4119,7 @@ elif plot_mode == "Paper figures":
                "`python paper_figures.py`). Figures 6 / 6a (two-particle B₂ and AO force check) come from "
                "`verify_ao.py` in the BD simulation folder. Snapshots (5b, 8, 8b) use the Run viewer code, "
                "so you can also make them there and change colours.")
-    pf_found = [r for r in ("ARF", "NAF", "AAF") if pf_bd and os.path.isdir(os.path.join(pf_bd, r))]
+    pf_found = [r for r in ("ARF", "NAF", "AAF", "ASF") if pf_bd and os.path.isdir(os.path.join(pf_bd, r))]
     if not pf_found:
         if not pf_bd:
             st.info("Set the Python BD runs folder (the one that contains the regime folders).")
@@ -4132,8 +4133,11 @@ elif plot_mode == "Paper figures":
     df_pf, pairs_pf = _pf_series(pf_bd, _folder_stamp(pf_bd))
     st.write(f"{df_pf.name.nunique()} runs loaded.")
 
-    tab_figs, tab_custom, tab_table = st.tabs(["Deck figures", "Custom seed-band plot", "End-of-run numbers"])
+    tab_builder, tab_figs, tab_table = st.tabs(["Figure builder", "Deck figures (fixed)", "End-of-run numbers"])
     with tab_figs:
+        if not pf_keys:
+            st.info("Pick the fixed deck figures to draw in the sidebar (3. Figures). The editable versions of the "
+                    "time and end-value figures are in the Figure builder tab.")
         for key in pf_keys:
             st.subheader(f"{key}  ·  {pf.FIGURES[key]}")
             try:
@@ -4155,43 +4159,18 @@ elif plot_mode == "Paper figures":
                     st.warning(f"could not save: {ex}")
             plt.close(fig)
 
-    with tab_custom:
-        st.caption("Mean over seeds (line) and min–max over seeds (band) for any set of runs. "
-                   "Each line = all runs whose name contains every word of its filter.")
-        c1, c2 = st.columns(2)
-        cm = c1.selectbox("Metric", pf.OBS, format_func=lambda m: pf.LAB[m].replace("$", ""), key="pf_cm")
-        tmax = c2.number_input("Up to t (τB)", 0.1, 100.0, 10.0, 0.5, key="pf_tmax")
-        n_lines = st.number_input("Number of lines", 1, 8, 2, key="pf_nl")
-        names = sorted(df_pf.name.unique())
-        pf._style()
-        figc, axc = plt.subplots(figsize=(8, 4), constrained_layout=True)
-        palette = [pf.BLUE, pf.ORANGE, pf.AQUA, pf.YELLOW, pf.VIOLET, pf.GRAY, "#c0397a", "#333333"]
-        defaults = ["3Tkb_10TauB_4000nm_BD_seed", "3Tkb_10TauB_4000nm_BD_AO_q0.2"]
-        for i in range(int(n_lines)):
-            a, b = st.columns([3, 2])
-            flt = a.text_input(f"Line {i + 1} filter", value=defaults[i] if i < 2 else "", key=f"pf_f{i}")
-            lab = b.text_input(f"Label {i + 1}", value=flt, key=f"pf_l{i}")
-            toks = flt.split()
-            if not toks:
-                continue
-            ex_ao = "AO" not in flt
-            pick = [n for n in names if all(tk in n for tk in toks) and not (ex_ao and "_AO" in n)]
-            d = df_pf[df_pf.name.isin(pick) & (df_pf.t <= tmax)]
-            if d.empty:
-                st.caption(f"line {i + 1}: no runs match")
-                continue
-            if d.base_tags.nunique() > 1 or d.groupby("seed").name.nunique().max() > 1:
-                st.caption(f"line {i + 1}: matches {len(pick)} runs with different parameters - refine the filter")
-            pf.band(axc, d.groupby(["seed", "t"], as_index=False)[cm].mean(), cm, palette[i % 8], lab)
-            st.caption(f"line {i + 1}: " + ", ".join(pick))
-        axc.set_xlabel("t (τ$_B$)")
-        axc.set_ylabel(pf.LAB[cm])
-        axc.legend(fontsize=8)
-        st.pyplot(figc)
-        buf = io.BytesIO()
-        figc.savefig(buf, format="png", dpi=pf_dpi)
-        st.download_button("Download PNG", buf.getvalue(), file_name=f"seed_band_{cm}.png", mime="image/png")
-        plt.close(figc)
+    with tab_builder:
+        import figure_builder as fb
+        import figure_builder_ui as fbui
+
+        @st.cache_data(show_spinner=False)
+        def _fb_series(root, stamp):
+            bar = st.progress(0.0, text="Computing observables incl. COMSOL runs (cached afterwards)…")
+            d = fb.load_data(root, progress=lambda i, n: bar.progress(i / n, text=f"Observables {i}/{n} runs"))
+            bar.empty()
+            return d
+
+        fbui.page(st, pf_bd, _fb_series(pf_bd, _folder_stamp(pf_bd)))
 
     with tab_table:
         t_from = st.number_input("Average over t > (τB)", 0.0, 100.0, 9.5, 0.5, key="pf_tf")
@@ -4271,7 +4250,7 @@ elif plot_mode == "Run simulation":
                 del SS[k]
             st.rerun()
 
-    tab_set, tab_jobs = st.tabs(["Settings and start", "Jobs"])
+    tab_set, tab_batch, tab_jobs = st.tabs(["Settings and start", "Batch", "Jobs"])
     with tab_set:
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -4311,6 +4290,9 @@ elif plot_mode == "Run simulation":
             if field:
                 st.number_input("d_n (nm)", 1.0, 20000.0, step=250.0, key="sim_dn",
                                 help="Inward wall displacement; the force scales with d_n².")
+                if SS.sim_dn < 500:
+                    st.warning(f"d_n = {SS.sim_dn:g} nm gives almost no force (F₀ scales with d_n²). Type the value "
+                               "and press Enter or click outside the box so it is taken over.")
                 with st.expander("Force law F_y = −F₀ (d_n/4000 nm)² sin(k y)"):
                     st.number_input("F₀ at 4000 nm (k_BT/µm)", 0.0, 1000.0, step=0.5, key="sim_F0")
                     st.number_input("k (1/µm)", 0.0, 2.0, step=0.001, format="%.3f", key="sim_k")
@@ -4387,6 +4369,22 @@ elif plot_mode == "Run simulation":
                "box_half": float(SS.sim_box), "T_K": float(SS.sim_TK), "eta": float(SS.sim_eta) * 1e-3,
                "radius_um": float(SS.sim_rad), "max_step_um": float(SS.sim_cap)}
 
+        # ---- sanity checks before anything runs ----
+        try:
+            sg._with(cfg)
+            _r = np.array([1.999 * float(SS.sim_rad)])
+            _ao = (float(SS.sim_q), float(SS.sim_phi)) if pot == "AO" else None
+            _net = float(sg.bd.radial_force(_r, float(A) if pot == "LJ" else 0.0, _ao,
+                                            SS.sim_core if SS.sim_core != "none" else "off")[0])
+            if _net < 0:
+                st.error(f"The attraction pulls harder at contact than the repulsive core pushes (net {_net:.0f} k_BT/µm "
+                         "inward just inside contact): particles will pass through each other and B₂* is meaningless. "
+                         "Lower φ_p (tick 'Match φ_p to an LJ depth by B₂*'), raise q, or use a harder core.")
+        except Exception:
+            pass
+        if field and float(SS.sim_F0) * float(SS.sim_k) == 0:
+            st.error("The acoustic force is zero because F₀ or k in 'Force law' is 0. COMSOL values: F₀ = 18.4 k_BT/µm, k = 0.124 /µm.")
+
         # ---- previews ----
         st.subheader("Preview")
         pc1, pc2, pc3 = st.columns(3)
@@ -4399,6 +4397,8 @@ elif plot_mode == "Run simulation":
             lo = max(min(U.min() * 1.3, -1), -60)
             ax.set_ylim(lo, max(-lo * 0.8, 3)); ax.set_xlim(r[0], min(r[-1], 6 * float(SS.sim_rad)))
             ax.set_xlabel("r (µm)"); ax.set_ylabel("U(r) / k$_B$T")
+            ax.text(0.98, 0.95, "repulsive core continues off the top", transform=ax.transAxes, ha="right", va="top",
+                    fontsize=7, color="#888")
             ax.set_title(f"pair potential  ·  B$_2^*$ = {b2:.2f}  ·  min {U.min():.2f} k$_B$T", fontsize=9, loc="left")
             for sp in ("top", "right"):
                 ax.spines[sp].set_visible(False)
@@ -4412,7 +4412,9 @@ elif plot_mode == "Run simulation":
             ax.plot(sg.bd.arf_force(yy, cfg["dn_nm"]), yy, c="#eb6834", lw=2)
             ax.axvline(0, c="#999", lw=0.8)
             ax.set_xlabel("F$_y$ (k$_B$T/µm)"); ax.set_ylabel("y (µm)")
-            ax.set_title("acoustic force" + ("" if field else " (off)"), fontsize=9, loc="left")
+            amp = float(cfg["arf_F0_ref"]) * (cfg["dn_nm"] / 4000.0) ** 2 if field else 0.0
+            ax.set_title("acoustic force" + (f"  ·  d$_n$ = {cfg['dn_nm']:g} nm, amplitude {amp:.3g} k$_B$T/µm" if field else " (off)"),
+                         fontsize=9, loc="left")
             for sp in ("top", "right"):
                 ax.spines[sp].set_visible(False)
             pc2.pyplot(fig); plt.close(fig)
@@ -4480,6 +4482,95 @@ elif plot_mode == "Run simulation":
             jd = sg.launch(cfg)
             st.success(f"Started. Follow it in the Jobs tab (job {os.path.basename(jd)}).")
 
+    with tab_batch:
+        st.caption("Many parameter sets in one job. Physics, repulsive core, particle number (grid start), saved "
+                   "frames and output folder come from **Settings and start**; AO is matched to each A by B₂*. "
+                   "Runs that already exist are skipped, so a stopped batch can simply be started again.")
+        bdir = os.path.join(sim_root, "_batches") if sim_root else ""
+        saved = sorted(f[:-5] for f in os.listdir(bdir) if f.endswith(".json")) if bdir and os.path.isdir(bdir) else []
+        if saved:
+            lc1, lc2 = st.columns([3, 1])
+            pick = lc1.selectbox("Load a saved batch", ["–"] + saved, key="bt_pick")
+            if lc2.button("Load", key="bt_load") and pick != "–":
+                with open(os.path.join(bdir, pick + ".json")) as f:
+                    spec0 = json.load(f).get("batch_spec", {})
+                SS.bt_sc = spec0.get("scenario", "II")
+                SS.bt_A = ", ".join(f"{v:g}" for v in spec0.get("A", []))
+                SS.bt_dn = ", ".join(f"{v:g}" for v in spec0.get("dn", []))
+                SS.bt_F = ", ".join(f"{v:g}" for v in spec0.get("F", []))
+                SS.bt_pots = spec0.get("potentials", ["LJ", "AO"])
+                SS.bt_q = ", ".join(f"{v:g}" for v in spec0.get("q", [0.2]))
+                SS.bt_T = float(spec0.get("T_tauB", 10)); SS.bt_seeds = ", ".join(map(str, spec0.get("seeds", [1, 2, 3])))
+                SS.bt_loaded_name = pick
+                st.rerun()
+
+        def _nums(txt):
+            out = []
+            for t in str(txt).replace(";", ",").split(","):
+                try:
+                    out.append(float(t)) if t.strip() else None
+                except ValueError:
+                    st.error(f"'{t.strip()}' is not a number")
+            return out
+
+        sc = st.radio("Scenario", list(sg.SCENARIOS), format_func=sg.SCENARIOS.get, key="bt_sc", horizontal=False)
+        b1, b2, b3 = st.columns(3)
+        A_list = _nums(b1.text_input("A values (k_BT; AO at the same B₂*)", "1, 2, 3, 5", key="bt_A"))
+        dn_list = _nums(b2.text_input("d_n values (nm)", "2000, 3000, 4000", key="bt_dn")) if sc == "II" else []
+        F_list = _nums(b2.text_input("F₀ values (N/m³)", "300, 1000, 3000", key="bt_F")) if sc == "IV" else []
+        pots = b3.multiselect("Attraction", ["LJ", "AO"], default=["LJ", "AO"], key="bt_pots")
+        b4, b5, b6, b7 = st.columns(4)
+        q_list = _nums(b4.text_input("AO q values", "0.2", key="bt_q")) if "AO" in pots else []
+        T_b = b5.number_input("Run length (τ_B)", 0.01, 1000.0, 10.0, 1.0, key="bt_T")
+        seeds_b = [int(v) for v in _nums(b6.text_input("Seeds", "1, 2, 3", key="bt_seeds"))]
+        workers_b = b7.number_input("Runs at the same time", 1, max(1, os.cpu_count() or 1),
+                                    min(4, max(1, (os.cpu_count() or 2) - 1)), key="bt_workers",
+                                    help="Each one is a separate Python process (~200 MB). Stay below your number of "
+                                         "cores and don't run two jobs at once, or the computer runs out of memory.")
+        spec = {"scenario": sc, "A": A_list, "dn": dn_list, "F": F_list, "potentials": pots, "q": q_list,
+                "T_tauB": float(T_b), "seeds": seeds_b, "auto_steps": True,
+                "out_per_tauB": int(cfg["out_per_tauB"])}
+        if "bt_match" not in SS:
+            SS.bt_match = {}
+        items, runs = [], []
+        if A_list and pots and seeds_b and (sc not in ("II", "IV") or (dn_list if sc == "II" else F_list)):
+            try:
+                with st.spinner("matching AO to each A by B₂*…"):
+                    items = sg.expand_batch(cfg, spec, SS.bt_match)
+                runs = sg.batch_runs(cfg, items)
+            except Exception as ex:
+                st.error(f"batch: {ex}")
+        if runs:
+            todo = [r for r in runs if not r[2]]
+            n_b = 144 if sc in ("III", "IV") else max(n_part, 2)
+            sps = {p: sg.seconds_per_step(n_b, p) for p in {r[4] for r in todo}} if todo else {}
+            est_b = sum(r[3] * sps[r[4]] for r in todo) / max(1, min(int(workers_b), len(todo) or 1))
+            st.markdown(f"**{len(items)} parameter sets × seeds = {len(runs)} runs**, {len(runs) - len(todo)} exist "
+                        f"already (skipped) · estimated **{est_b / 3600:.1f} h** with {int(workers_b)} at a time")
+            if any(it["potential"] == "AO" for it in items):
+                st.caption("AO φ_p per A: " + ", ".join(sorted({f"q={it['q']:g}, A={it['A']:g}: {it['phi_p']:.3f}"
+                                                                 for it in items if it["potential"] == "AO"})))
+            st.dataframe(pd.DataFrame({"folder": [f"{r[0]}/{r[1]}" for r in runs],
+                                       "exists (skipped)": [r[2] for r in runs]}),
+                         use_container_width=True, hide_index=True, height=min(400, 38 + 35 * len(runs)))
+            s1, s2, s3 = st.columns([1, 2, 1])
+            auto_name = (f"Regime{sc}_{'-'.join(pots)}_A{'-'.join(f'{a:g}' for a in A_list)}"
+                         + (f"_dn{'-'.join(f'{d:g}' for d in dn_list)}" if sc == "II" else "")
+                         + (f"_F{'-'.join(f'{f:g}' for f in F_list)}" if sc == "IV" else ""))
+            bname = s2.text_input("Batch name (to save it)", value=SS.pop("bt_loaded_name", None) or auto_name)
+            full = {**cfg, "batch": items, "workers": int(workers_b), "batch_spec": spec}
+            if s3.button("Save batch", key="bt_save"):
+                os.makedirs(bdir, exist_ok=True)
+                with open(os.path.join(bdir, re.sub(r"[^A-Za-z0-9_.-]+", "_", bname) + ".json"), "w") as f:
+                    json.dump(full, f, indent=2)
+                st.success(f"saved in {bdir}. Command line: python simulation\\sim_runner.py \"{os.path.join(bdir, bname)}.json\"")
+            if s1.button("▶ Start batch", type="primary", key="bt_go", disabled=not todo):
+                os.makedirs(sim_root, exist_ok=True)
+                jd = sg.launch(full)
+                st.success(f"Started {len(todo)} runs. Follow them in the Jobs tab (job {os.path.basename(jd)}).")
+        else:
+            st.info("Enter at least one A value, an attraction, seeds and (for Regimes II / IV) d_n or F₀ values.")
+
     with tab_jobs:
         @st.fragment(run_every=3)
         def _jobs_view():
@@ -4494,11 +4585,23 @@ elif plot_mode == "Run simulation":
                 fld = f"d_n {c['dn_nm']:g} nm" if c["dn_nm"] > 0 else "field off"
                 fr = np.mean([s.get("frac", 0) for s in j["status"]]) if j["status"] else 0
                 icon = {"done": "✅", "running": "⏳", "failed": "❌", "stopped": "⏹"}[j["state"]]
-                with st.expander(f"{icon} {j['id']} · {pot_txt}, {fld}, {c['T_tauB']:g} τ_B, seeds "
-                                 f"{', '.join(map(str, c['seeds']))} · {fr:.0%}", expanded=j["state"] == "running"):
-                    for s in j["status"]:
+                if c.get("batch"):
+                    n_done = sum(s.get("state") in ("done", "exists") for s in j["status"])
+                    head = (f"{icon} {j['id']} · batch: {len(c['batch'])} parameter sets, {len(j['status'])} runs · "
+                            f"{n_done} done · {fr:.0%}")
+                else:
+                    head = (f"{icon} {j['id']} · {pot_txt}, {fld}, {c['T_tauB']:g} τ_B, seeds "
+                            f"{', '.join(map(str, c['seeds']))} · {fr:.0%}")
+                with st.expander(head, expanded=j["state"] == "running"):
+                    shown = j["status"]
+                    if c.get("batch"):
+                        shown = [s for s in j["status"] if s.get("state") == "running"]
+                        st.caption(", ".join(f"{k}: {v}" for k, v in pd.Series(
+                            [s.get("state", "waiting") for s in j["status"]]).value_counts().items()))
+                    for s in shown:
                         eta = s.get("eta")
-                        txt = f"seed {s['seed']}: {s.get('state')}"
+                        txt = (f"{s.get('name', s['seed'])}: {s.get('state')}" if c.get("batch")
+                               else f"seed {s['seed']}: {s.get('state')}")
                         if eta is not None and s.get("state") == "running":
                             txt += f" · about {eta / 60:.1f} min left"
                         if s.get("capped"):

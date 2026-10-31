@@ -47,6 +47,7 @@ import regime_state_model as rsm
 import run_viewer as rv
 
 TAUB = 13.514           # s
+D_UM2S = 0.0740         # um^2/s, Stokes-Einstein diffusion coefficient of the particles
 RC = 2.9                # bond cutoff (µm)
 HEX_EPS, HEX_THR = 3.043, 0.65   # analyser "Detect crystals" rule
 EVERY = 10              # use every 10th saved frame (= 0.1 tau_B)
@@ -72,6 +73,10 @@ FIGURES = {
     "11a_asf_breakup": "Regime IV break-up, LJ vs AO",
     "11b_asf_cores": "Regime IV re-clustering in the vortex cores",
     "11c_asf_snapshots": "Regime IV end snapshots",
+    "11d_asf_breakup_vs_F": "Regime IV break-up time vs flow strength",
+    "12_asf_flow": "Regime IV streaming flow (COMSOL export)",
+    "13a_naf_time": "Regime I cluster formation, LJ vs AO",
+    "13b_naf_bonds_snapshots": "Regime I bond lifetime and end state",
     "3_AO_vs_LJ": "AO vs LJ over time",
     "3b_AO_vs_LJ_pair_distances": "AO vs LJ pair distances g(r)",
     "4_state_map_1_and_10_tauB": "State map at 1 and 10 τB",
@@ -141,13 +146,13 @@ def _stamp(rd):
                  for f in ("datax.csv", "datay.csv"))
 
 
-def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=True):
+def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=True, sources=("BD",)):
     """DataFrame of observables over time for every BD run, plus end-frame pair distances.
 
     Returns (df, pairs) with pairs[(regime, name)] = all pair distances at the last frame.
     """
     # only the Python runs: the folder may also hold COMSOL runs (_CS) since the data merge
-    runs = [(q, rd) for q, rd in rsm.discover_runs(bd_root, regimes=("ARF", "NAF", "AAF", "ASF")) if q.get("source") == "BD"]
+    runs = [(q, rd) for q, rd in rsm.discover_runs(bd_root, regimes=("ARF", "NAF", "AAF", "ASF")) if q.get("source") in sources]
     cache_file = os.path.join(bd_root, CACHE_NAME)
     cache = {}
     if use_cache and os.path.isfile(cache_file):
@@ -193,8 +198,9 @@ def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=Tru
             pass
     rows = [r for (_, rr, _) in out.values() for r in rr]
     df = pd.DataFrame(rows, columns=["regime", "name", "t", *OBS])
-    meta = pd.DataFrame([{k: p[k] for k in ("regime", "name", "A", "T_name", "dn", "F", "tags", "seed",
-                                             "potential", "q", "phi_p")} for p, _ in runs])
+    meta = pd.DataFrame([{**{k: p[k] for k in ("regime", "name", "A", "T_name", "dn", "F", "tags", "seed",
+                                                "potential", "q", "phi_p")}, "source": p.get("source", "BD")}
+                         for p, _ in runs])
     df = df.merge(meta, on=["regime", "name"]).sort_values(["regime", "name", "t"]).reset_index(drop=True)
     df["base_tags"] = df.tags.str.replace(r"_?seed\d+", "", regex=True)
     pairs = {k: v[2] for k, v in out.items()}
@@ -635,10 +641,10 @@ def fig_state_map(df, times=(1.0, 10.0), dns=(0, 2000, 2250, 2750, 3000, 4000, 5
         a.grid(axis="x", color="#eee", zorder=0)
     ax[0].set_ylabel("attraction A (k$_B$T)")
     ax[0].set_yticks([0, 1, 2.5, 3, 5])
-    ax[0].text(0.01, -0.2, "filled = LJ, hollow (drawn just above A = 3) = AO matched to A = 3; "
-               "three markers side by side = three seeds", transform=ax[0].transAxes, fontsize=8, color="#555")
+    fig.text(0.01, -0.02, "filled = LJ, hollow (drawn just above A = 3) = AO matched to A = 3; "
+             "three markers side by side = three seeds", fontsize=8, color="#555", ha="left", va="top")
     h = [Line2D([], [], marker=MK[k], ls="", mfc=COL[k], mec=COL[k], ms=9, label=k)
-         for k in ("fluid", "disordered clusters", "disordered network", "ordered network")]
+         for k in ("fluid", "disordered clusters", "ordered clusters", "disordered network", "ordered network")]
     h += [Line2D([], [], marker="o", ls="", mfc="white", mec="#555", mew=1.8, ms=9, label="hollow = AO")]
     ax[-1].legend(handles=h, fontsize=8, loc="upper left", bbox_to_anchor=(1.0, 1.0))
     fig.suptitle("4  State of every Python run at " + " and ".join(f"{t:g} τ$_B$" for t in times) +
@@ -726,6 +732,10 @@ FIG_FUNCS = {
     "11a_asf_breakup": lambda df, pairs, bd, co: fig_asf_breakup(df),
     "11b_asf_cores": lambda df, pairs, bd, co: fig_asf_cores(df, bd),
     "11c_asf_snapshots": lambda df, pairs, bd, co: fig_asf_snapshots(df, bd),
+    "11d_asf_breakup_vs_F": lambda df, pairs, bd, co: fig_asf_breakup_vs_F(df),
+    "12_asf_flow": lambda df, pairs, bd, co: fig_asf_flow(),
+    "13a_naf_time": lambda df, pairs, bd, co: fig_naf_time(df),
+    "13b_naf_bonds_snapshots": lambda df, pairs, bd, co: fig_naf_bonds(df, bd),
     "3_AO_vs_LJ": lambda df, pairs, bd, co: fig_ao_vs_lj(df),
     "3b_AO_vs_LJ_pair_distances": lambda df, pairs, bd, co: fig_pair_distances(df, pairs),
     "4_state_map_1_and_10_tauB": lambda df, pairs, bd, co: fig_state_map(df),
@@ -739,7 +749,161 @@ FIG_FUNCS = {
 }
 
 
+# --------------------------------------------------------------------------- Regime I (NAF), LJ vs AO
+def _naf_pair(df, A=3.0):
+    """Regime I runs of LJ at A and AO at the same B2*; the longest run length that has both."""
+    d = df[(df.regime == "NAF") & np.isclose(df.A, A)]
+    lens = [T for T in sorted(d.T_name.unique(), reverse=True)
+            if {"LJ", "AO"} <= set(d[np.isclose(d.T_name, T)].potential)]
+    if not lens:
+        raise ValueError(f"no Regime I runs with both LJ and AO at A = {A:g} (plan naf_ref or naf_study)")
+    return d[np.isclose(d.T_name, lens[0])], lens[0]
+
+
+def fig_naf_time(df, A=3.0):
+    """Regime I: who clusters first without field? z, largest cluster and psi6 over time."""
+    plt = _style()
+    d, T = _naf_pair(df, A)
+    fig, ax = plt.subplots(1, 3, figsize=(15, 4.3), constrained_layout=True)
+    for pot, col, lab in (("LJ", BLUE, f"LJ, A = {A:g} k$_B$T"), ("AO", ORANGE, "AO, same B$_2$*")):
+        for a, m in zip(ax, ("z", "Smax", "psi6")):
+            band(a, d[d.potential == pot], m, col, lab)
+    ax[0].axhline(2.5, ls="--", c="#999", lw=0.8); ax[2].axhline(0.8, ls="--", c="#999", lw=0.8)
+    ax[0].text(0.01, 0.97, "dashed: fluid threshold z = 2.5", transform=ax[0].transAxes, fontsize=8, color="#777", va="top")
+    ax[2].text(0.99, 0.03, "dashed: ordered threshold ψ$_6$ = 0.8", transform=ax[2].transAxes, fontsize=8, color="#777", ha="right")
+    for a, m in zip(ax, ("z", "Smax", "psi6")):
+        a.set_title(LAB[m] + (" (particles with z ≥ 2)" if m == "psi6" else ""), loc="left"); a.set_xlabel("t (τ$_B$)")
+    ax[0].legend(fontsize=8.5, loc="lower right")
+    fig.suptitle(f"Regime I  No field: cluster formation, LJ vs AO at the same B$_2$* ({T:g} τ$_B$; band = min–max over seeds)",
+                 x=0.01, ha="left", fontsize=11)
+    return fig
+
+
+def bond_persistence(x, y, lags, t_from_frac=0.5, stride=20, rc=RC):
+    """Fraction of the bonds present at a frame that are still present `lag` frames later
+    (averaged over start frames in the second half of the run)."""
+    B = [set(map(tuple, cKDTree(np.c_[x[k], y[k]]).query_pairs(rc, output_type="ndarray"))) for k in range(len(x))]
+    out = []
+    for lag in lags:
+        v = [len(B[k] & B[k + lag]) / len(B[k]) for k in range(int(len(x) * t_from_frac), len(x) - lag, stride) if B[k]]
+        out.append(np.mean(v) if v else np.nan)
+    return np.array(out)
+
+
+def fig_naf_bonds(df, bd_root, A=3.0, max_lag_tauB=2.0):
+    """Regime I: bond lifetime (fraction of bonds still intact after a delay) and the end state of seed 1."""
+    plt = _style()
+    import matplotlib.colors as mc
+    d, T = _naf_pair(df, A)
+    fig = plt.figure(figsize=(15, 4.6), constrained_layout=True)
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.1, 1, 1])
+    a0 = fig.add_subplot(gs[0])
+    cmap = plt.get_cmap("Blues")
+    for j, (pot, col, lab) in enumerate((("LJ", BLUE, f"LJ, A = {A:g} k$_B$T"), ("AO", ORANGE, "AO, same B$_2$*"))):
+        names = sorted(d[d.potential == pot].name.unique())
+        curves, tl = [], None
+        for name in names:
+            x, y, t = rv.load_run(_run_dir(bd_root, "NAF", name))
+            dt = (t[1] - t[0]) / TAUB
+            lags = np.arange(0, int(round(max_lag_tauB / dt)) + 1, max(1, int(round(0.1 / dt))))
+            curves.append(bond_persistence(x, y, lags)); tl = lags * dt
+            if name.endswith("seed1") or name == names[0] and not any(n.endswith("seed1") for n in names):
+                snap = (np.c_[x[-1], y[-1]], t[-1] / TAUB)
+        C = np.array(curves)
+        a0.fill_between(tl, C.min(0), C.max(0), color=col, alpha=0.18, lw=0)
+        a0.plot(tl, C.mean(0), c=col, lw=2, label=f"{lab} (n={len(C)})")
+        b = fig.add_subplot(gs[j + 1]); P, tt = snap
+        bonds = cKDTree(P).query_pairs(RC, output_type="ndarray")
+        z = np.bincount(bonds.ravel(), minlength=len(P)); psi = np.zeros(len(P), complex)
+        if len(bonds):
+            dd = P[bonds[:, 1]] - P[bonds[:, 0]]; e = np.exp(6j * np.arctan2(dd[:, 1], dd[:, 0]))
+            np.add.at(psi, bonds[:, 0], e); np.add.at(psi, bonds[:, 1], e)
+        ap = np.abs(psi) / np.maximum(z, 1)
+        for (px, py), v, zz in zip(P, ap, z):
+            b.add_patch(plt.Circle((px, py), 1.0, fc=cmap(0.15 + 0.85 * v) if zz >= 2 else "#d8d8d8", ec="white", lw=0.3))
+        b.set_xlim(-25, 25); b.set_ylim(-25, 25); b.set_aspect("equal"); b.set_xlabel("x (µm)"); b.set_ylabel("y (µm)")
+        ok = z >= 2
+        b.set_title(f"{lab} (seed 1)\nt = {tt:.1f} τ$_B$   mean z = {z.mean():.2f}   mean ψ$_6$ = {ap[ok].mean():.2f}", loc="left")
+    sm = plt.cm.ScalarMappable(cmap=mc.LinearSegmentedColormap.from_list("c", [cmap(0.15), cmap(1.0)]), norm=mc.Normalize(0, 1))
+    fig.colorbar(sm, ax=b, shrink=0.8, label="|ψ$_6$| (grey: fewer than 2 neighbours)")
+    a0.set_ylim(0, 1.02); a0.set_xlabel("time later Δt (τ$_B$)"); a0.legend(fontsize=8.5, loc="lower left")
+    a0.set_title(f"bonds still intact after Δt (bonds present in the second half of the run)", loc="left")
+    fig.suptitle("Regime I  Bond lifetime and end state without field", x=0.01, ha="left", fontsize=11)
+    return fig
+
+
 # --------------------------------------------------------------------------- Regime IV (ASF)
+ASF_VMAX_PER_F = 78.8e-5   # fastest flow speed (um/s) per N/m^3 of body force, from the COMSOL export
+
+
+def fig_asf_breakup_vs_F(df):
+    """Regime IV: break-up time against body force F0 (and flow Peclet number), LJ vs AO, plus the order kept."""
+    plt = _style()
+    from matplotlib.lines import Line2D
+    a = df[df.regime == "ASF"]
+    As = sorted(a.A.unique())
+    fig, ax = plt.subplots(1, 2, figsize=(12.5, 4.6), constrained_layout=True)
+    mk = {A: m for A, m in zip(As, ("o", "s", "D", "^"))}
+    for pot, col in (("LJ", BLUE), ("AO", ORANGE)):
+        for A in As:
+            d = a[np.isclose(a.A, A) & (a.potential == pot)]
+            Fs, med, hx = sorted(d.F.unique()), [], []
+            for F in Fs:
+                g = d[np.isclose(d.F, F)]
+                T = g.t.max()
+                tb = np.array(list(breakup_time(g).values()), float)
+                for v in tb:
+                    if np.isfinite(v):
+                        ax[0].scatter(F * (0.93 if pot == "LJ" else 1.07), v, marker=mk[A], s=22, c=col, alpha=0.45, lw=0)
+                    else:
+                        ax[0].scatter(F * (0.93 if pot == "LJ" else 1.07), T, marker=mk[A], s=34, facecolors="white",
+                                      edgecolors=col, lw=1.2, zorder=3)
+                med.append(np.median(np.where(np.isfinite(tb), tb, np.inf)))
+                hx.append(g[g.t > T - 0.5].hex.mean())
+            med = np.array(med); ok = np.isfinite(med)
+            ls = "-" if A == As[-1] else "--"
+            ax[0].plot(np.array(Fs)[ok], med[ok], ls, c=col, lw=1.6, marker=mk[A], ms=6)
+            ax[1].plot(Fs, hx, ls, c=col, lw=1.6, marker=mk[A], ms=6)
+    for x in ax:
+        x.set_xscale("log"); x.set_xlabel("streaming body force F$_0$ (N/m³)")
+        sec = x.secondary_xaxis("top", functions=(lambda F: F * ASF_VMAX_PER_F / D_UM2S, lambda P: P * D_UM2S / ASF_VMAX_PER_F))
+        sec.set_xlabel("flow Péclet number Pe = v$_{max}$ a / D")
+    from matplotlib.ticker import FuncFormatter
+    ax[0].set_yscale("log"); ax[0].set_ylabel("break-up time (τ$_B$)")
+    ax[0].set_yticks([0.2, 0.5, 1, 2, 5]); ax[0].yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax[0].yaxis.set_minor_formatter(FuncFormatter(lambda v, _: ""))
+    ax[0].set_title("time until the largest cluster < 50 % (line = median over 3 seeds)", loc="left")
+    ax[1].set_ylabel(LAB["hex"]); ax[1].set_ylim(0, 1)
+    ax[1].set_title("order kept at the end (mean over the last 0.5 τ$_B$)", loc="left")
+    h = [Line2D([], [], c=BLUE, lw=2, label="LJ"), Line2D([], [], c=ORANGE, lw=2, label="AO, same B$_2$*")]
+    h += [Line2D([], [], c="#555", ls="-" if A == As[-1] else "--", marker=mk[A], label=f"A = {A:g}") for A in As]
+    h += [Line2D([], [], ls="", marker="o", mfc="white", mec="#555", label="no break-up within the run")]
+    ax[0].legend(handles=h, fontsize=8, loc="lower left")
+    fig.suptitle("Regime IV  Break-up against flow strength, LJ vs AO at the same B$_2$*", x=0.01, ha="left", fontsize=11)
+    return fig
+
+
+def fig_asf_flow(flow_csv=None, start_csv=None):
+    """The streaming flow exported from COMSOL (stationary laminar flow, F0 = 1e5 N/m^3) with the start band."""
+    plt = _style()
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "simulation")
+    a = np.loadtxt(flow_csv or os.path.join(here, "asf_flow_F100000.csv"), delimiter=",", skiprows=1)
+    x, y, u, v = a.T; o = np.lexsort((x, y)); n = int(round(np.sqrt(len(x))))
+    X, Y, U, V = (q[o].reshape(n, n) for q in (x, y, u, v))
+    xs, ys = np.linspace(X[0, 0], X[0, -1], n), np.linspace(Y[0, 0], Y[-1, 0], n)
+    P = np.loadtxt(start_csv or os.path.join(here, "aaf_start.csv"), delimiter=",", comments="#")
+    fig, ax = plt.subplots(figsize=(6.4, 5.4), constrained_layout=True)
+    im = ax.imshow(np.hypot(U, V), origin="lower", extent=[xs[0], xs[-1], ys[0], ys[-1]], cmap="Blues", vmin=0)
+    ax.streamplot(xs, ys, U, V, color="#1F2A44", density=1.1, linewidth=0.7, arrowsize=0.9)
+    for px, py in P[:, :2]:
+        ax.add_patch(plt.Circle((px, py), 1.0, fc=ORANGE, ec="white", lw=0.4, zorder=3))
+    ax.set_xlim(-25, 25); ax.set_ylim(-25, 25); ax.set_aspect("equal"); ax.set_xlabel("x (µm)"); ax.set_ylabel("y (µm)")
+    fig.colorbar(im, ax=ax, shrink=0.85, label="flow speed (µm/s) at F$_0$ = 10$^5$ N/m³")
+    ax.set_title("Streaming flow exported from COMSOL (stationary laminar flow)\nwith the start band of every Regime IV run", loc="left")
+    return fig
+
+
+
 ASF_CORES = ((-12.5, 0.0), (12.5, 0.0))   # centres of the left / right streaming vortex
 ASF_CORE_R = 8.0                          # µm
 
