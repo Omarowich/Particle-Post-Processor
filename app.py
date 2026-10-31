@@ -3956,7 +3956,7 @@ elif plot_mode == "Regime state model":
     st.sidebar.caption("6. Runs to use (starts with the COMSOL runs, on which the boundary model was fitted; "
                        "add Python runs or narrow by any parameter):")
     rsm_obs = rf.filter_frame(rsm_obs, key=f"rsm__{rsm_root}", container=st.sidebar,
-                              defaults={"source": ["COMSOL"]})
+                              defaults={"source": ["COMSOL","Python"]})
     if rsm_obs.empty:
         st.warning("No runs pass the filter.")
         st.stop()
@@ -4983,6 +4983,3 @@ elif plot_mode == "Run viewer":
 
     st.stop()
 
-# TODO: add plotly toogle
-# TODO: Fix  ########### LOCUS PLOT ######### in Phase-transition detection
-# TODO: Error bars + statistics ( You compute: Mean curve, deviation, error band for runs of the same tkb, tauB)
