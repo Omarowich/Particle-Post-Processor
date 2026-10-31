@@ -4311,6 +4311,9 @@ elif plot_mode == "Run simulation":
             if field:
                 st.number_input("d_n (nm)", 1.0, 20000.0, step=250.0, key="sim_dn",
                                 help="Inward wall displacement; the force scales with d_n².")
+                if SS.sim_dn < 500:
+                    st.warning(f"d_n = {SS.sim_dn:g} nm gives almost no force (F₀ scales with d_n²). Type the value "
+                               "and press Enter or click outside the box so it is taken over.")
                 with st.expander("Force law F_y = −F₀ (d_n/4000 nm)² sin(k y)"):
                     st.number_input("F₀ at 4000 nm (k_BT/µm)", 0.0, 1000.0, step=0.5, key="sim_F0")
                     st.number_input("k (1/µm)", 0.0, 2.0, step=0.001, format="%.3f", key="sim_k")
@@ -4399,6 +4402,8 @@ elif plot_mode == "Run simulation":
             lo = max(min(U.min() * 1.3, -1), -60)
             ax.set_ylim(lo, max(-lo * 0.8, 3)); ax.set_xlim(r[0], min(r[-1], 6 * float(SS.sim_rad)))
             ax.set_xlabel("r (µm)"); ax.set_ylabel("U(r) / k$_B$T")
+            ax.text(0.98, 0.95, "repulsive core continues off the top", transform=ax.transAxes, ha="right", va="top",
+                    fontsize=7, color="#888")
             ax.set_title(f"pair potential  ·  B$_2^*$ = {b2:.2f}  ·  min {U.min():.2f} k$_B$T", fontsize=9, loc="left")
             for sp in ("top", "right"):
                 ax.spines[sp].set_visible(False)
@@ -4412,7 +4417,9 @@ elif plot_mode == "Run simulation":
             ax.plot(sg.bd.arf_force(yy, cfg["dn_nm"]), yy, c="#eb6834", lw=2)
             ax.axvline(0, c="#999", lw=0.8)
             ax.set_xlabel("F$_y$ (k$_B$T/µm)"); ax.set_ylabel("y (µm)")
-            ax.set_title("acoustic force" + ("" if field else " (off)"), fontsize=9, loc="left")
+            amp = float(cfg["arf_F0_ref"]) * (cfg["dn_nm"] / 4000.0) ** 2 if field else 0.0
+            ax.set_title("acoustic force" + (f"  ·  d$_n$ = {cfg['dn_nm']:g} nm, amplitude {amp:.3g} k$_B$T/µm" if field else " (off)"),
+                         fontsize=9, loc="left")
             for sp in ("top", "right"):
                 ax.spines[sp].set_visible(False)
             pc2.pyplot(fig); plt.close(fig)
