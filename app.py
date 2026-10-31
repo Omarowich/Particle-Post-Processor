@@ -846,10 +846,15 @@ def sidebar_runs_common_ui(
 # ---------------------------------------------------------------------
 # Default root directory (used as default value for the user-editable root)
 # ---------------------------------------------------------------------
-HIWI_ROOT = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Students\Omar Elsabbagh\HIWI\Raw Data"
+_NAS = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Students\Omar Elsabbagh\HIWI"
+_LOCAL = r"D:\Work\AIRPODS Paper 2627"
+# local copy first (fast); the NAS only when the local folder is missing. AIRPODS_DATA overrides both.
+HIWI_ROOT = os.environ.get("AIRPODS_DATA") or (os.path.join(_LOCAL, "Data") if os.path.isdir(os.path.join(_LOCAL, "Data"))
+                                               else os.path.join(_NAS, "Raw Data"))
 # app.py
 
-DEFAULT_SAVE_DIR = r"\\nas.ads.mwn.de\tuei\mml\MML MS BS students\Bachelor Students\Omar Elsabbagh\HIWI\Saved Data for Streamlit"
+DEFAULT_SAVE_DIR = (os.path.join(_LOCAL, "analysis results") if os.path.isdir(os.path.join(_LOCAL, "analysis results"))
+                    else os.path.join(_NAS, "Saved Data for Streamlit"))
 
 
 # ---------------------------------------------------------------------
