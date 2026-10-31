@@ -3966,10 +3966,8 @@ elif plot_mode == "Regime state model":
         st.warning("No runs found. Folder names must look like 3Tkb_1TauB_2000nm, 50Tkb_0.75TauB_1000F or 5Tkb_2TauB.")
         st.stop()
     import run_filter as rf
-    st.sidebar.caption("6. Runs to use (starts with the COMSOL runs, on which the boundary model was fitted; "
-                       "add Python runs or narrow by any parameter):")
-    rsm_obs = rf.filter_frame(rsm_obs, key=f"rsm__{rsm_root}", container=st.sidebar,
-                              defaults={"source": ["COMSOL"]})
+    st.sidebar.caption("6. Runs to use (all runs, Python and COMSOL, to start with; narrow by any parameter):")
+    rsm_obs = rf.filter_frame(rsm_obs, key=f"rsm2__{rsm_root}", container=st.sidebar)
     if rsm_obs.empty:
         st.warning("No runs pass the filter.")
         st.stop()
