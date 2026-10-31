@@ -4390,6 +4390,22 @@ elif plot_mode == "Run simulation":
                "box_half": float(SS.sim_box), "T_K": float(SS.sim_TK), "eta": float(SS.sim_eta) * 1e-3,
                "radius_um": float(SS.sim_rad), "max_step_um": float(SS.sim_cap)}
 
+        # ---- sanity checks before anything runs ----
+        try:
+            sg._with(cfg)
+            _r = np.array([1.999 * float(SS.sim_rad)])
+            _ao = (float(SS.sim_q), float(SS.sim_phi)) if pot == "AO" else None
+            _net = float(sg.bd.radial_force(_r, float(A) if pot == "LJ" else 0.0, _ao,
+                                            SS.sim_core if SS.sim_core != "none" else "off")[0])
+            if _net < 0:
+                st.error(f"The attraction pulls harder at contact than the repulsive core pushes (net {_net:.0f} k_BT/µm "
+                         "inward just inside contact): particles will pass through each other and B₂* is meaningless. "
+                         "Lower φ_p (tick 'Match φ_p to an LJ depth by B₂*'), raise q, or use a harder core.")
+        except Exception:
+            pass
+        if field and float(SS.sim_F0) * float(SS.sim_k) == 0:
+            st.error("The acoustic force is zero because F₀ or k in 'Force law' is 0. COMSOL values: F₀ = 18.4 k_BT/µm, k = 0.124 /µm.")
+
         # ---- previews ----
         st.subheader("Preview")
         pc1, pc2, pc3 = st.columns(3)
