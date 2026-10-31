@@ -4959,6 +4959,19 @@ elif plot_mode == "Run viewer":
                         fx, fy = parts[t_][0]
                         summary[f"{lab_} Fx, Fy (kBT/µm)"] = f"{fx:.2f}, {fy:.2f}  (|F| = {np.hypot(fx, fy):.2f})"
                     st.table(pd.DataFrame({"value": [str(v) for v in summary.values()]}, index=list(summary.keys())))
+                    if np.linalg.norm(parts["net"][0]) < 1e-3:
+                        Pk = np.c_[lx[k], ly[k]]
+                        rr = np.hypot(*(Pk - Pk[int(shown)]).T); rr[int(shown)] = np.inf
+                        rng_ = 2 * (1 + lmodel.ao[0]) if lmodel.ao else (6.0 if lmodel.A > 0 else 2.0)
+                        why = []
+                        if not (rr < rng_).any():
+                            why.append(f"no other particle within the {'AO' if lmodel.ao else 'LJ' if lmodel.A > 0 else 'core'} "
+                                       f"range ({rng_:.1f} µm centre to centre; nearest is {rr.min():.2f} µm)")
+                        else:
+                            why.append("the pulls from its neighbours cancel (symmetric surroundings, e.g. the start grid)")
+                        if not lmodel.dn and not lmodel.F:
+                            why.append("no acoustic field or flow in this run")
+                        st.info("Zero model force: " + "; ".join(why) + ". Only Brownian motion moves it now.")
                     if not SSv.get("rv_playing"):
                         st.markdown("**Neighbours within 6.5 µm** (bonded = closer than the bond cutoff; "
                                     "forces are the model forces from each neighbour on this particle)")
