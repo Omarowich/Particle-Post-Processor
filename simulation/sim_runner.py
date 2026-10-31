@@ -321,16 +321,23 @@ def run_queue(qdir, workers=None, priorities=None, out=None, watch=False, poll_s
         f = todo[0]
         src = os.path.join(qdir, f)
         print(f"{time.strftime('%H:%M')}  starting {f}  ({len(todo) - 1} more waiting)")
-        ok = True
-        try:
-            # a queue file without an output folder writes next to the queue's _batches folder (the Data folder)
-            dflt_out = out or (os.path.dirname(os.path.dirname(os.path.abspath(qdir)))
-                               if os.path.basename(os.path.dirname(os.path.abspath(qdir))) == "_batches" else None)
-            job = main(src, workers, priorities, dflt_out)
-            ok = job is not False
-        except Exception:
-            traceback.print_exc()
-            ok = False
+        # a queue file without an output folder writes next to the queue's _batches folder (the Data folder)
+        dflt_out = out or (os.path.dirname(os.path.dirname(os.path.abspath(qdir)))
+                           if os.path.basename(os.path.dirname(os.path.abspath(qdir))) == "_batches" else None)
+        w = int(workers or 4)
+        tries = [w] + [x for x in (w - 1, w - 2) if x >= 2]   # out of memory: retry with fewer at once
+        ok = False
+        for k, wk in enumerate(tries):
+            if k:
+                print(f"{time.strftime('%H:%M')}  retrying {f} with {wk} at once (finished runs are skipped)")
+                time.sleep(60)
+            try:
+                ok = main(src, wk, priorities, dflt_out) is not False
+            except Exception:
+                traceback.print_exc()
+                ok = False
+            if ok:
+                break
         dest = os.path.join(qdir, "done" if ok else "failed", time.strftime("%Y%m%d-%H%M_") + f)
         os.replace(src, dest)
         print(f"{time.strftime('%H:%M')}  {'finished' if ok else 'FAILED'} {f} -> {os.path.relpath(dest, qdir)}")
