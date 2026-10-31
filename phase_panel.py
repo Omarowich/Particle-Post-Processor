@@ -27,6 +27,7 @@ def make_snapshot_phase_panel(
     show_xy_labels=False,
     colorbar_cmap=None,   # NEW
     colorbar_label=None,  # NEW
+    folders=None,         # {TkB: run folder}; chosen by the run filter (else: one folder per TkB found by name)
 ):
 
     if plot_kwargs is None:
@@ -39,12 +40,15 @@ def make_snapshot_phase_panel(
     folder_re = re.compile(r"^([0-9]+(?:\.[0-9]+)?)Tkb_")
     tkb_rows = [float(t) for t in tkb_rows]
     tkb_to_folder = {}
-    for fname in sorted(os.listdir(base_dir)):
-        m = folder_re.match(fname)
-        if m:
-            tkb = float(m.group(1))
-            if tkb in tkb_rows:
-                tkb_to_folder[tkb] = os.path.join(base_dir, fname)
+    if folders:
+        tkb_to_folder = {float(k): v for k, v in folders.items() if float(k) in tkb_rows}
+    else:
+        for fname in sorted(os.listdir(base_dir)):
+            m = folder_re.match(fname)
+            if m:
+                tkb = float(m.group(1))
+                if tkb in tkb_rows:
+                    tkb_to_folder[tkb] = os.path.join(base_dir, fname)
 
     nrows, ncols = len(tkb_rows), len(column_times_s)
     fig, axes = plt.subplots(

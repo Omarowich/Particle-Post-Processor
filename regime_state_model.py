@@ -98,6 +98,10 @@ def parse_run_name(regime: str, name: str) -> dict | None:
         "potential": "AO" if re.search(r"(^|_)AO(_|$)", m.group(5) or "") else "LJ",
         "q": _tag_value(m.group(5), "q", float, np.nan),
         "phi_p": _tag_value(m.group(5), "phi", float, np.nan),
+        "dt": _tag_value(m.group(5), "dt", int, 0),
+        # anything else in the name (e.g. a tag like N256 or test2), for the run filters
+        "extra": "_".join(t for t in (m.group(5) or "").lstrip("_").split("_")
+                          if t and not re.fullmatch(r"(?i)(CS|BD|AO|core|q[\d.]+|phi[\d.]+|dt\d+|seed\d+)", t)),
     }
 
 
@@ -175,7 +179,7 @@ def _evaluate(x, y, t, t_eval_s, rc, box, lag_s):
 def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: float = 50.0,
                         common_time_tauB: float = 1.0, lag_tauB: float = 0.5,
                         progress=None) -> pd.DataFrame:
-    """One row per run at its last frame ('end'); ARF runs longer than
+    """One row per run at its last frame ('end'); runs longer than
     common_time_tauB also get a row at that time ('common'), so runs of
     different length can be compared."""
     runs = discover_runs(root, regimes)
@@ -186,7 +190,7 @@ def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: flo
         x, y, t = read_run(rd)
         T = t[-1]
         evals = [("end", T)]
-        if p["regime"] == "ARF" and T > 1.1 * common_time_tauB * TAUB_S:
+        if T > 1.1 * common_time_tauB * TAUB_S:     # every regime, so maps work at the common time too
             evals.append(("common", common_time_tauB * TAUB_S))
         for tag, te in evals:
             r = dict(p)
@@ -273,8 +277,14 @@ def fit_boundary(df, regime="ARF", param="dn", common_time_tauB=1.0) -> Boundary
     d = boundary_data(df, regime, param, common_time_tauB)
     y = (d.state != "fluid").astype(int).values
     if len(d) < 6 or y.min() == y.max():
+        allr = df[df.regime == regime].drop_duplicates("name")
+        lens = sorted(allr.T_actual_tauB.round(2).unique()) if len(allr) else []
+        hint = (f" The {len(allr)} {regime_label(regime)} runs in use last {', '.join(f'{v:g}' for v in lens)} τB, so none "
+                f"reaches t = {common_time_tauB} τB: lower the map time or include longer (e.g. Python) runs in the filter."
+                if len(allr) and max(lens) < 0.95 * common_time_tauB else
+                " The fit needs at least 6 runs at that time, some fluid and some not.")
         raise ValueError(f"Need runs of both outcomes in {regime_label(regime)} at t = {common_time_tauB} τB "
-                         f"(found {len(d)} runs, {int(y.sum())} non-fluid).")
+                         f"(found {len(d)} runs, {int(y.sum())} non-fluid)." + hint)
     X = np.c_[np.log10(d[param].values), d.A.values]
     mu, sd = X.mean(0), X.std(0)
     sd[sd == 0] = 1.0

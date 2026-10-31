@@ -39,6 +39,7 @@ class RunModel:
     A: float = 0.0
     dn: float = 0.0
     ao: tuple | None = None
+    F: float = 0.0                     # streaming body force F0 (N/m^3), Regime IV
     notes: list = field(default_factory=list)
 
     @classmethod
@@ -57,7 +58,10 @@ class RunModel:
         if regime != "ARF":
             m.dn = 0.0
             if regime == "ASF":
-                m.notes.append("Regime IV: acoustic streaming is not modelled here, no field force shown")
+                F = p.get("F", np.nan)
+                m.F = float(F) if F is not None and np.isfinite(F) else 0.0
+                if not m.F:
+                    m.notes.append("Regime IV: no F0 in the folder name, so no streaming drag shown")
             if regime == "AAF":
                 m.notes.append("Regime III: field off")
         if not p:
@@ -66,7 +70,8 @@ class RunModel:
 
     def label(self):
         pot = f"AO q={self.ao[0]:g}, φp={self.ao[1]:g}" if self.ao else f"LJ A={self.A:g} kBT"
-        return f"{pot}; d_n = {self.dn:g} nm" + ("" if self.dn else " (no acoustic force)")
+        fld = f"streaming F0 = {self.F:g} N/m³" if self.F else (f"d_n = {self.dn:g} nm" if self.dn else "no acoustic force")
+        return f"{pot}; {fld}"
 
 
 def radial_force(r, model: RunModel):
@@ -107,6 +112,55 @@ def forces_on(P, i, model: RunModel, r_max=6.5):
     f_pair = contrib.sum(0) if len(js) else np.zeros(2)
     f_arf = np.array([0.0, float(arf_force_y(P[i, 1], model))])
     return f_pair, f_arf, js, r[js], fr, contrib
+
+
+FORCE_TYPES = {"attraction": ("#6250d6", "LJ / AO pair force"),
+               "core": ("#8a8980", "repulsive core"),
+               "acoustic": ("#1baf7a", "acoustic radiation"),
+               "streaming": ("#2a78d6", "streaming drag"),
+               "net": ("#e34948", "net (sum of all)")}
+_FLOW = None
+
+
+def streaming_drag(P, model: RunModel):
+    """Drag of the Regime IV streaming flow on each particle, kBT/µm (F/kBT = v/D), from the COMSOL flow export."""
+    global _FLOW
+    if not model.F:
+        return np.zeros_like(P)
+    if _FLOW is None:
+        import sys
+        sim = os.path.join(os.path.dirname(os.path.abspath(__file__)), "simulation")
+        if sim not in sys.path:
+            sys.path.insert(0, sim)
+        import airpods_bd as _bd
+        _FLOW = _bd
+    D = KB * T_K / (6 * np.pi * 2.9e-3 * A_P * 1e-6) * 1e12        # µm²/s
+    return _FLOW.asf_flow(P, model.F) / D
+
+
+def force_parts(P, model: RunModel, idx=None, r_max=6.5):
+    """Model forces on the particles idx (default all), split by origin: {type: (n, 2) array} in kBT/µm."""
+    idx = np.arange(len(P)) if idx is None else np.asarray(idx, int)
+    out = {k: np.zeros((len(idx), 2)) for k in FORCE_TYPES}
+    if not len(idx):
+        return out
+    att_model = RunModel(regime=model.regime, A=model.A, ao=model.ao)
+    for n, i in enumerate(idx):
+        d = P[i] - P
+        r = np.linalg.norm(d, axis=1)
+        r[i] = np.inf
+        js = np.where(r < r_max)[0]
+        if not len(js):
+            continue
+        rj = r[js]
+        core = np.where(rj < 2 * A_P, CORE_K / rj ** 2, 0.0)
+        total = radial_force(rj, att_model)
+        out["core"][n] = ((core / rj)[:, None] * d[js]).sum(0)
+        out["attraction"][n] = (((total - core) / rj)[:, None] * d[js]).sum(0)
+    out["acoustic"][:, 1] = arf_force_y(P[idx, 1], model)
+    out["streaming"] = streaming_drag(P[idx], model)
+    out["net"] = out["attraction"] + out["core"] + out["acoustic"] + out["streaming"]
+    return out
 
 
 def all_forces(P, model: RunModel):
@@ -409,8 +463,13 @@ def make_gif(runs, opts: DrawOptions, *, t_start_s, t_end_s, n_frames=60, fps=12
 
 
 # --------------------------------------------------------------------------- live view (plotly)
-def live_figure(x, y, t, k, opts: DrawOptions, model=None, selected=None, height=720, show_arrows=True):
-    """Plotly figure of one frame; particles carry their index as customdata so a click selects them."""
+def live_figure(x, y, t, k, opts: DrawOptions, model=None, selected=None, height=720, show_arrows=True,
+                arrow_types=("attraction", "core", "acoustic", "streaming", "net"), arrows_for="selected",
+                arrow_scale=None, arrow_max=8.0, primary=None):
+    """Plotly figure of one frame; particles carry their index as customdata so a click selects them.
+    selected: one particle or a list (all get a red ring); primary: the one whose bonded neighbours are marked.
+    Force arrows: arrow_types (keys of FORCE_TYPES), for the selected particles or "all";
+    arrow_scale = µm of arrow per kBT/µm (None: automatic), arrows longer than arrow_max µm are clipped."""
     import plotly.graph_objects as go
     P = np.c_[x[k], y[k]]
     cache = frame_fields(P, opts.rc)
@@ -452,36 +511,52 @@ def live_figure(x, y, t, k, opts: DrawOptions, model=None, selected=None, height
     for (px_, py_), fc in zip(P, fills):
         shapes.append(dict(type="circle", xref="x", yref="y", x0=px_ - R, y0=py_ - R, x1=px_ + R, y1=py_ + R,
                            fillcolor=fc, line=dict(color=opts.edge_color, width=0.6), layer="below"))
+    sel = ([] if selected is None else [int(selected)] if np.isscalar(selected) else [int(v) for v in selected])
+    sel = [v for v in sel if 0 <= v < len(P)]
+    if primary is None and sel:
+        primary = sel[-1]
     sel_ring = []
-    if selected is not None and 0 <= selected < len(P):
-        f_pair, f_arf, js, rj, fr, contrib = forces_on(P, selected, model or RunModel())
-        bonded = js[rj < opts.rc]
-        for j_ in bonded:
+    if primary is not None and 0 <= primary < len(P):
+        f_pair, f_arf, js, rj, fr, contrib = forces_on(P, primary, model or RunModel())
+        for j_ in js[rj < opts.rc]:
             sel_ring.append(dict(type="circle", xref="x", yref="y", x0=P[j_, 0] - R, y0=P[j_, 1] - R,
                                  x1=P[j_, 0] + R, y1=P[j_, 1] + R, line=dict(color="#eda100", width=3)))
-        sel_ring.append(dict(type="circle", xref="x", yref="y", x0=P[selected, 0] - 1.15 * R,
-                             y0=P[selected, 1] - 1.15 * R, x1=P[selected, 0] + 1.15 * R,
-                             y1=P[selected, 1] + 1.15 * R, line=dict(color="#e34948", width=4)))
+    for v in sel:
+        sel_ring.append(dict(type="circle", xref="x", yref="y", x0=P[v, 0] - 1.15 * R, y0=P[v, 1] - 1.15 * R,
+                             x1=P[v, 0] + 1.15 * R, y1=P[v, 1] + 1.15 * R,
+                             line=dict(color="#e34948", width=4 if v == primary else 2.5)))
     fig.update_layout(shapes=shapes + sel_ring)
     if cbar_trace is not None:
         fig.add_trace(cbar_trace)
     fig.add_trace(go.Scatter(x=P[:, 0], y=P[:, 1], mode="markers", customdata=np.arange(len(P)),
                              marker=dict(size=14, color="rgba(0,0,0,0.01)"),
                              hovertext=hover, hoverinfo="text", showlegend=False, name="particles"))
-    if selected is not None and 0 <= selected < len(P):
-        if show_arrows:
-            fmax = max(np.linalg.norm(f_pair), np.linalg.norm(f_arf), np.linalg.norm(f_pair + f_arf), 1e-9)
-            L = 6.0
-            for vec, col, name in ((f_pair, "#6250d6", "pair"), (f_arf, "#1baf7a", "acoustic"),
-                                   (f_pair + f_arf, "#e34948", "net")):
-                if np.linalg.norm(vec) < 1e-9:
+    who = list(range(len(P))) if arrows_for == "all" else sel
+    if show_arrows and who and arrow_types:
+        parts = force_parts(P, model or RunModel(), who)
+        mags = np.concatenate([np.linalg.norm(parts[t_], axis=1) for t_ in arrow_types])
+        mags = mags[mags > 1e-9]
+        scale = arrow_scale if arrow_scale else (3.0 / np.median(mags) if len(mags) else 1.0)
+        for t_ in arrow_types:
+            col, label = FORCE_TYPES[t_]
+            vec = parts[t_]
+            mag = np.linalg.norm(vec, axis=1)
+            xs, ys, sizes, txt = [], [], [], []
+            for n, i in enumerate(who):
+                if mag[n] < 1e-9:
                     continue
-                e = P[selected] + L * vec / fmax
-                fig.add_annotation(x=e[0], y=e[1], ax=P[selected, 0], ay=P[selected, 1], xref="x", yref="y",
-                                   axref="x", ayref="y", showarrow=True, arrowhead=3, arrowwidth=2.5,
-                                   arrowcolor=col, text="")
-                fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", line=dict(color=col, width=3),
-                                         name=f"{name} force"))
+                L = min(mag[n] * scale, arrow_max)
+                e = P[i] + vec[n] / mag[n] * L
+                xs += [P[i, 0], e[0], None]
+                ys += [P[i, 1], e[1], None]
+                sizes += [0, 9 if arrows_for != "all" else 6, 0]
+                txt += ["", f"particle {i}: {label} {mag[n]:.2f} kBT/µm" + (" (clipped)" if mag[n] * scale > arrow_max else ""), ""]
+            if not xs:
+                continue
+            fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines+markers", name=f"{label}",
+                                     line=dict(color=col, width=2.5 if arrows_for != "all" else 1.5),
+                                     marker=dict(symbol="arrow", size=sizes, angleref="previous", color=col),
+                                     hovertext=txt, hoverinfo="text"))
     title = []
     if opts.show_time:
         title.append(f"t = {t[k] / TAUB_S:.2f} τB (frame {k})")

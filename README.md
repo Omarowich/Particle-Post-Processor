@@ -46,3 +46,11 @@ same time. The tab lists every run (existing ones are skipped) with a time estim
 one job (progress in the Jobs tab), and can save it to `<Data>/_batches/`. A saved batch also runs without the
 app: `python simulation/sim_runner.py "<Data>/_batches/<name>.json"`. Keep "runs at the same time" below your
 number of cores and don't run two jobs at once; each run is its own Python process.
+
+## Run filter (every page)
+
+Every page that lists runs (Multiple plots, Function mixer, Summary plots, Phase diagram, Regime state model,
+Run viewer) has a **Filter runs** box: one multiselect per parameter read from the folder names (regime,
+Python/COMSOL, LJ/AO, A = TkB, run length = TauB, d_n, F₀, q, φ_p, time step, seed, other tags such as N256),
+shown only when the runs differ in it, plus a "name contains" box. The Phase diagram then asks which run to show
+when several pass the filter for one TkB row; the Regime state model starts with the COMSOL runs selected.

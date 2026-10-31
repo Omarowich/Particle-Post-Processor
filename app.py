@@ -631,59 +631,16 @@ def sidebar_runs_common_ui(
         return base
 
     if available_runs:
-        all_tkbs = sorted({r[1] for r in available_runs})
-        all_taus = sorted({r[2] for r in available_runs})
-        all_thirds = sorted({r[3] for r in available_runs if r[3] is not None})
-        all_units = sorted({r[4] for r in available_runs if r[4] is not None})
+        import run_filter as rf
+        _keep = rf.widgets(rf.metas_from_paths([r[0] for r in available_runs]), key=f"multi__{dataset_tag}",
+                           container=st.sidebar)
+        filtered_runs = [r for r, k in zip(available_runs, _keep) if k]
 
-        st.sidebar.markdown("**Filter runs:**")
-        _is_bd = lambda r: bool(re.search(r"(^|_)BD(_|$)", run_tag(r[0])))
-        if any(_is_bd(r) for r in available_runs) and not all(_is_bd(r) for r in available_runs):
-            src = st.sidebar.radio("Source", ["COMSOL and Python", "COMSOL only", "Python (BD) only"],
-                                   horizontal=False, key=f"multi_filter_src__{dataset_tag}")
-            if src == "COMSOL only":
-                available_runs = [r for r in available_runs if not _is_bd(r)]
-            elif src == "Python (BD) only":
-                available_runs = [r for r in available_runs if _is_bd(r)]
-            all_tkbs = sorted({r[1] for r in available_runs})
-            all_taus = sorted({r[2] for r in available_runs})
-            all_thirds = sorted({r[3] for r in available_runs if r[3] is not None})
-            all_units = sorted({r[4] for r in available_runs if r[4] is not None})
-        # Widget keys are namespaced by dataset_tag so switching data folders
-        # always starts with everything selected instead of carrying over the
-        # previous folder's (likely mismatched) TkB/TauB/run selections.
-        filter_tkbs = st.sidebar.multiselect(
-            "TkB values", all_tkbs, default=all_tkbs, key=f"multi_filter_tkb__{dataset_tag}"
-        )
-        filter_taus = st.sidebar.multiselect(
-            "TauB values", all_taus, default=all_taus, key=f"multi_filter_tau__{dataset_tag}"
-        )
-        if all_thirds:
-            unit_label = "/".join(all_units) if all_units else "3rd param"
-            filter_thirds = st.sidebar.multiselect(
-                f"{unit_label} values", all_thirds, default=all_thirds,
-                key=f"multi_filter_third__{dataset_tag}"
-            )
-        else:
-            filter_thirds = []
-
-        def run_passes_filter(r):
-            if r[1] not in filter_tkbs:
-                return False
-            if r[2] not in filter_taus:
-                return False
-            if all_thirds and r[3] not in filter_thirds:
-                return False
-            return True
-
-        filtered_runs = [r for r in available_runs if run_passes_filter(r)]
-
-        # Re-select every filtered run whenever the TkB/TauB/3rd-param filter
-        # choice itself changes, instead of keeping whatever subset of runs
-        # was previously (de)selected -- a filter change means "show me
-        # everything matching this new filter", not "keep my old picks".
+        # Re-select every filtered run whenever the filter itself changes, instead of keeping whatever
+        # subset of runs was previously (de)selected -- a filter change means "show me everything
+        # matching this new filter", not "keep my old picks".
         runs_key = f"multi_runs__{dataset_tag}"
-        filter_signature = (tuple(sorted(filter_tkbs)), tuple(sorted(filter_taus)), tuple(sorted(filter_thirds)))
+        filter_signature = tuple(_keep)
         filter_signature_key = f"multi_runs_filter_signature__{dataset_tag}"
         if st.session_state.get(filter_signature_key) != filter_signature:
             st.session_state[runs_key] = filtered_runs
@@ -692,7 +649,6 @@ def sidebar_runs_common_ui(
         selected_runs = st.sidebar.multiselect(
             "Select runs (from filtered):",
             options=filtered_runs,
-            default=filtered_runs,
             key=runs_key,
             format_func=format_run_option,
         )
@@ -2850,14 +2806,26 @@ elif plot_mode == "Phase diagram":
     st.sidebar.header("3. TkB rows")
 
     available_tkbs_phase = []
+    phase_folders = {}          # TkB -> the run folder shown in that row
     if base_dir and os.path.isdir(base_dir):
         try:
-            folder_re = re.compile(r"^([0-9]+(?:\.[0-9]+)?)Tkb_")
-            for fn in os.listdir(base_dir):
-                m = folder_re.match(fn)
-                if m:
-                    available_tkbs_phase.append(float(m.group(1)))
-            available_tkbs_phase = sorted(set(available_tkbs_phase))
+            import run_filter as rf
+            _names = sorted(fn for fn in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, fn)))
+            _metas = [rf.meta(fn, os.path.basename(base_dir.rstrip("\\/"))) for fn in _names]
+            _keep = rf.widgets(_metas, key=f"phase__{base_dir}", container=st.sidebar,
+                               title="Filter runs (one run per TkB row)")
+            by_tkb = {}
+            for fn, m, k in zip(_names, _metas, _keep):
+                if k and m is not None:
+                    by_tkb.setdefault(float(m["A"]), []).append(fn)
+            available_tkbs_phase = sorted(by_tkb)
+            for tkb, fns in by_tkb.items():
+                if len(fns) > 1:
+                    pick = st.sidebar.selectbox(f"Run for TkB = {tkb:g} ({len(fns)} pass the filter)", fns,
+                                                key=f"phase_pick__{base_dir}__{tkb:g}")
+                else:
+                    pick = fns[0]
+                phase_folders[tkb] = os.path.join(base_dir, pick)
         except Exception as e:
             st.sidebar.error(f"Could not scan TkB folders in {base_dir}: {e}")
 
@@ -3116,6 +3084,7 @@ elif plot_mode == "Phase diagram":
         cb_label = None
 
     fig, axes = make_snapshot_phase_panel(
+        folders=phase_folders,
         base_dir=base_dir,
         tkb_rows=tkb_rows,
         column_times_s=column_times_s,
@@ -3245,12 +3214,18 @@ elif plot_mode == "Summary plots":
         return f"{tkb:g} Tkb (TauB: {tau:g})"
 
 
+    import run_filter as rf
+    _keep = rf.widgets(rf.metas_from_paths([r[0] for r in available_runs]), key=f"summary__{base_dir}",
+                       container=st.sidebar)
+    _summary_opts = [r for r, k in zip(available_runs, _keep) if k]
+    if st.session_state.get("summary_runs_sig") != tuple(_keep):     # new filter: select everything it lets through
+        st.session_state["summary_runs"] = _summary_opts
+        st.session_state["summary_runs_sig"] = tuple(_keep)
     selected_runs = st.sidebar.multiselect(
         "Select runs:",
-        options=available_runs,
-        default=available_runs,
+        options=_summary_opts,
         key="summary_runs",
-        format_func=format_run_option,
+        format_func=lambda r: f"{r[1]:g} Tkb (TauB: {r[2]:g})  {os.path.basename(r[0])}",
     )
 
 
@@ -3974,15 +3949,14 @@ elif plot_mode == "Regime state model":
     if rsm_obs.empty:
         st.warning("No runs found. Folder names must look like 3Tkb_1TauB_2000nm, 50Tkb_0.75TauB_1000F or 5Tkb_2TauB.")
         st.stop()
-    if "source" in rsm_obs and rsm_obs.source.nunique() > 1:
-        rsm_src = st.sidebar.radio("6. Runs to use", ["COMSOL only", "COMSOL and Python", "Python (BD) only"],
-                                   key="rsm_source",
-                                   help="The folder holds both COMSOL (_CS) and Python (_BD) runs. "
-                                        "The original boundary model is fitted on the COMSOL runs.")
-        if rsm_src == "COMSOL only":
-            rsm_obs = rsm_obs[rsm_obs.source == "COMSOL"]
-        elif rsm_src == "Python (BD) only":
-            rsm_obs = rsm_obs[rsm_obs.source == "BD"]
+    import run_filter as rf
+    st.sidebar.caption("6. Runs to use (starts with the COMSOL runs, on which the boundary model was fitted; "
+                       "add Python runs or narrow by any parameter):")
+    rsm_obs = rf.filter_frame(rsm_obs, key=f"rsm__{rsm_root}", container=st.sidebar,
+                              defaults={"source": ["COMSOL"]})
+    if rsm_obs.empty:
+        st.warning("No runs pass the filter.")
+        st.stop()
     rsm_df = rsm.label_runs(rsm_obs, rsm_th)
 
     tab_states, tab_map, tab_trans, tab_next, tab_checks = st.tabs(
@@ -4100,14 +4074,12 @@ elif plot_mode == "Paper figures":
                         out.append((reg, n, os.path.getmtime(f)))
         return tuple(out)
 
-    st.sidebar.header("2. Data folders")
-    pf_bd = st.sidebar.text_input("Python BD runs (folder with the regime folders):",
+    st.sidebar.header("2. Data folder")
+    pf_bd = st.sidebar.text_input("Data folder (with NAF / ARF / AAF / ASF; Python and COMSOL runs together):",
                                   value=_default_runs_root(source_root),
                                   key="pf_bd")
     pf_bd = clean_path(pf_bd)
-    pf_co = st.sidebar.text_input("COMSOL runs (folder with the regime folders, for figures 0, 2 and 10):",
-                                  value=source_root or "", key="pf_co")
-    pf_co = clean_path(pf_co)
+    pf_co = pf_bd             # since the data merge, COMSOL runs (_CS) sit in the same regime folders
     st.sidebar.header("3. Figures")
     pf_keys = st.sidebar.multiselect("Fixed deck figures to draw:", list(pf.FIGURES), default=[],
                                      format_func=lambda k: f"{k.split('_')[0]}  {pf.FIGURES[k]}", key="pf_keys")
@@ -4640,8 +4612,10 @@ elif plot_mode == "Run viewer":
 
     rv_all = rv.list_run_folders(rv_base)
     st.sidebar.header("3. Runs (up to 4, shown side by side)")
-    rv_filter = st.sidebar.text_input("Filter names (e.g. 2750nm AO seed1):", value="", key="rv_filter")
-    rv_opts = [r for r in rv_all if all(tok.lower() in r.lower() for tok in rv_filter.split())]
+    import run_filter as rf
+    _rv_keep = rf.widgets([rf.meta(n, rv_regime) for n in rv_all], key=f"rv__{rv_base}", container=st.sidebar,
+                          expanded=False)
+    rv_opts = [r for r, k in zip(rv_all, _rv_keep) if k] + [r for r in rv_all if rf.meta(r, rv_regime) is None]
     rv_sel = st.sidebar.multiselect("Runs:", rv_opts, default=rv_opts[:1], key="rv_runs")
     if len(rv_sel) > 4:
         st.sidebar.warning("Showing the first 4 selected runs.")
@@ -4763,66 +4737,139 @@ elif plot_mode == "Run viewer":
         lx, ly, lt = rv_runs[li][1]
         lmodel = rv_models[li]
         n_frames = len(lt)
-        if "rv_live_k" not in st.session_state or st.session_state["rv_live_k"] >= n_frames:
-            st.session_state["rv_live_k"] = n_frames - 1
-        cA, cB, cC, cD, cE = st.columns([1, 1, 6, 1, 1])
-        step = max(n_frames // 100, 1)
-        if cA.button("⏮", key="rv_first"):
-            st.session_state["rv_live_k"] = 0
-        if cB.button("◀", key="rv_prev"):
-            st.session_state["rv_live_k"] = max(st.session_state["rv_live_k"] - step, 0)
-        if cD.button("▶", key="rv_next"):
-            st.session_state["rv_live_k"] = min(st.session_state["rv_live_k"] + step, n_frames - 1)
-        if cE.button("⏭", key="rv_last"):
-            st.session_state["rv_live_k"] = n_frames - 1
-        k = cC.slider("Frame", 0, n_frames - 1, key="rv_live_k",
-                      help=f"Saved frames; ◀ ▶ move {step} frame(s) = {lt[min(step, n_frames - 1)] / rv.TAUB_S:.2f} τB.")
-        st.caption(f"Model for the forces: {lmodel.label()}." + (" Note: " + "; ".join(lmodel.notes) if lmodel.notes else ""))
+        SSv = st.session_state
+        if "rv_live_k" not in SSv or SSv["rv_live_k"] >= n_frames:
+            SSv["rv_live_k"] = n_frames - 1
+        sel_key = f"rv_live_selset_{live_name}"
+        SSv.setdefault(sel_key, [])
 
-        sel_key = f"rv_live_sel_{live_name}"
-        selected = st.session_state.get(sel_key)
-        col_plot, col_info = st.columns([3, 2])
-        with col_plot:
-            show_arrows = st.checkbox("Force arrows on the selected particle", True, key="rv_live_arrows")
-            lfig = rv.live_figure(lx, ly, lt, k, rv_opts_draw, lmodel, selected, show_arrows=show_arrows)
-            event = None
+        # ---- playback and display settings (outside the auto-refreshing part)
+        pc = st.columns([1.1, 1.3, 1.3, 1.4, 2.6])
+        playing = SSv.get("rv_playing", False)
+        if pc[0].button("⏸ Pause" if playing else "▶ Play", key="rv_play_btn", type="primary"):
+            SSv["rv_playing"] = not playing
+            if not playing and SSv["rv_live_k"] >= n_frames - 1:
+                SSv["rv_live_k"] = 0
+            st.rerun()
+        play_step = pc[1].number_input("frames per step", 1, max(1, n_frames // 2), max(1, n_frames // 100),
+                                       key="rv_play_step")
+        play_dt = pc[2].select_slider("seconds per step", [0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0], 0.5, key="rv_play_dt")
+        play_loop = pc[3].checkbox("loop", True, key="rv_play_loop")
+        pc[4].caption(f"Model for the forces: {lmodel.label()}." +
+                      (" Note: " + "; ".join(lmodel.notes) if lmodel.notes else ""))
+        with st.expander("Force arrows", expanded=True):
+            fa = st.columns([3.2, 1.6, 1.4, 1.4])
+            arrow_types = fa[0].multiselect("Show", list(rv.FORCE_TYPES), default=["attraction", "acoustic", "streaming", "net"],
+                                            format_func=lambda k_: rv.FORCE_TYPES[k_][1], key="rv_arrow_types",
+                                            help="Untick a force to hide its arrows. Colours: pair force violet, core grey, "
+                                                 "acoustic green, streaming blue, net red.")
+            arrows_for = fa[1].radio("For", ["selected", "all"], format_func={"selected": "selected particles",
+                                                                             "all": "all particles"}.get,
+                                     key="rv_arrows_for", horizontal=True)
+            auto_len = fa[2].checkbox("automatic length", True, key="rv_arrow_auto")
+            a_scale = None if auto_len else fa[2].number_input("µm per k_BT/µm", 0.001, 10.0, 0.1, format="%.3f",
+                                                             key="rv_arrow_scale")
+            a_max = fa[3].number_input("clip arrows at (µm)", 1.0, 50.0, 8.0, 1.0, key="rv_arrow_max",
+                                       help="The core force at overlap can be huge; longer arrows are cut here "
+                                            "(hover an arrow head for its real size).")
+
+        def _rerun_part():
+            """Redraw only the live panel when possible (a fragment rerun), else the page."""
             try:
-                event = st.plotly_chart(lfig, key=f"rv_live_chart_{live_name}", on_select="rerun",
-                                        selection_mode="points", use_container_width=False)
-            except TypeError:
-                st.plotly_chart(lfig)
-                st.caption("Your Streamlit version can't report clicks; type the particle number on the right.")
-            pts = []
-            try:
-                pts = event.selection.points if event and event.selection else []
-            except Exception:
-                pts = []
-            if pts:
-                cd = pts[0].get("customdata")
-                new = int(cd[0] if isinstance(cd, (list, tuple)) else cd) if cd is not None else None
-                if new is not None and new != selected:
-                    st.session_state[sel_key] = new
-                    st.rerun()
-        with col_info:
-            typed = st.number_input("Particle number (or click one)", 0, lx.shape[1] - 1,
-                                    int(selected) if selected is not None else 0, key=f"rv_live_typed_{live_name}")
-            if st.button("Select", key="rv_live_pick"):
-                st.session_state[sel_key] = int(typed)
+                st.rerun(scope="fragment")
+            except Exception:     # not inside a fragment rerun right now
                 st.rerun()
-            if selected is None:
-                st.info("Click a particle in the plot (or type its number) to see its values.")
-            else:
-                summary, rows = rv.particle_report(lx, ly, lt, k, int(selected), lmodel, float(rv_rc))
-                st.subheader(f"Particle {selected}")
-                st.table(pd.DataFrame({"value": [str(v) for v in summary.values()]}, index=list(summary.keys())))
-                st.markdown("**Neighbours within 6.5 µm** (bonded = closer than the bond cutoff; "
-                            "forces are the model forces from each neighbour on this particle)")
-                st.dataframe(pd.DataFrame(rows), hide_index=True)
-                st.caption("Measured velocity comes from neighbouring saved frames, so it is dominated by "
-                           "Brownian motion; compare it with the drift D·F and the Brownian speed scale. "
-                           "The repulsive core is stiff (about 140 kBT/µm at contact), so a neighbour that is "
-                           "momentarily closer than 2 µm gives a large, short-lived push; averaged over time, the "
-                           "pair forces in a packed band balance the acoustic force.")
+
+        @st.fragment(run_every=play_dt if playing else None)
+        def _live_panel():
+            if SSv.get("rv_playing"):
+                nk = SSv["rv_live_k"] + int(play_step)
+                if nk >= n_frames:
+                    if play_loop:
+                        nk = 0
+                    else:
+                        nk = n_frames - 1
+                        SSv["rv_playing"] = False
+                SSv["rv_live_k"] = nk
+            cA, cB, cC, cD, cE = st.columns([1, 1, 6, 1, 1])
+            step = int(play_step)
+            if cA.button("⏮", key="rv_first"):
+                SSv["rv_live_k"] = 0
+            if cB.button("◀", key="rv_prev"):
+                SSv["rv_live_k"] = max(SSv["rv_live_k"] - step, 0)
+            if cD.button("▶", key="rv_next"):
+                SSv["rv_live_k"] = min(SSv["rv_live_k"] + step, n_frames - 1)
+            if cE.button("⏭", key="rv_last"):
+                SSv["rv_live_k"] = n_frames - 1
+            k = cC.slider("Frame", 0, n_frames - 1, key="rv_live_k",
+                          help=f"Saved frames; ◀ ▶ and Play move {step} frame(s) = "
+                               f"{lt[min(step, n_frames - 1)] / rv.TAUB_S:.2f} τB.")
+            sel_list = SSv[sel_key]
+            col_plot, col_info = st.columns([3, 2])
+            with col_plot:
+                lfig = rv.live_figure(lx, ly, lt, k, rv_opts_draw, lmodel, sel_list, show_arrows=bool(arrow_types),
+                                      arrow_types=tuple(arrow_types), arrows_for=arrows_for, arrow_scale=a_scale,
+                                      arrow_max=float(a_max), primary=SSv.get(sel_key + "_primary"))
+                event = None
+                try:
+                    event = st.plotly_chart(lfig, key=f"rv_live_chart_{live_name}", on_select="rerun",
+                                            selection_mode="points", use_container_width=False)
+                except TypeError:
+                    st.plotly_chart(lfig)
+                    st.caption("Your Streamlit version can't report clicks; add particle numbers on the right.")
+                pts = []
+                try:
+                    pts = event.selection.points if event and event.selection else []
+                except Exception:
+                    pts = []
+                clicked = None
+                for p_ in pts:
+                    cd = p_.get("customdata")
+                    if cd is not None:
+                        clicked = int(cd[0] if isinstance(cd, (list, tuple)) else cd)
+                if clicked is not None and clicked != SSv.get(sel_key + "_lastclick"):
+                    SSv[sel_key + "_lastclick"] = clicked
+                    cur = list(SSv[sel_key])
+                    if clicked in cur:          # click again = untick
+                        cur.remove(clicked)
+                    else:
+                        cur.append(clicked)
+                        SSv[sel_key + "_primary"] = clicked
+                    SSv[sel_key] = cur
+                    SSv[sel_key + "_ver"] = SSv.get(sel_key + "_ver", 0) + 1   # list widget shows the click
+                    _rerun_part()
+            with col_info:
+                st.caption("Click a particle to mark it, click it again to untick it. Several can be marked; "
+                           "the force arrows are drawn for all marked particles.")
+                ver = SSv.get(sel_key + "_ver", 0)
+                cur = st.multiselect("Marked particles", list(range(lx.shape[1])), default=SSv[sel_key],
+                                     key=f"rv_live_ms_{live_name}_{ver}")
+                if cur != SSv[sel_key]:
+                    SSv[sel_key] = cur          # edited in the list: keep the list widget as it is
+                    _rerun_part()
+                if st.button("Clear all", key="rv_live_clear"):
+                    SSv[sel_key] = []
+                    SSv[sel_key + "_lastclick"] = None
+                    SSv[sel_key + "_ver"] = ver + 1
+                    _rerun_part()
+                if SSv[sel_key]:
+                    shown = st.selectbox("Details for", SSv[sel_key], index=len(SSv[sel_key]) - 1,
+                                         key=f"rv_live_detail_{live_name}")
+                    SSv[sel_key + "_primary"] = shown
+                    summary, rows = rv.particle_report(lx, ly, lt, k, int(shown), lmodel, float(rv_rc))
+                    parts = rv.force_parts(np.c_[lx[k], ly[k]], lmodel, [int(shown)])
+                    for t_, (c_, lab_) in rv.FORCE_TYPES.items():
+                        fx, fy = parts[t_][0]
+                        summary[f"{lab_} Fx, Fy (kBT/µm)"] = f"{fx:.2f}, {fy:.2f}  (|F| = {np.hypot(fx, fy):.2f})"
+                    st.table(pd.DataFrame({"value": [str(v) for v in summary.values()]}, index=list(summary.keys())))
+                    if not SSv.get("rv_playing"):
+                        st.markdown("**Neighbours within 6.5 µm** (bonded = closer than the bond cutoff; "
+                                    "forces are the model forces from each neighbour on this particle)")
+                        st.dataframe(pd.DataFrame(rows), hide_index=True)
+                else:
+                    st.info("No particle marked yet.")
+
+        _live_panel()
 
     st.stop()
 

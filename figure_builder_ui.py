@@ -21,7 +21,7 @@ def _fmt(v):
     if v == "any":
         return "any"
     if isinstance(v, str):
-        return {"BD": "Python", "CS": "COMSOL", **REGIME_NAMES}.get(v, v)
+        return {"BD": "Python", "COMSOL": "COMSOL", "CS": "COMSOL", **REGIME_NAMES}.get(v, v)
     return f"{v:g}"
 
 
