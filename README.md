@@ -11,6 +11,18 @@ Every figure of the "Python model / AO vs LJ" deck can be rebuilt from the run f
 Figures 6 / 6a (two-particle B₂ and AO force check) come from `simulation/verify_ao.py`.
 The simulations themselves: `simulation/airpods_bd.py` (plans `validation`, `revision`, `ao`).
 
+## Figure builder (editable paper figures)
+
+**Output type → Paper figures → Figure builder.** Every figure is a recipe (JSON in `<Data>/_figures/`):
+panels (a measure each, optionally only one d_n / A / F₀) and lines (which runs: regime, Python/COMSOL,
+LJ/AO, A, d_n, F₀, length, q, φ_p, name tag; colour, line style, marker, seed band). Two kinds: over time, or
+the end value / break-up time against a run parameter. *Add starter recipes* writes editable versions of the
+deck figures. *Re-make all figures* redraws every saved recipe from the current runs, and so does
+
+    python figure_builder.py --data "D:/Work/AIRPODS Paper 2627/Data" --out figures
+
+The fixed deck figures (B₂* explainer, seeds, state map, g(r), snapshots, ...) are in the second tab.
+
 ## Run simulation (GUI for the Python Brownian dynamics)
 
 **Output type → Run simulation** runs `simulation/airpods_bd.py` from the app:

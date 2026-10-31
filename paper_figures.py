@@ -146,13 +146,13 @@ def _stamp(rd):
                  for f in ("datax.csv", "datay.csv"))
 
 
-def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=True):
+def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=True, sources=("BD",)):
     """DataFrame of observables over time for every BD run, plus end-frame pair distances.
 
     Returns (df, pairs) with pairs[(regime, name)] = all pair distances at the last frame.
     """
     # only the Python runs: the folder may also hold COMSOL runs (_CS) since the data merge
-    runs = [(q, rd) for q, rd in rsm.discover_runs(bd_root, regimes=("ARF", "NAF", "AAF", "ASF")) if q.get("source") == "BD"]
+    runs = [(q, rd) for q, rd in rsm.discover_runs(bd_root, regimes=("ARF", "NAF", "AAF", "ASF")) if q.get("source") in sources]
     cache_file = os.path.join(bd_root, CACHE_NAME)
     cache = {}
     if use_cache and os.path.isfile(cache_file):
@@ -198,8 +198,9 @@ def load_series(bd_root, every=EVERY, workers=None, progress=None, use_cache=Tru
             pass
     rows = [r for (_, rr, _) in out.values() for r in rr]
     df = pd.DataFrame(rows, columns=["regime", "name", "t", *OBS])
-    meta = pd.DataFrame([{k: p[k] for k in ("regime", "name", "A", "T_name", "dn", "F", "tags", "seed",
-                                             "potential", "q", "phi_p")} for p, _ in runs])
+    meta = pd.DataFrame([{**{k: p[k] for k in ("regime", "name", "A", "T_name", "dn", "F", "tags", "seed",
+                                                "potential", "q", "phi_p")}, "source": p.get("source", "BD")}
+                         for p, _ in runs])
     df = df.merge(meta, on=["regime", "name"]).sort_values(["regime", "name", "t"]).reset_index(drop=True)
     df["base_tags"] = df.tags.str.replace(r"_?seed\d+", "", regex=True)
     pairs = {k: v[2] for k, v in out.items()}

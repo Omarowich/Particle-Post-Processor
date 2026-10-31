@@ -4108,7 +4108,7 @@ elif plot_mode == "Paper figures":
                                   value=source_root or "", key="pf_co")
     pf_co = clean_path(pf_co)
     st.sidebar.header("3. Figures")
-    pf_keys = st.sidebar.multiselect("Figures:", list(pf.FIGURES), default=list(pf.FIGURES),
+    pf_keys = st.sidebar.multiselect("Fixed deck figures to draw:", list(pf.FIGURES), default=[],
                                      format_func=lambda k: f"{k.split('_')[0]}  {pf.FIGURES[k]}", key="pf_keys")
     pf_dpi = st.sidebar.number_input("Saved PNG dpi", 72, 600, 170, 10, key="pf_dpi")
     pf_save = st.sidebar.text_input("Also save PNGs to folder (optional):", value="", key="pf_save").strip().strip('"')
@@ -4132,8 +4132,11 @@ elif plot_mode == "Paper figures":
     df_pf, pairs_pf = _pf_series(pf_bd, _folder_stamp(pf_bd))
     st.write(f"{df_pf.name.nunique()} runs loaded.")
 
-    tab_figs, tab_custom, tab_table = st.tabs(["Deck figures", "Custom seed-band plot", "End-of-run numbers"])
+    tab_builder, tab_figs, tab_table = st.tabs(["Figure builder", "Deck figures (fixed)", "End-of-run numbers"])
     with tab_figs:
+        if not pf_keys:
+            st.info("Pick the fixed deck figures to draw in the sidebar (3. Figures). The editable versions of the "
+                    "time and end-value figures are in the Figure builder tab.")
         for key in pf_keys:
             st.subheader(f"{key}  ·  {pf.FIGURES[key]}")
             try:
@@ -4155,43 +4158,18 @@ elif plot_mode == "Paper figures":
                     st.warning(f"could not save: {ex}")
             plt.close(fig)
 
-    with tab_custom:
-        st.caption("Mean over seeds (line) and min–max over seeds (band) for any set of runs. "
-                   "Each line = all runs whose name contains every word of its filter.")
-        c1, c2 = st.columns(2)
-        cm = c1.selectbox("Metric", pf.OBS, format_func=lambda m: pf.LAB[m].replace("$", ""), key="pf_cm")
-        tmax = c2.number_input("Up to t (τB)", 0.1, 100.0, 10.0, 0.5, key="pf_tmax")
-        n_lines = st.number_input("Number of lines", 1, 8, 2, key="pf_nl")
-        names = sorted(df_pf.name.unique())
-        pf._style()
-        figc, axc = plt.subplots(figsize=(8, 4), constrained_layout=True)
-        palette = [pf.BLUE, pf.ORANGE, pf.AQUA, pf.YELLOW, pf.VIOLET, pf.GRAY, "#c0397a", "#333333"]
-        defaults = ["3Tkb_10TauB_4000nm_BD_seed", "3Tkb_10TauB_4000nm_BD_AO_q0.2"]
-        for i in range(int(n_lines)):
-            a, b = st.columns([3, 2])
-            flt = a.text_input(f"Line {i + 1} filter", value=defaults[i] if i < 2 else "", key=f"pf_f{i}")
-            lab = b.text_input(f"Label {i + 1}", value=flt, key=f"pf_l{i}")
-            toks = flt.split()
-            if not toks:
-                continue
-            ex_ao = "AO" not in flt
-            pick = [n for n in names if all(tk in n for tk in toks) and not (ex_ao and "_AO" in n)]
-            d = df_pf[df_pf.name.isin(pick) & (df_pf.t <= tmax)]
-            if d.empty:
-                st.caption(f"line {i + 1}: no runs match")
-                continue
-            if d.base_tags.nunique() > 1 or d.groupby("seed").name.nunique().max() > 1:
-                st.caption(f"line {i + 1}: matches {len(pick)} runs with different parameters - refine the filter")
-            pf.band(axc, d.groupby(["seed", "t"], as_index=False)[cm].mean(), cm, palette[i % 8], lab)
-            st.caption(f"line {i + 1}: " + ", ".join(pick))
-        axc.set_xlabel("t (τ$_B$)")
-        axc.set_ylabel(pf.LAB[cm])
-        axc.legend(fontsize=8)
-        st.pyplot(figc)
-        buf = io.BytesIO()
-        figc.savefig(buf, format="png", dpi=pf_dpi)
-        st.download_button("Download PNG", buf.getvalue(), file_name=f"seed_band_{cm}.png", mime="image/png")
-        plt.close(figc)
+    with tab_builder:
+        import figure_builder as fb
+        import figure_builder_ui as fbui
+
+        @st.cache_data(show_spinner=False)
+        def _fb_series(root, stamp):
+            bar = st.progress(0.0, text="Computing observables incl. COMSOL runs (cached afterwards)…")
+            d = fb.load_data(root, progress=lambda i, n: bar.progress(i / n, text=f"Observables {i}/{n} runs"))
+            bar.empty()
+            return d
+
+        fbui.page(st, pf_bd, _fb_series(pf_bd, _folder_stamp(pf_bd)))
 
     with tab_table:
         t_from = st.number_input("Average over t > (τB)", 0.0, 100.0, 9.5, 0.5, key="pf_tf")
