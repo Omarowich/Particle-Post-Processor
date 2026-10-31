@@ -3929,9 +3929,15 @@ elif plot_mode == "Regime state model":
                                  key="rsm_tc",
                                  help="Runs of different length are compared at this time.")
         rsm_lag = st.number_input("Bond-persistence / MSD lag (τB)", 0.05, 5.0, 0.5, 0.05, key="rsm_lag")
-        rsm_times_txt = st.text_input("Map times (τB), comma separated", "0.25, 0.5, 0.75, 1, 2, 3, 5, 10, 20, 30",
-                                      key="rsm_map_times", help="Every run is also evaluated at these times (if it "
-                                      "reaches them), for the map's time slider and the play-over-time view.")
+        t1, t2 = st.columns(2)
+        rsm_tstep = t1.number_input("Map time step (τB)", 0.05, 5.0, 0.25, 0.05, key="rsm_map_tstep",
+                                    help="Every run is evaluated every this many τB (as far as it reaches), for the "
+                                         "map's time slider and the animations. Smaller = smoother, first load slower.")
+        rsm_tmax = t2.number_input("…up to (τB)", 1.0, 100.0, 10.0, 1.0, key="rsm_map_tmax")
+        rsm_times_txt = st.text_input("Extra map times (τB)", "15, 20, 25, 30", key="rsm_map_times_extra",
+                                      help="Added to the regular steps, e.g. for long runs.")
+        rsm_times_txt = ", ".join(f"{v:g}" for v in np.round(np.arange(rsm_tstep, rsm_tmax + 1e-9, rsm_tstep), 4)) \
+            + ", " + rsm_times_txt
 
     with st.sidebar.expander("5. State thresholds", expanded=True):
         rsm_th = rsm.Thresholds(
@@ -4104,9 +4110,21 @@ elif plot_mode == "Regime state model":
                         save_figure_if_requested(fig, f"phase_diagram_{map_regime}_{map_pot}", save_plots, output_dir)
                         plt.close(fig)
                     else:
-                        q1, q2, q3 = st.columns([2, 1, 1])
-                        ph_times = q1.multiselect("Times (τ_B)", times_, default=times_, key=f"rsm_ph_times_{map_regime}")
-                        ph_spf = q2.number_input("seconds per frame", 0.2, 5.0, 1.0, 0.1, key="rsm_ph_spf")
+                        q1, q2, q3, q4 = st.columns([2, 1, 1, 1])
+                        if len(times_) > 1:
+                            lo_, hi_ = q1.select_slider("Time range (τ_B)", times_, value=(times_[0], min(times_[-1], 10.0)
+                                                        if 10.0 in times_ else times_[-1]), key=f"rsm_ph_rng_{map_regime}")
+                        else:
+                            lo_ = hi_ = times_[0]
+                        ph_step = q2.number_input("frame step (τ_B)", 0.05, 10.0, 0.25, 0.05, key="rsm_ph_step",
+                                                  help="Uses the map times (sidebar 4.) that fall on this step. "
+                                                       "For steps smaller than the sidebar's map time step, lower that first.")
+                        ph_times = [t for t in times_ if lo_ - 1e-9 <= t <= hi_ + 1e-9
+                                    and abs(t / ph_step - round(t / ph_step)) < 0.02]
+                        ph_spf = q3.number_input("seconds per frame", 0.05, 5.0, 0.3, 0.05, key="rsm_ph_spf")
+                        q3 = q4
+                        st.caption(f"{len(ph_times)} frames: {', '.join(f'{t:g}' for t in ph_times[:12])}"
+                                   + (" …" if len(ph_times) > 12 else ""))
                         ph_key = (map_regime, map_param, map_pot, tuple(ph_times), str(ph_kw),
                                   len(rsm_dfm), float(rsm_th.z_fluid), float(rsm_th.psi_order), float(rsm_th.smax_span),
                                   None if map_q is None else float(map_q))

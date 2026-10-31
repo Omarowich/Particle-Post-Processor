@@ -414,7 +414,20 @@ def map_times(df, regime=None, potential=None, param=None):
         d = d[d.potential.fillna("LJ") == potential]
     if param and param in d and param != "t_map":
         d = d[np.isfinite(d[param].astype(float))]
-    return sorted(set(snap_times(nominal_time(d).values).values())) if len(d) else []
+    if not len(d):
+        return []
+    nt = nominal_time(d)
+    snap = snap_times(nt.values)
+    times = set(snap.values())
+    if "eval" in d:   # a run's end is a map time only if it matches the length in its name (1TauB -> 1.0),
+        end = d["eval"].astype(str) == "end"          # not an odd end time like 1.19 τB
+        ok = ~end
+        if "T_name" in d:
+            ok |= end & (np.abs(nt - d.T_name.astype(float)) <= 0.03 * d.T_name.astype(float))
+        req = {snap[round(v, 2)] for v in nt[ok].values}
+        if req:
+            times = req
+    return sorted(times)
 
 
 OUTCOMES = {
