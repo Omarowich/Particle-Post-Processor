@@ -805,7 +805,7 @@ def fig_phase_map(pm: PhaseMap, show_runs=True, per_run=True, region_labels=True
                 continue
             # label at the point deepest inside the region
             from scipy.ndimage import distance_transform_edt
-            dist = distance_transform_edt(m)
+            dist = distance_transform_edt(np.pad(m, 1))[1:-1, 1:-1]     # the plot edge counts as a border
             yi, xi = np.unravel_index(dist.argmax(), dist.shape)
             ax.text(U[xi], UA[yi], c.upper().replace(" ", "\n"), ha="center", va="center", fontsize=9, weight="bold",
                     color="#222", alpha=0.75, zorder=4)
