@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import pickle
 import warnings
 from dataclasses import dataclass, field
 
@@ -177,6 +178,36 @@ def _evaluate(x, y, t, t_eval_s, rc, box, lag_s):
     return o
 
 
+def _run_stamp(rd) -> tuple:
+    """Changes when a run's data files change (new or re-run), so cached numbers are redone."""
+    out = []
+    for f in sorted(os.listdir(rd)):
+        if f.endswith(".csv"):
+            st_ = os.stat(os.path.join(rd, f))
+            out.append((f, int(st_.st_mtime), st_.st_size))
+    return tuple(out)
+
+
+def _run_rows(p, rd, rc, box, common_time_tauB, lag_tauB, map_times_tauB) -> list:
+    x, y, t = read_run(rd)
+    T = t[-1]
+    evals = [("end", T)]
+    if T > 1.1 * common_time_tauB * TAUB_S:     # every regime, so maps work at the common time too
+        evals.append(("common", common_time_tauB * TAUB_S))
+    for tm in sorted(set(float(v) for v in map_times_tauB)):
+        te = tm * TAUB_S
+        if te < 0.97 * T and not any(abs(te - e) < 0.02 * TAUB_S for _, e in evals):
+            evals.append((f"t{tm:g}", te))
+    rows = []
+    for tag, te in evals:
+        r = dict(p)
+        r["eval"] = tag
+        r["T_actual_tauB"] = float(T / TAUB_S)
+        r.update(_evaluate(x, y, t, te, rc, box, lag_tauB * TAUB_S))
+        rows.append(r)
+    return rows
+
+
 def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: float = 50.0,
                         common_time_tauB: float = 1.0, lag_tauB: float = 0.5,
                         progress=None, map_times_tauB=()) -> pd.DataFrame:
@@ -184,25 +215,34 @@ def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: flo
     that time ('common'), and one row ('t<time>') for every time in map_times_tauB the run reaches,
     so maps can be drawn at any of those times (and played over time)."""
     runs = discover_runs(root, regimes)
-    rows = []
+    cache_file = os.path.join(root, "_observables_cache.pkl")
+    try:
+        with open(cache_file, "rb") as fh:
+            cache = pickle.load(fh)
+    except Exception:
+        cache = {}
+    settings = (round(rc, 4), round(box, 3), round(common_time_tauB, 4), round(lag_tauB, 4),
+                tuple(sorted(set(round(float(v), 4) for v in map_times_tauB))))
+    rows, fresh, changed = [], {}, False
     for i, (p, rd) in enumerate(runs):
         if progress:
             progress(i / max(len(runs), 1), p["regime"] + "/" + p["name"])
-        x, y, t = read_run(rd)
-        T = t[-1]
-        evals = [("end", T)]
-        if T > 1.1 * common_time_tauB * TAUB_S:     # every regime, so maps work at the common time too
-            evals.append(("common", common_time_tauB * TAUB_S))
-        for tm in sorted(set(float(v) for v in map_times_tauB)):
-            te = tm * TAUB_S
-            if te < 0.97 * T and not any(abs(te - e) < 0.02 * TAUB_S for _, e in evals):
-                evals.append((f"t{tm:g}", te))
-        for tag, te in evals:
-            r = dict(p)
-            r["eval"] = tag
-            r["T_actual_tauB"] = float(T / TAUB_S)
-            r.update(_evaluate(x, y, t, te, rc, box, lag_tauB * TAUB_S))
-            rows.append(r)
+        key = (p["regime"], p["name"], _run_stamp(rd), settings)
+        got = cache.get(key)
+        if got is None:
+            got = _run_rows(p, rd, rc, box, common_time_tauB, lag_tauB, map_times_tauB)
+            changed = True
+        fresh[key] = got
+        rows.extend(dict(r) for r in got)
+    if changed or len(fresh) != len(cache):
+        try:      # only the runs that still exist, for the current settings
+            keep = {k: v for k, v in cache.items() if k[3] != settings}
+            keep.update(fresh)
+            with open(cache_file + ".tmp", "wb") as fh:
+                pickle.dump(keep, fh)
+            os.replace(cache_file + ".tmp", cache_file)
+        except OSError:
+            pass
     if progress:
         progress(1.0, "done")
     df = pd.DataFrame(rows)
