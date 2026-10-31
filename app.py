@@ -3879,13 +3879,25 @@ elif plot_mode == "Summary plots":
 elif plot_mode == "Regime state model":
 
     @st.cache_data(show_spinner=False)
-    def _rsm_observables(root, regimes, rc, box, common_t, lag, times=()):
+    def _rsm_observables(root, regimes, rc, box, common_t, lag, times=(), stamp=()):
         return rsm.compute_observables(root, regimes, rc=rc, box=box,
                                        common_time_tauB=common_t, lag_tauB=lag, map_times_tauB=times)
 
     @st.cache_data(show_spinner=False)
-    def _rsm_checks(root, regimes):
+    def _rsm_checks(root, regimes, stamp=()):
         return rsm.data_checks(root, regimes)
+
+    def _rsm_stamp(root, regimes):
+        """Run folders and their newest change, so new or re-run runs are picked up without a restart."""
+        out = []
+        for reg in regimes:
+            d = os.path.join(root, reg)
+            if os.path.isdir(d):
+                for n in sorted(os.listdir(d)):
+                    f = os.path.join(d, n)
+                    if os.path.isdir(f):
+                        out.append((reg, n, int(os.path.getmtime(f))))
+        return tuple(out)
 
     st.sidebar.header("2. Data folder")
     rsm_source = st.sidebar.radio(
@@ -3945,7 +3957,8 @@ elif plot_mode == "Regime state model":
     with st.spinner("Reading runs and computing observables (cached after the first time)..."):
         try:
             rsm_obs = _rsm_observables(rsm_root, tuple(rsm_regimes), float(rsm_rc), float(rsm_box),
-                                       float(rsm_tc), float(rsm_lag), tuple(float(v) for v in re.findall(r"[0-9.]+", rsm_times_txt) if v.strip(".") ))
+                                       float(rsm_tc), float(rsm_lag), tuple(float(v) for v in re.findall(r"[0-9.]+", rsm_times_txt) if v.strip(".") ),
+                                       stamp=_rsm_stamp(rsm_root, tuple(rsm_regimes)))
         except Exception as e:
             st.error(f"Could not compute observables: {e}")
             st.stop()
@@ -4157,7 +4170,7 @@ elif plot_mode == "Regime state model":
 
     with tab_checks:
         with st.spinner("Checking files..."):
-            checks = _rsm_checks(rsm_root, tuple(rsm_regimes))
+            checks = _rsm_checks(rsm_root, tuple(rsm_regimes), _rsm_stamp(rsm_root, tuple(rsm_regimes)))
         if checks.empty:
             st.success("No duplicate files, run-length mismatches or shared random seeds found.")
         else:
