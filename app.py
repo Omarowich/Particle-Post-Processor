@@ -3879,9 +3879,9 @@ elif plot_mode == "Summary plots":
 elif plot_mode == "Regime state model":
 
     @st.cache_data(show_spinner=False)
-    def _rsm_observables(root, regimes, rc, box, common_t, lag):
+    def _rsm_observables(root, regimes, rc, box, common_t, lag, times=()):
         return rsm.compute_observables(root, regimes, rc=rc, box=box,
-                                       common_time_tauB=common_t, lag_tauB=lag)
+                                       common_time_tauB=common_t, lag_tauB=lag, map_times_tauB=times)
 
     @st.cache_data(show_spinner=False)
     def _rsm_checks(root, regimes):
@@ -3917,6 +3917,9 @@ elif plot_mode == "Regime state model":
                                  key="rsm_tc",
                                  help="Runs of different length are compared at this time.")
         rsm_lag = st.number_input("Bond-persistence / MSD lag (τB)", 0.05, 5.0, 0.5, 0.05, key="rsm_lag")
+        rsm_times_txt = st.text_input("Map times (τB), comma separated", "0.25, 0.5, 0.75, 1, 2, 3, 5, 10, 20, 30",
+                                      key="rsm_map_times", help="Every run is also evaluated at these times (if it "
+                                      "reaches them), for the map's time slider and the play-over-time view.")
 
     with st.sidebar.expander("5. State thresholds", expanded=True):
         rsm_th = rsm.Thresholds(
@@ -3942,7 +3945,7 @@ elif plot_mode == "Regime state model":
     with st.spinner("Reading runs and computing observables (cached after the first time)..."):
         try:
             rsm_obs = _rsm_observables(rsm_root, tuple(rsm_regimes), float(rsm_rc), float(rsm_box),
-                                       float(rsm_tc), float(rsm_lag))
+                                       float(rsm_tc), float(rsm_lag), tuple(float(v) for v in re.findall(r"[0-9.]+", rsm_times_txt) if v.strip(".") ))
         except Exception as e:
             st.error(f"Could not compute observables: {e}")
             st.stop()
@@ -3980,36 +3983,130 @@ elif plot_mode == "Regime state model":
 
     rsm_model, rsm_plan = None, None
     with tab_map:
-        cand_regimes = [r for r in rsm_regimes
-                        if rsm_df[(rsm_df.regime == r)][["dn", "F"]].notna().any().any()]
-        if not cand_regimes:
-            st.info("No regime with a second swept parameter (d_n or F) is selected.")
+        map_regs = [r for r in rsm_regimes if r in set(rsm_df.regime) and rsm.map_axes(rsm_df, r)]
+        if not map_regs:
+            st.info("No selected regime has runs that vary in a parameter or in time.")
         else:
-            map_regime = st.selectbox("Regime", cand_regimes,
-                                      index=cand_regimes.index("ARF") if "ARF" in cand_regimes else 0,
-                                      key="rsm_map_regime")
-            map_param = "dn" if rsm_df.loc[rsm_df.regime == map_regime, "dn"].notna().any() else "F"
+            m1, m2, m3 = st.columns([1.2, 1.2, 1])
+            map_regime = m1.selectbox("Regime", map_regs, index=map_regs.index("ARF") if "ARF" in map_regs else 0,
+                                      format_func=lambda r: rsm.regime_label(r, long=True), key="rsm_map_regime")
+            axes_ = rsm.map_axes(rsm_df, map_regime)
+            map_param = m2.selectbox("x axis", axes_, format_func=lambda p: rsm.axis_label(p).replace("$", "").replace("_", ""),
+                                     key=f"rsm_map_x_{map_regime}")
+            pots = sorted(set(rsm_df.loc[rsm_df.regime == map_regime, "potential"].fillna("LJ")))
+            map_pot = m3.radio("Attraction", pots, index=pots.index("LJ") if "LJ" in pots else 0, horizontal=True,
+                               key="rsm_map_pot",
+                               help="One map per attraction; 'LJ vs AO boundaries' below shows both.") if len(pots) > 1 else pots[0]
+            times_ = rsm.map_times(rsm_df, map_regime)
+            if map_param != "t_map":
+                t0 = min(times_, key=lambda v: abs(v - float(rsm_tc))) if times_ else float(rsm_tc)
+                map_t = st.select_slider("Time of the map (τ_B)", times_, value=t0, key=f"rsm_map_t_{map_regime}",
+                                         help="Runs are evaluated at the times listed in the sidebar (4. Analysis "
+                                              "settings); a run only counts at times it reaches.") if len(times_) > 1 else t0
+            else:
+                map_t = float(rsm_tc)
+            views = ["States + boundary model", "Every run as its own dot", "Heat map: share not fluid",
+                     "Heat map: measured value", "3D elevation", "LJ vs AO boundaries"]
+            if map_param != "t_map":
+                views.append("Play over time")
+            v1, v2 = st.columns([2.2, 1.2])
+            view = v1.radio("Show", views, horizontal=True, key="rsm_map_view")
+            metric_opts = ["z_mean", "psi6", "Smax", "bond_persist", "Rg_ratio", "mobility"]
+            metric = None
+            if view in ("Heat map: measured value", "3D elevation", "Play over time"):
+                choices = (["proba", "nonfluid"] if view == "3D elevation" else
+                           ["nonfluid", "states"] if view == "Play over time" else []) + metric_opts
+                metric = v2.selectbox("Measure", choices, format_func=lambda k_: {"states": "states (dots)"}.get(
+                    k_, rsm.METRIC_LABELS.get(k_, k_)), key=f"rsm_map_metric_{view}")
+            metric_cols = [c for c in ("z_mean", "psi6", "Smax", "bond_persist", "Rg_ratio", "mobility") if c in rsm_df]
+            with st.expander("Boundary and look", expanded=False):
+                b1, b2, b3 = st.columns(3)
+                outcome = b1.selectbox("Boundary between", list(rsm.OUTCOMES), format_func=lambda k_: rsm.OUTCOMES[k_]["label"],
+                                       key="rsm_map_outcome")
+                o_metric = o_thr = None
+                if outcome == "custom":
+                    o_metric = b2.selectbox("measure", metric_cols, format_func=lambda k_: rsm.METRIC_LABELS.get(k_, k_),
+                                            key="rsm_map_ometric")
+                    o_thr = b3.number_input("value", value=float(np.nanmedian(rsm_df[o_metric])), key="rsm_map_othr")
+                c_ = st.columns(6)
+                sty = dict(show_uncertainty=c_[0].checkbox("uncertainty panel", True, key="rsm_sty_unc"),
+                           show_plan=c_[1].checkbox("suggested runs", True, key="rsm_sty_plan"),
+                           shade=c_[2].checkbox("shade regions", True, key="rsm_sty_shade"),
+                           boundary_line=c_[3].checkbox("boundary line", True, key="rsm_sty_line"),
+                           region_labels=c_[4].checkbox("region labels", True, key="rsm_sty_lab"),
+                           counts=c_[5].checkbox("k/n counts", True, key="rsm_sty_counts"))
+                d_ = st.columns([2, 1.2, 1.2, 1, 1, 1])
+                sty["color_by"] = d_[0].selectbox("Colour the dots by", ["state"] + metric_cols,
+                                                 format_func=lambda k_: rsm.METRIC_LABELS.get(k_, k_), key="rsm_sty_by")
+                sty["cmap"] = d_[1].selectbox("colour scale (measures, heat maps)",
+                                              ["viridis", "plasma", "magma", "cividis", "Blues", "RdYlBu_r", "coolwarm"],
+                                              key="rsm_sty_cmap")
+                sty["marker_size"] = d_[2].slider("dot size", 10, 200, 80, 5, key="rsm_sty_ms")
+                sty["lo_color"] = d_[3].color_picker("below side", "#2a78d6", key="rsm_sty_lo")
+                sty["hi_color"] = d_[4].color_picker("above side", "#eb6834", key="rsm_sty_hi")
+                sty["line_color"] = d_[5].color_picker("line", "#555555", key="rsm_sty_lc")
+                with st.popover("State colours"):
+                    sty["state_colors"] = {k_: st.color_picker(k_, v_, key=f"rsm_sty_sc_{k_}")
+                                           for k_, v_ in rsm.STATE_COLORS.items()}
+            mdata = rsm.map_data(rsm_df, map_regime, map_param, float(map_t), map_pot)
+            st.caption(f"{mdata.name.nunique()} {map_pot} runs" +
+                       ("" if map_param == "t_map" else f" at t = {map_t:g} τ_B") +
+                       ". Change which runs are used in the sidebar filter (6.).")
+            title_ = f"{rsm.regime_label(map_regime)}, {map_pot}" + ("" if map_param == "t_map" else f", t = {map_t:g} τB")
             try:
-                rsm_model = rsm.fit_boundary(rsm_df, map_regime, map_param, float(rsm_tc))
-                rsm_plan = rsm.suggest_runs(rsm_model, rsm_df)
+                if view in ("States + boundary model", "Every run as its own dot", "3D elevation"):
+                    rsm_model = rsm.fit_boundary(rsm_df, map_regime, map_param, float(map_t), map_pot,
+                                                 loo=(map_param != "t_map" and len(mdata) <= 400), data=mdata,
+                                                 outcome=outcome, metric=o_metric, threshold=o_thr)
+                if view in ("States + boundary model", "Every run as its own dot"):
+                    rsm_plan = rsm.suggest_runs(rsm_model, rsm_df) if map_param not in ("t_map",) else None
+                    bvals = [b for _, b in rsm_model.boundary]
+                    unit = {"dn": "nm", "F": "N/m³", "t_map": "τB"}.get(map_param, "")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Fitted boundary (median over A)", f"{rsm.fmt_val(np.median(bvals))} {unit}")
+                    c2.metric("Spread of boundary over A", f"{rsm.fmt_val(np.ptp(bvals))} {unit}")
+                    c3.metric("Leave-one-out correct", f"{rsm_model.loo_hits} / {len(rsm_model.data)}"
+                              if rsm_model.loo_hits else "skipped (many points)")
+                    fig = rsm.fig_state_map(rsm_model, rsm_plan, per_run=(view == "Every run as its own dot"), style=sty)
+                    st.pyplot(fig)
+                    save_figure_if_requested(fig, f"regime_state_map_{map_regime}_{map_pot}", save_plots, output_dir)
+                    plt.close(fig)
+                    st.caption("The boundary sits where the model is 50/50. With one dot per point, the number "
+                               "next to it is how many of the runs there share the shown state. "
+                               f"Kernel: `{rsm_model.kernel}`.")
+                elif view.startswith("Heat map"):
+                    val = "nonfluid" if view == "Heat map: share not fluid" else metric
+                    fig = rsm.fig_cell_heatmap(mdata, map_param, val, title=title_, cmap=sty["cmap"])
+                    st.pyplot(fig)
+                    save_figure_if_requested(fig, f"regime_heatmap_{map_regime}_{map_pot}_{val}", save_plots, output_dir)
+                    plt.close(fig)
+                elif view == "3D elevation":
+                    st.plotly_chart(rsm.surface_figure(mdata, map_param, metric, rsm_model, title=title_),
+                                    use_container_width=True)
+                    st.caption("Drag to rotate, scroll to zoom. Dots are the runs (state colours); the surface is "
+                               "the boundary model's probability or the measured value interpolated between points.")
+                elif view == "LJ vs AO boundaries":
+                    models = {}
+                    for p_ in pots:
+                        try:
+                            models[p_] = rsm.fit_boundary(rsm_df, map_regime, map_param, float(map_t), p_, loo=False,
+                                                          outcome=outcome, metric=o_metric, threshold=o_thr)
+                        except ValueError as ex:
+                            st.info(f"{p_}: {ex}")
+                    if models:
+                        fig = rsm.fig_boundary_compare(models)
+                        st.pyplot(fig)
+                        save_figure_if_requested(fig, f"regime_boundaries_{map_regime}", save_plots, output_dir)
+                        plt.close(fig)
+                        st.caption("Each line is where that attraction's boundary model is 50/50; AO is matched to "
+                                   "LJ by B₂* at each A. Filled dots: not fluid, open dots: fluid.")
+                elif view == "Play over time":
+                    st.plotly_chart(rsm.map_animation(rsm_df, map_regime, map_param, map_pot, metric, times_,
+                                                      title=f"{rsm.regime_label(map_regime)}, {map_pot}: map over time"),
+                                    use_container_width=True)
+                    st.caption("Press ▶ Play or drag the slider. Each frame uses the runs that reach that time.")
             except ValueError as e:
                 st.warning(str(e))
-            if rsm_model is not None:
-                bvals = [b for _, b in rsm_model.boundary]
-                unit = "nm" if map_param == "dn" else "F"
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Fitted boundary (median over A)", f"{np.median(bvals):,.0f} {unit}")
-                c2.metric("Spread of boundary over A", f"{np.ptp(bvals):,.0f} {unit}")
-                c3.metric("Leave-one-out correct", f"{rsm_model.loo_hits} / {len(rsm_model.data)}")
-                fig = rsm.fig_state_map(rsm_model, rsm_plan)
-                st.pyplot(fig)
-                save_figure_if_requested(fig, f"regime_state_map_{map_regime}", save_plots, output_dir)
-                st.caption(
-                    f"The boundary sits where the model is 50/50; with no runs between the last fluid "
-                    f"and first network value it falls in the middle of that gap. Kernel: `{rsm_model.kernel}`. "
-                    f"A long length scale on A means A barely matters at this time."
-                )
-                plt.close(fig)
 
     with tab_trans:
         tr_regs = [r for r in ("AAF", "NAF", "ASF") if r in rsm_regimes]
@@ -4862,6 +4959,19 @@ elif plot_mode == "Run viewer":
                         fx, fy = parts[t_][0]
                         summary[f"{lab_} Fx, Fy (kBT/µm)"] = f"{fx:.2f}, {fy:.2f}  (|F| = {np.hypot(fx, fy):.2f})"
                     st.table(pd.DataFrame({"value": [str(v) for v in summary.values()]}, index=list(summary.keys())))
+                    if np.linalg.norm(parts["net"][0]) < 1e-3:
+                        Pk = np.c_[lx[k], ly[k]]
+                        rr = np.hypot(*(Pk - Pk[int(shown)]).T); rr[int(shown)] = np.inf
+                        rng_ = 2 * (1 + lmodel.ao[0]) if lmodel.ao else (6.0 if lmodel.A > 0 else 2.0)
+                        why = []
+                        if not (rr < rng_).any():
+                            why.append(f"no other particle within the {'AO' if lmodel.ao else 'LJ' if lmodel.A > 0 else 'core'} "
+                                       f"range ({rng_:.1f} µm centre to centre; nearest is {rr.min():.2f} µm)")
+                        else:
+                            why.append("the pulls from its neighbours cancel (symmetric surroundings, e.g. the start grid)")
+                        if not lmodel.dn and not lmodel.F:
+                            why.append("no acoustic field or flow in this run")
+                        st.info("Zero model force: " + "; ".join(why) + ". Only Brownian motion moves it now.")
                     if not SSv.get("rv_playing"):
                         st.markdown("**Neighbours within 6.5 µm** (bonded = closer than the bond cutoff; "
                                     "forces are the model forces from each neighbour on this particle)")

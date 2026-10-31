@@ -99,6 +99,7 @@ def parse_run_name(regime: str, name: str) -> dict | None:
         "q": _tag_value(m.group(5), "q", float, np.nan),
         "phi_p": _tag_value(m.group(5), "phi", float, np.nan),
         "dt": _tag_value(m.group(5), "dt", int, 0),
+        "N": _tag_value(m.group(5), "N", int, 0) or np.nan,       # particle number tag, e.g. _N256
         # anything else in the name (e.g. a tag like N256 or test2), for the run filters
         "extra": "_".join(t for t in (m.group(5) or "").lstrip("_").split("_")
                           if t and not re.fullmatch(r"(?i)(CS|BD|AO|core|q[\d.]+|phi[\d.]+|dt\d+|seed\d+)", t)),
@@ -178,10 +179,10 @@ def _evaluate(x, y, t, t_eval_s, rc, box, lag_s):
 
 def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: float = 50.0,
                         common_time_tauB: float = 1.0, lag_tauB: float = 0.5,
-                        progress=None) -> pd.DataFrame:
-    """One row per run at its last frame ('end'); runs longer than
-    common_time_tauB also get a row at that time ('common'), so runs of
-    different length can be compared."""
+                        progress=None, map_times_tauB=()) -> pd.DataFrame:
+    """One row per run at its last frame ('end'); runs longer than common_time_tauB also get a row at
+    that time ('common'), and one row ('t<time>') for every time in map_times_tauB the run reaches,
+    so maps can be drawn at any of those times (and played over time)."""
     runs = discover_runs(root, regimes)
     rows = []
     for i, (p, rd) in enumerate(runs):
@@ -192,6 +193,10 @@ def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: flo
         evals = [("end", T)]
         if T > 1.1 * common_time_tauB * TAUB_S:     # every regime, so maps work at the common time too
             evals.append(("common", common_time_tauB * TAUB_S))
+        for tm in sorted(set(float(v) for v in map_times_tauB)):
+            te = tm * TAUB_S
+            if te < 0.97 * T and not any(abs(te - e) < 0.02 * TAUB_S for _, e in evals):
+                evals.append((f"t{tm:g}", te))
         for tag, te in evals:
             r = dict(p)
             r["eval"] = tag
@@ -259,23 +264,98 @@ class BoundaryModel:
         return self.gpc.predict_proba((X - self.mu) / self.sd)[:, 1]
 
 
-def boundary_data(df: pd.DataFrame, regime="ARF", param="dn", common_time_tauB=1.0):
+TIMESTEP_TEST_DT = (2000, 8000, 16000, 64000)   # dt tags of the time-step convergence runs (not the standard steps)
+
+
+def boundary_data(df: pd.DataFrame, regime="ARF", param="dn", common_time_tauB=1.0, potential="LJ"):
     d = df[(df.regime == regime) & np.isfinite(df[param])].copy()
-    if "tags" in d:   # time-step test runs use a different step size: keep them out of the fit
-        d = d[~d.tags.fillna("").str.contains("dt")]
-    if "potential" in d:   # the boundary is fitted on the LJ runs; AO runs are compared against it
-        d = d[d.potential.fillna("LJ") == "LJ"]
-    d = d[np.isclose(d.t_eval_tauB, common_time_tauB, atol=0.05)]
-    has_common = set(d.loc[d["eval"] == "common", "name"])
-    return d[~((d["eval"] == "end") & d["name"].isin(has_common))]
+    if "tags" in d:   # time-step test runs use a non-standard step size: keep them out of the fit
+        bad = d.tags.fillna("").str.contains("|".join(f"dt{v}(?:_|$)" for v in TIMESTEP_TEST_DT), regex=True)
+        d = d[~bad]
+    if "potential" in d and potential:   # one boundary per attraction (LJ or AO)
+        d = d[d.potential.fillna("LJ") == potential]
+    d = d[np.isclose(d.t_eval_tauB, common_time_tauB, atol=max(0.05, 0.03 * common_time_tauB))]
+    # one row per run: a row evaluated at that time beats the run's end row (same frame anyway)
+    d = d.assign(_end=(d["eval"] == "end").astype(int)).sort_values("_end")
+    return d.drop_duplicates(["regime", "name"]).drop(columns="_end")
 
 
-def fit_boundary(df, regime="ARF", param="dn", common_time_tauB=1.0) -> BoundaryModel:
+AXIS_LABELS = {"dn": "inward displacement d$_n$ (nm)", "F": "streaming force F$_0$ (N/m³)", "t_map": "time (τ$_B$)",
+               "T_name": "run length (τ$_B$)", "phi_p": "φ$_p$", "q": "q", "N": "number of particles"}
+X_CANDIDATES = ("dn", "F", "t_map", "phi_p", "q", "N")
+
+
+def fmt_val(v):
+    """2,730 for field values, 0.75 for times."""
+    return f"{v:,.0f}" if abs(v) >= 100 else f"{v:.3g}"
+
+
+def axis_label(p):
+    return AXIS_LABELS.get(p, p)
+
+
+def map_axes(df, regime):
+    """Parameters that can go on the map's x axis for a regime: the field (d_n / F0), time, and any other
+    run parameter with at least two values (e.g. a particle-number tag)."""
+    d = df[df.regime == regime]
+    out = []
+    for c in X_CANDIDATES:
+        if c == "t_map":
+            if d.t_eval_tauB.round(2).nunique() >= 2:
+                out.append(c)
+        elif c in d and pd.to_numeric(d[c], errors="coerce").dropna().nunique() >= 2:
+            out.append(c)
+    return out
+
+
+def map_data(df, regime, x, t_tauB=1.0, potential="LJ"):
+    """Runs for a map. x = a run parameter: one row per run at time t_tauB. x = 't_map': every run at every
+    time it was evaluated (A against time)."""
+    if x != "t_map":
+        return boundary_data(df, regime, x, t_tauB, potential)
+    d = df[df.regime == regime].copy()
+    if "tags" in d:
+        d = d[~d.tags.fillna("").str.contains("|".join(f"dt{v}(?:_|$)" for v in TIMESTEP_TEST_DT), regex=True)]
+    if "potential" in d and potential:
+        d = d[d.potential.fillna("LJ") == potential]
+    d["t_map"] = d.t_eval_tauB.round(2)
+    d = d[d.t_map > 0]
+    d = d.assign(_end=(d["eval"] == "end").astype(int)).sort_values("_end")
+    return d.drop_duplicates(["name", "t_map"]).drop(columns="_end")
+
+
+def map_times(df, regime=None):
+    """Times (τB) at which runs were evaluated (for the map's time slider)."""
+    d = df if regime is None else df[df.regime == regime]
+    return sorted(set(np.round(d.t_eval_tauB.values, 2)))
+
+
+OUTCOMES = {
+    "fluid": dict(label="not fluid vs fluid (z)", lo="FLUID", hi="BAND / NETWORK"),
+    "network": dict(label="network vs not (largest cluster)", lo="NO NETWORK", hi="NETWORK"),
+    "ordered": dict(label="ordered vs not (ψ6)", lo="DISORDERED / FLUID", hi="ORDERED"),
+    "custom": dict(label="a measure above a value", lo="BELOW", hi="ABOVE"),
+}
+
+
+def outcome_y(d, outcome="fluid", metric=None, threshold=None):
+    """0/1 per run for the boundary model."""
+    if outcome == "network":
+        return d.state.str.endswith("network").astype(int).values
+    if outcome == "ordered":
+        return d.state.str.startswith("ordered").astype(int).values
+    if outcome == "custom":
+        return (d[metric].astype(float) >= float(threshold)).astype(int).values
+    return (d.state != "fluid").astype(int).values
+
+
+def fit_boundary(df, regime="ARF", param="dn", common_time_tauB=1.0, potential="LJ", loo=True,
+                 data=None, outcome="fluid", metric=None, threshold=None) -> BoundaryModel:
     from sklearn.gaussian_process import GaussianProcessClassifier
     from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
-    d = boundary_data(df, regime, param, common_time_tauB)
-    y = (d.state != "fluid").astype(int).values
+    d = map_data(df, regime, param, common_time_tauB, potential) if data is None else data
+    y = outcome_y(d, outcome, metric, threshold)
     if len(d) < 6 or y.min() == y.max():
         allr = df[df.regime == regime].drop_duplicates("name")
         lens = sorted(allr.T_actual_tauB.round(2).unique()) if len(allr) else []
@@ -283,7 +363,7 @@ def fit_boundary(df, regime="ARF", param="dn", common_time_tauB=1.0) -> Boundary
                 f"reaches t = {common_time_tauB} τB: lower the map time or include longer (e.g. Python) runs in the filter."
                 if len(allr) and max(lens) < 0.95 * common_time_tauB else
                 " The fit needs at least 6 runs at that time, some fluid and some not.")
-        raise ValueError(f"Need runs of both outcomes in {regime_label(regime)} at t = {common_time_tauB} τB "
+        raise ValueError(f"Need {potential} runs of both outcomes in {regime_label(regime)} at t = {common_time_tauB} τB "
                          f"(found {len(d)} runs, {int(y.sum())} non-fluid)." + hint)
     X = np.c_[np.log10(d[param].values), d.A.values]
     mu, sd = X.mean(0), X.std(0)
@@ -297,16 +377,29 @@ def fit_boundary(df, regime="ARF", param="dn", common_time_tauB=1.0) -> Boundary
         warnings.simplefilter("ignore")
         gpc = _gpc(5).fit(Xs, y)
         hits = 0
-        for i in range(len(y)):
+        for i in (range(len(y)) if loo else []):
             tr = np.arange(len(y)) != i
             if y[tr].min() == y[tr].max():
                 continue
             hits += int(_gpc(0).fit(Xs[tr], y[tr]).predict(Xs[[i]])[0] == y[i])
     m = BoundaryModel(regime, param, d, gpc, mu, sd, hits, kernel=str(gpc.kernel_))
-    grid = np.logspace(np.log10(d[param].min()), np.log10(d[param].max()), 300)
+    m.potential = potential
+    m.outcome = OUTCOMES.get(outcome, OUTCOMES["fluid"]) if outcome != "custom" else \
+        dict(label=f"{metric} ≥ {threshold:g}", lo=f"{metric} < {threshold:g}", hi=f"{metric} ≥ {threshold:g}")
+    m.y = y
+    grid = np.logspace(np.log10(d[param].min()), np.log10(d[param].max()), 400)
     for a in sorted(d.A.unique()):
         p = m.proba(grid, np.full_like(grid, a))
-        m.boundary.append((float(a), float(grid[np.argmin(np.abs(p - 0.5))])))
+        # boundary = where the model last crosses from below to above 50 % (an uncertain patch far from the
+        # crossing, e.g. between widely spaced low values, must not count as the boundary)
+        below = np.where(p < 0.5)[0]
+        if len(below) == len(p):
+            b = grid[-1]
+        elif not len(below):
+            b = grid[0]
+        else:
+            b = grid[min(below[-1] + 1, len(grid) - 1)]
+        m.boundary.append((float(a), float(b)))
     return m
 
 
@@ -326,7 +419,8 @@ def suggest_runs(model: BoundaryModel, df: pd.DataFrame, *, step=250.0, n_repeat
                  purpose="locate the fluid/network boundary and test its A-dependence")
             for a in pick_A for v in cand if not ((model.data.A == a) & (model.data[model.param] == v)).any()]
     d = model.data.assign(dist=np.abs(np.log10(model.data[model.param]) - np.log10(bstar)))
-    for _, r in d[d.state != "fluid"].nsmallest(n_repeat, "dist").iterrows():
+    yy = getattr(model, "y", (d.state != "fluid").astype(int).values)
+    for _, r in d[np.asarray(yy) == 1].nsmallest(n_repeat, "dist").iterrows():
         plan.append(dict(A_kT=r.A, value=r[model.param], unit=unit, kind="repeat",
                          purpose="same parameters, new random seed: scatter at the boundary"))
     nt = d[(d.state != "fluid") & d.near_threshold]
@@ -354,12 +448,25 @@ def data_checks(root: str, regimes=REGIMES) -> pd.DataFrame:
         if abs(T - p["T_name"]) > 0.1 * p["T_name"] + 0.05:
             rows.append(dict(run=key, issue=f"name says {p['T_name']:g} τB, data runs {T:.2f} τB"))
         if len(x) > 1:
-            first.setdefault((p["regime"], len(x[0])), []).append((key, x[1] - x[0]))
+            first.setdefault((p["regime"], len(x[0])), []).append((key, x[1] - x[0], p.get("source", "")))
     for (reg, _), lst in first.items():
-        same = [a for (a, da), (b, db) in zip(lst, lst[1:]) if np.allclose(da, db, atol=1e-6)]
-        if len(same) >= 2:
-            rows.append(dict(run=f"{regime_label(reg)} ({len(lst)} runs)",
-                             issue="first step identical across runs: same random seed, no independent repeats"))
+        groups = {}
+        for key, dx, src in lst:      # runs whose first step agrees to 1e-6 µm share their random kicks
+            groups.setdefault(hashlib.md5(np.round(dx, 6).tobytes()).hexdigest(), []).append((key, src))
+        for g in groups.values():
+            if len(g) < 2:
+                continue
+            srcs = sorted({s_ or "?" for _, s_ in g})
+            base = [re.sub(r"_seed\d+", "", k.split("/")[-1]) for k, _ in g]
+            repeats = len(base) != len(set(base))        # same settings, only the seed differs -> real problem
+            ex = ", ".join(k.split("/")[-1] for k, _ in g[:3])
+            if repeats:
+                issue = ("PROBLEM - repeats of the same settings have identical random kicks, so they are not "
+                         "independent repeats: " + ex)
+            else:
+                issue = ("note - different settings share one set of random kicks (same seed). Fine for comparing "
+                         "settings, but these runs are not independent of each other: " + ex)
+            rows.append(dict(run=f"{regime_label(reg)}: {len(g)} of {len(lst)} runs ({', '.join(srcs)})", issue=issue))
     return pd.DataFrame(rows, columns=["run", "issue"])
 
 
@@ -371,10 +478,21 @@ def _style(plt):
                          "ytick.color": "#555", "axes.labelcolor": "#222"})
 
 
-def fig_state_map(model: BoundaryModel, plan: pd.DataFrame | None = None, figsize=(12, 5)):
+MAP_STYLE = dict(show_uncertainty=True, show_plan=True, shade=True, boundary_line=True, counts=True,
+                 region_labels=True, marker_size=80, color_by="state", cmap="viridis",
+                 state_colors=None, lo_color="#2a78d6", hi_color="#eb6834", line_color="#555555")
+
+
+def fig_state_map(model: BoundaryModel, plan: pd.DataFrame | None = None, figsize=(12, 5), per_run=False, style=None):
+    """Left: runs and the fitted boundary; right (optional): model uncertainty and suggested runs.
+    per_run=True draws every run as its own dot (seeds side by side), otherwise one dot per parameter point
+    (most common state; 'k/n' = how many of the n runs share it). style: see MAP_STYLE (colour the dots by
+    state or by any measured column, switch panels, shading, line, labels and suggestions on/off, colours)."""
     import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap
     _style(plt)
+    st_ = {**MAP_STYLE, **(style or {})}
+    scol = {**STATE_COLORS, **(st_["state_colors"] or {})}
     d, prm = model.data, model.param
     TK = np.sort(d[prm].unique())
     LTK = np.log10(TK)
@@ -389,38 +507,87 @@ def fig_state_map(model: BoundaryModel, plan: pd.DataFrame | None = None, figsiz
     pn = P[:, 1].reshape(GU.shape)
     H = (-(P * np.log(P + 1e-12)).sum(1) / np.log(2)).reshape(GU.shape)
     bstar = float(np.median([b for _, b in model.boundary]))
-    unit = "nm" if prm == "dn" else "F"
-    xlabel = ("inward displacement d$_n$ (nm" if prm == "dn" else "streaming force F (") + "; tested values evenly spaced)"
-
-    fig, ax = plt.subplots(1, 2, figsize=figsize, constrained_layout=True)
-    ax[0].contourf(GU, GA, pn, levels=[0, 0.5, 1], colors=["#2a78d6", "#eb6834"], alpha=0.08)
-    ax[0].contour(GU, GA, pn, levels=[0.5], colors="#555", linewidths=1.2, linestyles="--")
-    ax[0].text(pos(bstar) + 0.08, A_lo - 0.75 * pad, f"fitted boundary ≈ {bstar:,.0f} {unit}",
-               ha="left", va="center", fontsize=8, color="#555")
-    ax[0].text(pos(bstar) / 2 - 0.2, A_lo - 0.75 * pad, "FLUID", ha="center", va="center",
-               fontsize=9, color="#2a78d6", weight="bold")
-    ax[0].text((pos(bstar) + len(TK) - 1) / 2, A_hi + 0.75 * pad, "BAND / NETWORK", ha="center",
-               va="center", fontsize=9, color="#eb6834", weight="bold")
-    for c in sorted(d.state.unique()):
-        s = d[d.state == c]
-        ax[0].scatter(pos(s[prm]), s.A, c=STATE_COLORS.get(c, "#888"), marker=STATE_MARKERS.get(c, "o"),
-                      s=80, edgecolors="white", linewidths=1.2, label=c, zorder=3)
-    ax[0].set_title(f"State after {d.t_eval_tauB.round(1).iloc[0]:g} τ$_B$ ({regime_label(model.regime)})",
-                    loc="left", fontsize=11, pad=30)
-    cs = ax[1].contourf(GU, GA, H, levels=np.linspace(0, 1, 11), cmap=ListedColormap(_BLUE_RAMP))
-    ax[1].scatter(pos(d[prm]), d.A, c="#555", s=16, zorder=3, label="existing run")
-    if plan is not None and len(plan):
+    unit = {"dn": "nm", "F": "N/m³", "t_map": "τB"}.get(prm, "")
+    xlabel = axis_label(prm) + "; tested values evenly spaced"
+    oc = getattr(model, "outcome", OUTCOMES["fluid"])
+    two = st_["show_uncertainty"]
+    fig, axes = plt.subplots(1, 2 if two else 1, figsize=figsize if two else (figsize[0] * 0.55, figsize[1]),
+                             constrained_layout=True, squeeze=False)
+    ax0 = axes[0, 0]
+    if st_["shade"]:
+        ax0.contourf(GU, GA, pn, levels=[0, 0.5, 1], colors=[st_["lo_color"], st_["hi_color"]], alpha=0.08)
+    if st_["boundary_line"]:
+        ax0.contour(GU, GA, pn, levels=[0.5], colors=st_["line_color"], linewidths=1.2, linestyles="--")
+        ax0.text(pos(bstar) + 0.08, A_lo - 0.75 * pad, f"fitted boundary ≈ {fmt_val(bstar)} {unit}",
+                 ha="left", va="center", fontsize=8, color=st_["line_color"])
+    if st_["region_labels"]:
+        ax0.text(pos(bstar) / 2 - 0.2, A_lo - 0.75 * pad, oc["lo"], ha="center", va="center", fontsize=9,
+                 color=st_["lo_color"], weight="bold")
+        ax0.text((pos(bstar) + len(TK) - 1) / 2, A_hi + 0.75 * pad, oc["hi"], ha="center", va="center",
+                 fontsize=9, color=st_["hi_color"], weight="bold")
+    ms = float(st_["marker_size"])
+    by = st_["color_by"]
+    if per_run:
+        dd = d.sort_values(["A", prm, "name"]).copy()
+        dd["k"] = dd.groupby(["A", prm]).cumcount()
+        dd["n"] = dd.groupby(["A", prm]).name.transform("count")
+        dd["xp"] = pos(dd[prm]) + (dd.k - (dd.n - 1) / 2) * min(0.13, 0.8 / dd.n.max())
+    else:
+        g = d.groupby(["A", prm])
+        dd = g.state.agg(lambda v: v.value_counts().index[0]).reset_index()
+        dd = dd.merge(g.size().reset_index(name="n"), on=["A", prm])
+        dd = dd.merge(g.state.agg(lambda v: (v == v.value_counts().index[0]).mean()).reset_index(name="f"), on=["A", prm])
+        if by != "state":
+            dd = dd.merge(g[by].mean().reset_index(), on=["A", prm])
+        dd["xp"] = pos(dd[prm])
+        ms_ = ms
+    if by == "state":
+        hollow = (dd["source"] == "COMSOL") if (per_run and "source" in dd) else pd.Series(False, index=dd.index)
+        for c in sorted(dd.state.unique()):
+            s_ = dd[dd.state == c]
+            h_ = hollow[s_.index]
+            col = scol.get(c, "#888")
+            if (~h_).any():
+                ax0.scatter(s_.xp[~h_], s_.A[~h_], c=col, marker=STATE_MARKERS.get(c, "o"),
+                            s=ms * (0.6 if per_run else 1), edgecolors="white", linewidths=1, label=c, zorder=3)
+            if h_.any():
+                ax0.scatter(s_.xp[h_], s_.A[h_], facecolors="white", edgecolors=col, marker=STATE_MARKERS.get(c, "o"),
+                            s=ms * 0.6, linewidths=1.6, zorder=3, label=None if (~h_).any() else c)
+        if per_run and hollow.any() and (~hollow).any():
+            ax0.scatter([], [], facecolors="white", edgecolors="#555", s=ms * 0.6, linewidths=1.6, label="hollow = COMSOL")
+    else:
+        sc = ax0.scatter(dd.xp, dd.A, c=dd[by].astype(float), cmap=st_["cmap"], s=ms * (0.6 if per_run else 1),
+                         edgecolors="white", linewidths=1, zorder=3)
+        fig.colorbar(sc, ax=ax0, label=METRIC_LABELS.get(by, by), shrink=0.8)
+    if st_["counts"] and not per_run:
+        for _, r in dd[dd.n > 1].iterrows():
+            ax0.annotate(f"{int(round(r.f * r.n))}/{r.n}", (r.xp, r.A), xytext=(5, 5),
+                         textcoords="offset points", fontsize=6.5, color="#555")
+    ax0.set_title(("State over time" if prm == "t_map" else f"State after {d.t_eval_tauB.round(1).iloc[0]:g} τ$_B$")
+                  + f" ({regime_label(model.regime)}, {getattr(model, 'potential', 'LJ')}; boundary: {oc['label']})",
+                  loc="left", fontsize=10, pad=30)
+    if two:
+        ax1 = axes[0, 1]
+        cs = ax1.contourf(GU, GA, H, levels=np.linspace(0, 1, 11), cmap=ListedColormap(_BLUE_RAMP))
+        ax1.scatter(pos(d[prm]), d.A, c="#555", s=16, zorder=3, label="existing run")
+        if st_["show_plan"] and plan is not None and len(plan):
+            col = [c for c in plan.columns if c.startswith(prm)][0]
+            new, rep = plan[plan.kind == "new"], plan[plan.kind == "repeat"]
+            ax1.scatter(pos(new[col]), new.A_kT, marker="*", s=220, c="#eb6834", edgecolors="white",
+                        linewidths=1, zorder=4, label="suggested new run")
+            ax1.scatter(pos(rep[col]), rep.A_kT, marker="o", s=170, facecolors="none",
+                        edgecolors="#eb6834", linewidths=2, zorder=4, label="repeat with new seed")
+        fig.colorbar(cs, ax=ax1, label="model uncertainty (0 = sure, 1 = coin flip)")
+        ax1.set_title("Where the model is unsure" + (", and what to run next" if st_["show_plan"] else ""),
+                      loc="left", fontsize=11, pad=30)
+    elif st_["show_plan"] and plan is not None and len(plan):
         col = [c for c in plan.columns if c.startswith(prm)][0]
-        new, rep = plan[plan.kind == "new"], plan[plan.kind == "repeat"]
-        ax[1].scatter(pos(new[col]), new.A_kT, marker="*", s=220, c="#eb6834", edgecolors="white",
-                      linewidths=1, zorder=4, label="suggested new run")
-        ax[1].scatter(pos(rep[col]), rep.A_kT, marker="o", s=170, facecolors="none",
-                      edgecolors="#eb6834", linewidths=2, zorder=4, label="repeat with new seed")
-    fig.colorbar(cs, ax=ax[1], label="model uncertainty (0 = sure, 1 = coin flip)")
-    ax[1].set_title("Where the model is unsure, and what to run next", loc="left", fontsize=11, pad=30)
-    for a in ax:
+        new = plan[plan.kind == "new"]
+        ax0.scatter(pos(new[col]), new.A_kT, marker="*", s=200, c="#eb6834", edgecolors="white", zorder=4,
+                    label="suggested new run")
+    for a in axes.ravel():
         a.set_xticks(np.arange(len(TK)))
-        a.set_xticklabels([f"{v:g}" for v in TK])
+        a.set_xticklabels([f"{v:g}" for v in TK], rotation=45 if len(TK) > 12 else 0)
         a.set_xlim(-0.4, len(TK) - 0.6)
         a.set_ylim(A_lo - pad, A_hi + pad)
         a.set_yticks(np.unique(np.round(d.A.values, 3)))
@@ -428,8 +595,184 @@ def fig_state_map(model: BoundaryModel, plan: pd.DataFrame | None = None, figsiz
         a.set_ylabel("attraction A (k$_B$T)")
         for s in ("top", "right"):
             a.spines[s].set_visible(False)
-        a.legend(frameon=False, fontsize=9, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3,
-                 borderaxespad=0.2, handletextpad=0.3, columnspacing=1.0)
+        if a.get_legend_handles_labels()[0]:
+            a.legend(frameon=False, fontsize=9, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3,
+                     borderaxespad=0.2, handletextpad=0.3, columnspacing=1.0)
+    return fig
+
+
+METRIC_LABELS = {"nonfluid": "fraction of runs not fluid", "z_mean": "mean coordination number",
+                 "psi6": "local order ψ6", "Smax": "largest cluster fraction", "bond_persist": "bond persistence",
+                 "Rg_ratio": "Rg / Rg(t=0)", "mobility": "mobility (MSD / free MSD)", "proba": "model P(not fluid)"}
+
+
+def cell_table(d: pd.DataFrame, param: str, value: str = "nonfluid") -> pd.DataFrame:
+    """Mean of a measure per (A, parameter) point; value 'nonfluid' = share of runs that are not fluid."""
+    v = (d.state != "fluid").astype(float) if value == "nonfluid" else d[value]
+    return d.assign(_v=v).groupby(["A", param]).agg(v=("_v", "mean"), n=("_v", "size")).reset_index()
+
+
+def fig_cell_heatmap(d: pd.DataFrame, param: str, value: str = "nonfluid", title="", cmap="viridis",
+                     boundaries=None, figsize=(7.5, 5)):
+    """Heat map on the tested values (evenly spaced), one cell per (A, parameter) point, with the
+    number of runs in each cell; boundaries = {label: [(A, value*), ...]} drawn on top."""
+    import matplotlib.pyplot as plt
+    _style(plt)
+    t = cell_table(d, param, value)
+    TK, AS = np.sort(t[param].unique()), np.sort(t.A.unique())
+    M = np.full((len(AS), len(TK)), np.nan)
+    N = np.zeros_like(M)
+    for _, r in t.iterrows():
+        i, j = np.searchsorted(AS, r.A), np.searchsorted(TK, r[param])
+        M[i, j], N[i, j] = r.v, r.n
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    vmin, vmax = (0, 1) if value in ("nonfluid", "Smax", "psi6", "bond_persist") else (np.nanmin(M), np.nanmax(M))
+    im = ax.imshow(M, origin="lower", aspect="auto", cmap=cmap, vmin=vmin, vmax=vmax,
+                   extent=(-0.5, len(TK) - 0.5, -0.5, len(AS) - 0.5))
+    for i in range(len(AS)):
+        for j in range(len(TK)):
+            if N[i, j]:
+                ax.text(j, i, f"{M[i, j]:.2f}\n(n={int(N[i, j])})" if N[i, j] > 1 else f"{M[i, j]:.2f}",
+                        ha="center", va="center", fontsize=6.5,
+                        color="white" if (M[i, j] - vmin) / max(vmax - vmin, 1e-12) < 0.55 else "black")
+    if boundaries:
+        LTK = np.log10(TK)
+        for (lab, pts), col in zip(boundaries.items(), ("#e34948", "#111111", "#1baf7a", "#eda100")):
+            pts = [(a, b) for a, b in pts if a in AS]
+            if pts:
+                ax.plot([np.interp(np.log10(b), LTK, np.arange(len(TK))) for a, b in pts],
+                        [np.searchsorted(AS, a) for a, b in pts], "--", c=col, lw=2, label=f"boundary {lab}")
+        ax.legend(frameon=False, fontsize=8, loc="upper left", bbox_to_anchor=(0, 1.12), ncol=3)
+    ax.set_xticks(range(len(TK))); ax.set_xticklabels([f"{v:g}" for v in TK])
+    ax.set_yticks(range(len(AS))); ax.set_yticklabels([f"{v:g}" for v in AS])
+    ax.set_xlabel(axis_label(param) + "; tested values")
+    ax.set_ylabel("attraction A (k$_B$T)")
+    fig.colorbar(im, ax=ax, label=METRIC_LABELS.get(value, value))
+    if title:
+        ax.set_title(title, loc="left", fontsize=11, pad=24 if boundaries else 6)
+    return fig
+
+
+def surface_figure(d: pd.DataFrame, param: str, value: str = "proba", model: BoundaryModel | None = None,
+                   title=""):
+    """Plotly 3D elevation over (log parameter, A): the model probability of 'not fluid' or a measured
+    value (interpolated between the runs), with every run as a point on top."""
+    import plotly.graph_objects as go
+    from scipy.interpolate import griddata
+    lx = np.log10(d[param].values.astype(float))
+    gx = np.linspace(lx.min(), lx.max(), 60)
+    ga = np.linspace(d.A.min(), d.A.max(), 40)
+    GX, GA = np.meshgrid(gx, ga)
+    if value == "proba" and model is not None:
+        Z = model.gpc.predict_proba((np.c_[GX.ravel(), GA.ravel()] - model.mu) / model.sd)[:, 1].reshape(GX.shape)
+        pts_z = (d.state != "fluid").astype(float).values
+        zlab = "P(not fluid)"
+    else:
+        t = cell_table(d, param, value if value != "proba" else "nonfluid")
+        Z = griddata(np.c_[np.log10(t[param].values.astype(float)), t.A.values], t.v.values, (GX, GA), method="linear")
+        col = (d.state != "fluid").astype(float) if value in ("proba", "nonfluid") else d[value]
+        pts_z = np.asarray(col, float)
+        zlab = METRIC_LABELS.get(value, value)
+    fig = go.Figure()
+    fig.add_trace(go.Surface(x=10 ** GX, y=GA, z=Z, colorscale="Viridis", opacity=0.85, showscale=True,
+                             colorbar=dict(title=zlab), name="surface"))
+    hover = [f"{n}<br>{s}" for n, s in zip(d.name, d.state)]
+    fig.add_trace(go.Scatter3d(x=d[param], y=d.A, z=pts_z, mode="markers", name="runs", hovertext=hover,
+                               hoverinfo="text",
+                               marker=dict(size=3.5, color=[STATE_COLORS.get(s, "#888") for s in d.state],
+                                           line=dict(color="white", width=0.5))))
+    fig.update_layout(height=650, margin=dict(l=0, r=0, t=40, b=0), title=title,
+                      scene=dict(xaxis=dict(title=axis_label(param).replace("$", "").replace("_", ""), type="log"),
+                                 yaxis=dict(title="A (kBT)"), zaxis=dict(title=zlab)))
+    return fig
+
+
+def fig_boundary_compare(models: dict, figsize=(8, 5)):
+    """The fitted 50 % boundaries of several models (e.g. LJ and AO) on one plot, with their runs."""
+    import matplotlib.pyplot as plt
+    _style(plt)
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    cols = {"LJ": "#2a78d6", "AO": "#eb6834"}
+    for lab, m in models.items():
+        c = cols.get(lab, "#555")
+        b = np.array(m.boundary)
+        ax.plot(b[:, 1], b[:, 0], "-", c=c, lw=2.2, label=f"{lab}: 50 % boundary")
+        d = m.data
+        nf = pd.Series(np.asarray(getattr(m, "y", (d.state != "fluid").astype(int).values)) == 1, index=d.index)
+        jit = 1 + (0.02 if lab == "AO" else -0.02)
+        ax.scatter(d[param_of(m)][~nf] * jit, d.A[~nf], facecolors="white", edgecolors=c, s=26, lw=1.2, zorder=3)
+        ax.scatter(d[param_of(m)][nf] * jit, d.A[nf], c=c, s=26, zorder=3)
+    ax.scatter([], [], facecolors="white", edgecolors="#555", s=26, label="fluid run")
+    ax.scatter([], [], c="#555", s=26, label="not fluid")
+    ax.set_xscale("log")
+    p = param_of(next(iter(models.values())))
+    ax.set_xlabel(axis_label(p))
+    ax.set_ylabel("attraction A (k$_B$T; AO matched by B$_2$*)")
+    m0 = next(iter(models.values()))
+    ax.set_title("Fluid / band boundary" + ("" if m0.param == "t_map" else
+                 f" at t = {m0.data.t_eval_tauB.round(1).iloc[0]:g} τ$_B$"), loc="left")
+    ax.legend(frameon=False, fontsize=8)
+    for s_ in ("top", "right"):
+        ax.spines[s_].set_visible(False)
+    return fig
+
+
+def param_of(m):
+    return m.param
+
+
+def map_animation(df, regime, param, potential, value="nonfluid", times=None, title=""):
+    """Plotly animation of the map over the evaluation times: a heat map of a measure per (A, parameter)
+    point, or (value='states') every run as a dot coloured by its state. Slider + play button."""
+    import plotly.graph_objects as go
+    times = times or map_times(df, regime)
+    frames, TKs, ASs = [], set(), set()
+    per_t = {}
+    for tm in times:
+        d = boundary_data(df, regime, param, tm, potential)
+        if len(d):
+            per_t[tm] = d
+            TKs |= set(d[param]); ASs |= set(d.A)
+    if not per_t:
+        raise ValueError("no runs at any evaluation time for this selection")
+    TK, AS = sorted(TKs), sorted(ASs)
+    xs = [f"{v:g}" for v in TK]
+
+    def traces(d):
+        if value == "states":
+            dd = d.sort_values(["A", param, "name"]).copy()
+            dd["k"] = dd.groupby(["A", param]).cumcount()
+            dd["n"] = dd.groupby(["A", param]).name.transform("count")
+            xi = np.searchsorted(TK, dd[param].values) + (dd.k - (dd.n - 1) / 2).values * 0.12
+            return [go.Scatter(x=xi, y=dd.A, mode="markers", hovertext=dd.name + "<br>" + dd.state, hoverinfo="text",
+                               marker=dict(size=10, color=[STATE_COLORS.get(s_, "#888") for s_ in dd.state],
+                                           line=dict(color="white", width=1)))]
+        t = cell_table(d, param, value)
+        M = np.full((len(AS), len(TK)), np.nan)
+        for _, r in t.iterrows():
+            M[AS.index(r.A), TK.index(r[param])] = r.v
+        zr = (0, 1) if value in ("nonfluid", "Smax", "psi6", "bond_persist") else (None, None)
+        return [go.Heatmap(z=M, x=list(range(len(TK))), y=list(range(len(AS))), colorscale="Viridis", zmin=zr[0],
+                           zmax=zr[1], colorbar=dict(title=METRIC_LABELS.get(value, value)),
+                           texttemplate="%{z:.2f}", hoverongaps=False)]
+    keys = sorted(per_t)
+    fig = go.Figure(data=traces(per_t[keys[0]]),
+                    frames=[go.Frame(data=traces(per_t[tm]), name=f"{tm:g}") for tm in keys])
+    steps = [dict(method="animate", label=f"{tm:g}", args=[[f"{tm:g}"], dict(mode="immediate",
+             frame=dict(duration=600, redraw=True), transition=dict(duration=0))]) for tm in keys]
+    fig.update_layout(
+        height=560, title=title or f"{regime_label(regime)}, {potential}: map over time",
+        xaxis=dict(title=axis_label(param).replace("$", "").replace("_", "") + ", tested values", tickmode="array",
+                   tickvals=list(range(len(TK))), ticktext=xs, range=[-0.6, len(TK) - 0.4]),
+        yaxis=dict(title="A (kBT)", tickmode="array", tickvals=(list(range(len(AS))) if value != "states" else AS),
+                   ticktext=[f"{a:g}" for a in AS]),
+        updatemenus=[dict(type="buttons", showactive=False, x=0, y=-0.15, xanchor="left",
+                          buttons=[dict(label="▶ Play", method="animate",
+                                        args=[None, dict(frame=dict(duration=700, redraw=True), fromcurrent=True)]),
+                                   dict(label="⏸ Pause", method="animate",
+                                        args=[[None], dict(frame=dict(duration=0), mode="immediate")])])],
+        sliders=[dict(active=0, steps=steps, x=0.15, len=0.85, y=-0.12, currentvalue=dict(prefix="t = ", suffix=" τB"))],
+        plot_bgcolor="white")
     return fig
 
 
