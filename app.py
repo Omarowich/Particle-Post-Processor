@@ -3885,8 +3885,11 @@ elif plot_mode == "Regime state model":
 
     @st.cache_data(show_spinner=False)
     def _rsm_observables(root, regimes, rc, box, common_t, lag, times=(), stamp=()):
-        return rsm.compute_observables(root, regimes, rc=rc, box=box,
-                                       common_time_tauB=common_t, lag_tauB=lag, map_times_tauB=times)
+        bar = st.progress(0.0, text="Reading runs (only new runs and new times are computed; saved as it goes)…")
+        out = rsm.compute_observables(root, regimes, rc=rc, box=box, common_time_tauB=common_t, lag_tauB=lag,
+                                      map_times_tauB=times, progress=lambda f, s: bar.progress(min(f, 1.0), text=s))
+        bar.empty()
+        return out
 
     @st.cache_data(show_spinner=False)
     def _rsm_checks(root, regimes, stamp=()):
@@ -3965,11 +3968,19 @@ elif plot_mode == "Regime state model":
         st.warning("No regime folders selected (or none found in this folder).")
         st.stop()
 
-    with st.spinner("Reading runs and computing observables (cached after the first time)..."):
+    # new runs (e.g. from a running batch) are only loaded when asked, so the page does not reload every few minutes
+    _sk = f"rsm_stamp__{rsm_root}__{'-'.join(rsm_regimes)}"
+    _now = _rsm_stamp(rsm_root, tuple(rsm_regimes))
+    if _sk not in st.session_state:
+        st.session_state[_sk] = _now
+    _n_new = len(set(_now) - set(st.session_state[_sk]))
+    if _n_new and st.sidebar.button(f"Load {_n_new} new / changed run(s)", key="rsm_load_new", type="primary"):
+        st.session_state[_sk] = _now
+    if True:
         try:
             rsm_obs = _rsm_observables(rsm_root, tuple(rsm_regimes), float(rsm_rc), float(rsm_box),
                                        float(rsm_tc), float(rsm_lag), tuple(float(v) for v in re.findall(r"[0-9.]+", rsm_times_txt) if v.strip(".") ),
-                                       stamp=_rsm_stamp(rsm_root, tuple(rsm_regimes)))
+                                       stamp=st.session_state[_sk])
         except Exception as e:
             st.error(f"Could not compute observables: {e}")
             st.stop()
@@ -4243,7 +4254,7 @@ elif plot_mode == "Regime state model":
 
     with tab_checks:
         with st.spinner("Checking files..."):
-            checks = _rsm_checks(rsm_root, tuple(rsm_regimes), _rsm_stamp(rsm_root, tuple(rsm_regimes)))
+            checks = _rsm_checks(rsm_root, tuple(rsm_regimes), st.session_state[_sk])
         if checks.empty:
             st.success("No duplicate files, run-length mismatches or shared random seeds found.")
         else:
