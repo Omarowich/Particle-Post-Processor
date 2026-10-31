@@ -86,6 +86,66 @@ def seconds_per_step(n_particles, potential="LJ"):
     return (time.perf_counter() - t0) / 30 * 1.15
 
 
+# --------------------------------------------------------------------------- batches
+SCENARIOS = {
+    "I": "Regime I: no field, grid start",
+    "II": "Regime II: acoustic radiation force (d_n), grid start",
+    "III": "Regime III: field off, start from the COMSOL band",
+    "IV": "Regime IV: streaming flow (F₀), start from the COMSOL band",
+}
+
+
+def expand_batch(base, spec, match_cache=None):
+    """List of setting overrides (one per parameter set) for a batch.
+
+    spec: {"scenario": "I".."IV", "A": [...], "dn": [...], "F": [...], "potentials": ["LJ", "AO"],
+           "q": [0.2], "T_tauB": 10, "seeds": [1, 2, 3], "auto_steps": True, "out_per_tauB": 100}
+    AO is matched to each A by B2* (phi_p from the matching, at each q)."""
+    match_cache = {} if match_cache is None else match_cache
+    sc = spec.get("scenario", "II")
+    fields = {"I": [{"dn_nm": 0.0, "flow_F": 0.0}],
+              "II": [{"dn_nm": float(d), "flow_F": 0.0} for d in spec.get("dn") or [4000]],
+              "III": [{"dn_nm": 0.0, "flow_F": 0.0}],
+              "IV": [{"dn_nm": 0.0, "flow_F": float(F)} for F in spec.get("F") or [3000]]}[sc]
+    start = dict(base.get("start", {"kind": "grid"}))
+    if sc in ("III", "IV"):
+        start = {"kind": "aaf"}
+    elif start.get("kind") in ("aaf", "run"):
+        start = {"kind": "grid", "n_side": 12, "spacing": 4.0}
+    regime = {"I": "NAF", "II": "ARF", "III": "AAF", "IV": "ASF"}[sc]
+    items = []
+    for A in spec.get("A") or [3.0]:
+        for pot in spec.get("potentials") or ["LJ"]:
+            for q in (spec.get("q") or [0.2]) if pot == "AO" else [None]:
+                it = {"potential": pot, "A": float(A), "start": start, "regime": regime,
+                      "T_tauB": float(spec.get("T_tauB", base.get("T_tauB", 10))),
+                      "seeds": [int(s) for s in spec.get("seeds") or [1, 2, 3]],
+                      "out_per_tauB": int(spec.get("out_per_tauB", base.get("out_per_tauB", 100)))}
+                if pot == "AO":
+                    key = (float(q), float(A))
+                    if key not in match_cache:
+                        phi, _ = match_phi({**base, "potential": "AO", "q": float(q)}, float(A))
+                        match_cache[key] = float(phi)
+                    it.update({"q": float(q), "phi_p": round(match_cache[key], 3)})
+                if spec.get("auto_steps", True):
+                    it["steps_per_tauB"] = suggested_steps({**base, **it})
+                for f in fields:
+                    items.append({**it, **f})
+    return items
+
+
+def batch_runs(base, items):
+    """[(regime, run name, exists?, steps)] for every run of a batch."""
+    out = []
+    for it in items:
+        c = {**sr.DEFAULTS, **base, **it}
+        for s in c["seeds"]:
+            reg, name = sr.run_folder_name(c, int(s))
+            ex = os.path.isfile(os.path.join(c["out_root"], reg, name, "datax.csv"))
+            out.append((reg, name, ex, int(c["steps_per_tauB"]) * float(c["T_tauB"]), c["potential"]))
+    return out
+
+
 def run_names(c):
     return [sr.run_folder_name({**sr.DEFAULTS, **c}, int(s)) for s in c["seeds"]]
 
@@ -126,7 +186,9 @@ def list_jobs(out_root):
         except Exception:
             continue
         st = []
-        for s in c.get("seeds", []):
+        keys = ([f"{k}-{s}" for k, b in enumerate(c["batch"]) for s in b.get("seeds", c.get("seeds", []))]
+                if c.get("batch") else c.get("seeds", []))
+        for s in keys:
             try:
                 with open(os.path.join(jd, f"status_seed{s}.json")) as f:
                     st.append({"seed": s, **json.load(f)})

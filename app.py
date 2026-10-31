@@ -1,5 +1,6 @@
 # app.py
 
+import json
 import os
 import re
 from pathlib import Path
@@ -4249,7 +4250,7 @@ elif plot_mode == "Run simulation":
                 del SS[k]
             st.rerun()
 
-    tab_set, tab_jobs = st.tabs(["Settings and start", "Jobs"])
+    tab_set, tab_batch, tab_jobs = st.tabs(["Settings and start", "Batch", "Jobs"])
     with tab_set:
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -4481,6 +4482,95 @@ elif plot_mode == "Run simulation":
             jd = sg.launch(cfg)
             st.success(f"Started. Follow it in the Jobs tab (job {os.path.basename(jd)}).")
 
+    with tab_batch:
+        st.caption("Many parameter sets in one job. Physics, repulsive core, particle number (grid start), saved "
+                   "frames and output folder come from **Settings and start**; AO is matched to each A by B₂*. "
+                   "Runs that already exist are skipped, so a stopped batch can simply be started again.")
+        bdir = os.path.join(sim_root, "_batches") if sim_root else ""
+        saved = sorted(f[:-5] for f in os.listdir(bdir) if f.endswith(".json")) if bdir and os.path.isdir(bdir) else []
+        if saved:
+            lc1, lc2 = st.columns([3, 1])
+            pick = lc1.selectbox("Load a saved batch", ["–"] + saved, key="bt_pick")
+            if lc2.button("Load", key="bt_load") and pick != "–":
+                with open(os.path.join(bdir, pick + ".json")) as f:
+                    spec0 = json.load(f).get("batch_spec", {})
+                SS.bt_sc = spec0.get("scenario", "II")
+                SS.bt_A = ", ".join(f"{v:g}" for v in spec0.get("A", []))
+                SS.bt_dn = ", ".join(f"{v:g}" for v in spec0.get("dn", []))
+                SS.bt_F = ", ".join(f"{v:g}" for v in spec0.get("F", []))
+                SS.bt_pots = spec0.get("potentials", ["LJ", "AO"])
+                SS.bt_q = ", ".join(f"{v:g}" for v in spec0.get("q", [0.2]))
+                SS.bt_T = float(spec0.get("T_tauB", 10)); SS.bt_seeds = ", ".join(map(str, spec0.get("seeds", [1, 2, 3])))
+                SS.bt_loaded_name = pick
+                st.rerun()
+
+        def _nums(txt):
+            out = []
+            for t in str(txt).replace(";", ",").split(","):
+                try:
+                    out.append(float(t)) if t.strip() else None
+                except ValueError:
+                    st.error(f"'{t.strip()}' is not a number")
+            return out
+
+        sc = st.radio("Scenario", list(sg.SCENARIOS), format_func=sg.SCENARIOS.get, key="bt_sc", horizontal=False)
+        b1, b2, b3 = st.columns(3)
+        A_list = _nums(b1.text_input("A values (k_BT; AO at the same B₂*)", "1, 2, 3, 5", key="bt_A"))
+        dn_list = _nums(b2.text_input("d_n values (nm)", "2000, 3000, 4000", key="bt_dn")) if sc == "II" else []
+        F_list = _nums(b2.text_input("F₀ values (N/m³)", "300, 1000, 3000", key="bt_F")) if sc == "IV" else []
+        pots = b3.multiselect("Attraction", ["LJ", "AO"], default=["LJ", "AO"], key="bt_pots")
+        b4, b5, b6, b7 = st.columns(4)
+        q_list = _nums(b4.text_input("AO q values", "0.2", key="bt_q")) if "AO" in pots else []
+        T_b = b5.number_input("Run length (τ_B)", 0.01, 1000.0, 10.0, 1.0, key="bt_T")
+        seeds_b = [int(v) for v in _nums(b6.text_input("Seeds", "1, 2, 3", key="bt_seeds"))]
+        workers_b = b7.number_input("Runs at the same time", 1, max(1, os.cpu_count() or 1),
+                                    min(4, max(1, (os.cpu_count() or 2) - 1)), key="bt_workers",
+                                    help="Each one is a separate Python process (~200 MB). Stay below your number of "
+                                         "cores and don't run two jobs at once, or the computer runs out of memory.")
+        spec = {"scenario": sc, "A": A_list, "dn": dn_list, "F": F_list, "potentials": pots, "q": q_list,
+                "T_tauB": float(T_b), "seeds": seeds_b, "auto_steps": True,
+                "out_per_tauB": int(cfg["out_per_tauB"])}
+        if "bt_match" not in SS:
+            SS.bt_match = {}
+        items, runs = [], []
+        if A_list and pots and seeds_b and (sc not in ("II", "IV") or (dn_list if sc == "II" else F_list)):
+            try:
+                with st.spinner("matching AO to each A by B₂*…"):
+                    items = sg.expand_batch(cfg, spec, SS.bt_match)
+                runs = sg.batch_runs(cfg, items)
+            except Exception as ex:
+                st.error(f"batch: {ex}")
+        if runs:
+            todo = [r for r in runs if not r[2]]
+            n_b = 144 if sc in ("III", "IV") else max(n_part, 2)
+            sps = {p: sg.seconds_per_step(n_b, p) for p in {r[4] for r in todo}} if todo else {}
+            est_b = sum(r[3] * sps[r[4]] for r in todo) / max(1, min(int(workers_b), len(todo) or 1))
+            st.markdown(f"**{len(items)} parameter sets × seeds = {len(runs)} runs**, {len(runs) - len(todo)} exist "
+                        f"already (skipped) · estimated **{est_b / 3600:.1f} h** with {int(workers_b)} at a time")
+            if any(it["potential"] == "AO" for it in items):
+                st.caption("AO φ_p per A: " + ", ".join(sorted({f"q={it['q']:g}, A={it['A']:g}: {it['phi_p']:.3f}"
+                                                                 for it in items if it["potential"] == "AO"})))
+            st.dataframe(pd.DataFrame({"folder": [f"{r[0]}/{r[1]}" for r in runs],
+                                       "exists (skipped)": [r[2] for r in runs]}),
+                         use_container_width=True, hide_index=True, height=min(400, 38 + 35 * len(runs)))
+            s1, s2, s3 = st.columns([1, 2, 1])
+            auto_name = (f"Regime{sc}_{'-'.join(pots)}_A{'-'.join(f'{a:g}' for a in A_list)}"
+                         + (f"_dn{'-'.join(f'{d:g}' for d in dn_list)}" if sc == "II" else "")
+                         + (f"_F{'-'.join(f'{f:g}' for f in F_list)}" if sc == "IV" else ""))
+            bname = s2.text_input("Batch name (to save it)", value=SS.pop("bt_loaded_name", None) or auto_name)
+            full = {**cfg, "batch": items, "workers": int(workers_b), "batch_spec": spec}
+            if s3.button("Save batch", key="bt_save"):
+                os.makedirs(bdir, exist_ok=True)
+                with open(os.path.join(bdir, re.sub(r"[^A-Za-z0-9_.-]+", "_", bname) + ".json"), "w") as f:
+                    json.dump(full, f, indent=2)
+                st.success(f"saved in {bdir}. Command line: python simulation\\sim_runner.py \"{os.path.join(bdir, bname)}.json\"")
+            if s1.button("▶ Start batch", type="primary", key="bt_go", disabled=not todo):
+                os.makedirs(sim_root, exist_ok=True)
+                jd = sg.launch(full)
+                st.success(f"Started {len(todo)} runs. Follow them in the Jobs tab (job {os.path.basename(jd)}).")
+        else:
+            st.info("Enter at least one A value, an attraction, seeds and (for Regimes II / IV) d_n or F₀ values.")
+
     with tab_jobs:
         @st.fragment(run_every=3)
         def _jobs_view():
@@ -4495,11 +4585,23 @@ elif plot_mode == "Run simulation":
                 fld = f"d_n {c['dn_nm']:g} nm" if c["dn_nm"] > 0 else "field off"
                 fr = np.mean([s.get("frac", 0) for s in j["status"]]) if j["status"] else 0
                 icon = {"done": "✅", "running": "⏳", "failed": "❌", "stopped": "⏹"}[j["state"]]
-                with st.expander(f"{icon} {j['id']} · {pot_txt}, {fld}, {c['T_tauB']:g} τ_B, seeds "
-                                 f"{', '.join(map(str, c['seeds']))} · {fr:.0%}", expanded=j["state"] == "running"):
-                    for s in j["status"]:
+                if c.get("batch"):
+                    n_done = sum(s.get("state") in ("done", "exists") for s in j["status"])
+                    head = (f"{icon} {j['id']} · batch: {len(c['batch'])} parameter sets, {len(j['status'])} runs · "
+                            f"{n_done} done · {fr:.0%}")
+                else:
+                    head = (f"{icon} {j['id']} · {pot_txt}, {fld}, {c['T_tauB']:g} τ_B, seeds "
+                            f"{', '.join(map(str, c['seeds']))} · {fr:.0%}")
+                with st.expander(head, expanded=j["state"] == "running"):
+                    shown = j["status"]
+                    if c.get("batch"):
+                        shown = [s for s in j["status"] if s.get("state") == "running"]
+                        st.caption(", ".join(f"{k}: {v}" for k, v in pd.Series(
+                            [s.get("state", "waiting") for s in j["status"]]).value_counts().items()))
+                    for s in shown:
                         eta = s.get("eta")
-                        txt = f"seed {s['seed']}: {s.get('state')}"
+                        txt = (f"{s.get('name', s['seed'])}: {s.get('state')}" if c.get("batch")
+                               else f"seed {s['seed']}: {s.get('state')}")
                         if eta is not None and s.get("state") == "running":
                             txt += f" · about {eta / 60:.1f} min left"
                         if s.get("capped"):
