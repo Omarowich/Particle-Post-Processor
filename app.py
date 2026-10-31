@@ -4005,7 +4005,7 @@ elif plot_mode == "Regime state model":
                                               "settings); a run only counts at times it reaches.") if len(times_) > 1 else t0
             else:
                 map_t = float(rsm_tc)
-            views = ["States + boundary model", "Every run as its own dot", "Heat map: share not fluid",
+            views = ["Phase diagram (all states)", "States + boundary model", "Every run as its own dot", "Heat map: share not fluid",
                      "Heat map: measured value", "3D elevation", "LJ vs AO boundaries"]
             if map_param != "t_map":
                 views.append("Play over time")
@@ -4054,6 +4054,25 @@ elif plot_mode == "Regime state model":
                        ". Change which runs are used in the sidebar filter (6.).")
             title_ = f"{rsm.regime_label(map_regime)}, {map_pot}" + ("" if map_param == "t_map" else f", t = {map_t:g} τB")
             try:
+                if view == "Phase diagram (all states)":
+                    p1, p2, p3, p4, p5, p6 = st.columns(6)
+                    ph_runs = p1.checkbox("show runs", True, key="rsm_ph_runs")
+                    ph_each = p2.checkbox("every run", True, key="rsm_ph_each", disabled=not ph_runs)
+                    ph_lab = p3.checkbox("region names", True, key="rsm_ph_lab")
+                    ph_borders = p4.checkbox("borders", True, key="rsm_ph_borders")
+                    ph_conf = p5.checkbox("fade where unsure", False, key="rsm_ph_conf")
+                    ph_even = p6.checkbox("tested values evenly spaced", True, key="rsm_ph_even",
+                                          help="Off: true log scale of the parameter.")
+                    pm = rsm.fit_phase_map(mdata, map_regime, map_param, map_pot)
+                    fig = rsm.fig_phase_map(pm, show_runs=ph_runs, per_run=ph_each, region_labels=ph_lab,
+                                            confidence=ph_conf, borders=ph_borders, even_spacing=ph_even,
+                                            colors=sty.get("state_colors"))
+                    st.pyplot(fig)
+                    save_figure_if_requested(fig, f"phase_diagram_{map_regime}_{map_pot}", save_plots, output_dir)
+                    plt.close(fig)
+                    st.caption("One model learns all states at once and colours every point by its most likely state; "
+                               "borders are where two states are equally likely. Change the state definitions with the "
+                               "thresholds in the sidebar and the state colours under 'Boundary and look'.")
                 if view in ("States + boundary model", "Every run as its own dot", "3D elevation"):
                     rsm_model = rsm.fit_boundary(rsm_df, map_regime, map_param, float(map_t), map_pot,
                                                  loo=(map_param != "t_map" and len(mdata) <= 400), data=mdata,
@@ -4964,7 +4983,10 @@ elif plot_mode == "Run viewer":
                         rr = np.hypot(*(Pk - Pk[int(shown)]).T); rr[int(shown)] = np.inf
                         rng_ = 2 * (1 + lmodel.ao[0]) if lmodel.ao else (6.0 if lmodel.A > 0 else 2.0)
                         why = []
-                        if not (rr < rng_).any():
+                        if not lmodel.ao and lmodel.A <= 0:
+                            why.append("this run has no attraction (A = 0), so the only pair force is the repulsive "
+                                       f"core, which acts only below 2 µm (nearest neighbour {rr.min():.2f} µm)")
+                        elif not (rr < rng_).any():
                             why.append(f"no other particle within the {'AO' if lmodel.ao else 'LJ' if lmodel.A > 0 else 'core'} "
                                        f"range ({rng_:.1f} µm centre to centre; nearest is {rr.min():.2f} µm)")
                         else:
