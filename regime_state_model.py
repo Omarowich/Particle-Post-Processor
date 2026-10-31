@@ -404,10 +404,17 @@ def nominal_time(d):
     return nom.fillna(d.t_eval_tauB).astype(float)
 
 
-def map_times(df, regime=None):
-    """Times (τB) at which runs were evaluated (for the map's time slider), near-identical times merged."""
+def map_times(df, regime=None, potential=None, param=None):
+    """Times (τB) at which the runs of a map were evaluated (for its time slider), near-identical times merged.
+    With potential / param, only the runs that can appear on that map count (no empty frames)."""
     d = df if regime is None else df[df.regime == regime]
-    return sorted(set(snap_times(nominal_time(d).values).values()))
+    if len(d):
+        d = d[~is_check_run(d)]
+    if potential and "potential" in d:
+        d = d[d.potential.fillna("LJ") == potential]
+    if param and param in d and param != "t_map":
+        d = d[np.isfinite(d[param].astype(float))]
+    return sorted(set(snap_times(nominal_time(d).values).values())) if len(d) else []
 
 
 OUTCOMES = {

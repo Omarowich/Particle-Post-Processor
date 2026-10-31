@@ -4022,7 +4022,10 @@ elif plot_mode == "Regime state model":
                                  help="AO attraction is matched to each A by B2*, but its range is 2·q·a, so maps "
                                       "at different q answer different questions. The experiment sits at q ≈ 0.03–0.08.")
                 rsm_dfm = rsm_df[(rsm_df.potential != "AO") | np.isclose(rsm_df.q, map_q)]
-            times_ = rsm.map_times(rsm_dfm, map_regime)
+            times_ = rsm.map_times(rsm_dfm, map_regime, map_pot, map_param)
+            if not times_:
+                st.info(f"No {map_pot} runs in {rsm.regime_label(map_regime)} with the current filter.")
+                times_ = [float(rsm_tc)]
             if map_param != "t_map":
                 t0 = min(times_, key=lambda v: abs(v - float(rsm_tc))) if times_ else float(rsm_tc)
                 map_t = st.select_slider("Time of the map (τ_B)", times_, value=t0, key=f"rsm_map_t_{map_regime}",
