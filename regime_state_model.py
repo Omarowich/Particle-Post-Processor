@@ -372,16 +372,42 @@ def map_data(df, regime, x, t_tauB=1.0, potential="LJ"):
     d = d[~is_check_run(d)]
     if "potential" in d and potential:
         d = d[d.potential.fillna("LJ") == potential]
-    d["t_map"] = d.t_eval_tauB.round(2)
+    nt = nominal_time(d)
+    d["t_map"] = nt.round(2).map(snap_times(nt.values))
     d = d[d.t_map > 0]
     d = d.assign(_end=(d["eval"] == "end").astype(int)).sort_values("_end")
     return d.drop_duplicates(["name", "t_map"]).drop(columns="_end")
 
 
+def snap_times(values, rel=0.03):
+    """Merge times within 3 % of each other (a run evaluated at 1 τB and a run that ends at 1.01 τB are the
+    same time on a map); each group is named by its simplest value (1 rather than 1.01)."""
+    v = sorted(set(np.round(np.asarray(values, float), 2)))
+    groups, out = [], {}
+    for t in v:
+        if groups and t <= groups[-1][0] * (1 + rel) + 1e-9:
+            groups[-1].append(t)
+        else:
+            groups.append([t])
+    for g in groups:
+        rep = min(g, key=lambda x: (len(f"{x:g}"), x))
+        for t in g:
+            out[t] = rep
+    return out
+
+
+def nominal_time(d):
+    """The time a row was meant for: the requested map time ('t0.25' -> 0.25) when it has one, else the
+    frame time (runs are evaluated at the nearest saved frame, e.g. 0.26 for 0.25)."""
+    tag = d["eval"].astype(str) if "eval" in d else pd.Series("", index=d.index)
+    nom = pd.to_numeric(tag.str.extract(r"^t([0-9.]+)$")[0], errors="coerce")
+    return nom.fillna(d.t_eval_tauB).astype(float)
+
+
 def map_times(df, regime=None):
-    """Times (τB) at which runs were evaluated (for the map's time slider)."""
+    """Times (τB) at which runs were evaluated (for the map's time slider), near-identical times merged."""
     d = df if regime is None else df[df.regime == regime]
-    return sorted(set(np.round(d.t_eval_tauB.values, 2)))
+    return sorted(set(snap_times(nominal_time(d).values).values()))
 
 
 OUTCOMES = {
@@ -794,18 +820,24 @@ class PhaseMap:
         return self.gpc.predict_proba((X - self.mu) / self.sd)
 
 
+class _OneState:
+    def predict_proba(self, X):
+        return np.ones((len(X), 1))
+
+
 def fit_phase_map(d: pd.DataFrame, regime: str, param: str, potential="LJ") -> PhaseMap:
     """One model for all states at once (Gaussian-process classifier, one-vs-rest): for any point it gives the
     probability of each state, so the map can show every region and the borders between them."""
     from sklearn.gaussian_process import GaussianProcessClassifier
     from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
     classes = [c for c in STATE_ORDER if c in set(d.state)] + sorted(set(d.state) - set(STATE_ORDER))
-    if len(classes) < 2:
-        raise ValueError(f"all {len(d)} runs here are '{classes[0] if classes else '?'}': a phase diagram needs at "
-                         "least two states")
+    if not classes:
+        raise ValueError("no runs for this selection")
     X = np.c_[np.log10(d[param].values.astype(float)), d.A.values]
     mu, sd = X.mean(0), X.std(0)
     sd[sd == 0] = 1.0
+    if len(classes) == 1:     # every run in the same state: the whole map is that state
+        return PhaseMap(regime, param, d, _OneState(), classes, mu, sd, potential)
     y = np.array([classes.index(s_) for s_ in d.state])
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -815,7 +847,8 @@ def fit_phase_map(d: pd.DataFrame, regime: str, param: str, potential="LJ") -> P
 
 
 def fig_phase_map(pm: PhaseMap, show_runs=True, per_run=True, region_labels=True, confidence=False,
-                  borders=True, colors=None, title=None, figsize=(8.5, 5.6), even_spacing=True):
+                  borders=True, colors=None, title=None, figsize=(8.5, 5.6), even_spacing=True,
+                  x_values=None, A_values=None):
     """Smooth phase diagram: every state as a coloured region (most likely state), smooth borders where two
     states are equally likely, optional run dots (COMSOL hollow) and fading where the model is unsure."""
     import matplotlib.pyplot as plt
@@ -823,7 +856,7 @@ def fig_phase_map(pm: PhaseMap, show_runs=True, per_run=True, region_labels=True
     _style(plt)
     col = {**STATE_COLORS, **(colors or {})}
     d, prm = pm.data, pm.param
-    TK = np.sort(d[prm].unique())
+    TK = np.sort(np.unique(np.r_[d[prm].unique(), list(x_values or [])]).astype(float))
     LTK = np.log10(TK)
     if even_spacing:
         pos = lambda v: np.interp(np.log10(v), LTK, np.arange(len(TK)))
@@ -833,7 +866,8 @@ def fig_phase_map(pm: PhaseMap, show_runs=True, per_run=True, region_labels=True
         pos = lambda v: np.log10(v)
         U = np.linspace(LTK[0] - 0.05, LTK[-1] + 0.05, 500)
         GLx = U
-    A_lo, A_hi = d.A.min(), d.A.max()
+    A_all = np.r_[d.A.values, list(A_values or [])].astype(float)
+    A_lo, A_hi = A_all.min(), A_all.max()
     pad = 0.12 * (A_hi - A_lo or 1)
     UA = np.linspace(A_lo - pad, A_hi + pad, 260)
     GU, GA = np.meshgrid(U, UA)
@@ -848,7 +882,7 @@ def fig_phase_map(pm: PhaseMap, show_runs=True, per_run=True, region_labels=True
         else np.full(conf.shape, 0.55)
     img = np.concatenate([img, alpha[..., None]], -1)
     ax.imshow(img, origin="lower", aspect="auto", extent=(U[0], U[-1], UA[0], UA[-1]), interpolation="bilinear", zorder=0)
-    if borders:
+    if borders and len(pm.classes) > 1:
         for i in range(len(pm.classes)):
             other = np.delete(P, i, axis=-1).max(-1)
             ax.contour(GU, GA, P[..., i] - other, levels=[0], colors="#333", linewidths=1.3, zorder=2)
@@ -893,7 +927,7 @@ def fig_phase_map(pm: PhaseMap, show_runs=True, per_run=True, region_labels=True
         ax.set_xticks(LTK[:: max(1, len(LTK) // 10)])
         ax.set_xticklabels([f"{v:g}" for v in TK[:: max(1, len(TK) // 10)]])
         ax.set_xlabel(axis_label(prm) + " (log scale)")
-    ax.set_yticks(np.unique(np.round(d.A.values, 3)))
+    ax.set_yticks(np.unique(np.round(A_all, 3)))
     ax.set_ylabel("attraction A (k$_B$T" + ("; AO matched by B$_2$*)" if pm.potential == "AO" else ")"))
     ax.set_xlim(U[0], U[-1]); ax.set_ylim(UA[0], UA[-1])
     ax.set_title(title or (("States over time" if prm == "t_map" else
@@ -902,6 +936,47 @@ def fig_phase_map(pm: PhaseMap, show_runs=True, per_run=True, region_labels=True
     for s_ in ("top", "right"):
         ax.spines[s_].set_visible(False)
     return fig
+
+
+def phase_map_frames(df, regime, param, potential="LJ", times=None, progress=None, **figkw):
+    """The phase diagram at every evaluation time, on fixed axes: [(time, PNG bytes, n runs)]. Times with no runs
+    are skipped."""
+    import io
+    import matplotlib.pyplot as plt
+    times = times or map_times(df, regime)
+    per_t = {tm: boundary_data(df, regime, param, tm, potential) for tm in times}
+    per_t = {tm: d for tm, d in per_t.items() if len(d)}
+    if not per_t:
+        raise ValueError("no runs at any evaluation time for this selection")
+    xs = sorted(set().union(*[set(d[param]) for d in per_t.values()]))
+    As = sorted(set().union(*[set(d.A) for d in per_t.values()]))
+    out = []
+    for i, (tm, d) in enumerate(per_t.items()):
+        if progress:
+            progress(i / len(per_t), tm)
+        pm = fit_phase_map(d, regime, param, potential)
+        fig = fig_phase_map(pm, x_values=xs, A_values=As,
+                            title=f"{regime_label(regime)}, {potential}: states after {tm:g} τ$_B$ ({d.name.nunique()} runs)",
+                            **figkw)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=110)
+        plt.close(fig)
+        out.append((tm, buf.getvalue(), d.name.nunique()))
+    return out
+
+
+def frames_to_gif(frames, seconds_per_frame=1.0, loop=True):
+    """GIF bytes from phase_map_frames output (the last frame is held twice as long)."""
+    import io
+    from PIL import Image
+    ims = [Image.open(io.BytesIO(p)).convert("RGB") for _, p, _ in frames]
+    W, H = max(i.width for i in ims), max(i.height for i in ims)
+    ims = [i if i.size == (W, H) else i.resize((W, H)) for i in ims]
+    dur = [int(1000 * seconds_per_frame)] * len(ims)
+    dur[-1] *= 2
+    buf = io.BytesIO()
+    ims[0].save(buf, format="GIF", save_all=True, append_images=ims[1:], duration=dur, loop=0 if loop else 1)
+    return buf.getvalue()
 
 
 def map_animation(df, regime, param, potential, value="nonfluid", times=None, title=""):
