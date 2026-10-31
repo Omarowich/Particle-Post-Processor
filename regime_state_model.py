@@ -214,35 +214,70 @@ def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: flo
     """One row per run at its last frame ('end'); runs longer than common_time_tauB also get a row at
     that time ('common'), and one row ('t<time>') for every time in map_times_tauB the run reaches,
     so maps can be drawn at any of those times (and played over time)."""
+    import time as _time
     runs = discover_runs(root, regimes)
     cache_file = os.path.join(root, "_observables_cache.pkl")
     try:
         with open(cache_file, "rb") as fh:
             cache = pickle.load(fh)
+        if not isinstance(cache, dict) or cache.get("_version") != 2:
+            cache = {"_version": 2}
     except Exception:
-        cache = {}
-    settings = (round(rc, 4), round(box, 3), round(common_time_tauB, 4), round(lag_tauB, 4),
-                tuple(sorted(set(round(float(v), 4) for v in map_times_tauB))))
-    rows, fresh, changed = [], {}, False
-    for i, (p, rd) in enumerate(runs):
-        if progress:
-            progress(i / max(len(runs), 1), p["regime"] + "/" + p["name"])
-        key = (p["regime"], p["name"], _run_stamp(rd), settings)
-        got = cache.get(key)
-        if got is None:
-            got = _run_rows(p, rd, rc, box, common_time_tauB, lag_tauB, map_times_tauB)
-            changed = True
-        fresh[key] = got
-        rows.extend(dict(r) for r in got)
-    if changed or len(fresh) != len(cache):
-        try:      # only the runs that still exist, for the current settings
-            keep = {k: v for k, v in cache.items() if k[3] != settings}
-            keep.update(fresh)
+        cache = {"_version": 2}
+    base = (round(rc, 4), round(box, 3), round(common_time_tauB, 4), round(lag_tauB, 4))
+    want = sorted(set(round(float(v), 4) for v in map_times_tauB))
+    rows, seen, n_new, last_save = [], set(), 0, _time.time()
+
+    def _save():
+        try:
+            keep = {k: v for k, v in cache.items() if k == "_version" or k in seen or k[3] != base}
             with open(cache_file + ".tmp", "wb") as fh:
                 pickle.dump(keep, fh)
             os.replace(cache_file + ".tmp", cache_file)
         except OSError:
             pass
+
+    for i, (p, rd) in enumerate(runs):
+        if progress:
+            progress(i / max(len(runs), 1), f"{p['regime']}/{p['name']} ({i + 1}/{len(runs)}, {n_new} computed)")
+        key = (p["regime"], p["name"], _run_stamp(rd), base)
+        seen.add(key)
+        entry = cache.get(key) or {}
+        T = entry.get("_T")
+        need = None
+        if T is not None:     # which evaluations this run needs (no file reading if all are cached)
+            need = ["end"] + (["common"] if T > 1.1 * common_time_tauB * TAUB_S else [])
+            taken = [T] + ([common_time_tauB * TAUB_S] if "common" in need else [])
+            for tm in want:
+                te = tm * TAUB_S
+                if te < 0.97 * T and not any(abs(te - e) < 0.02 * TAUB_S for e in taken):
+                    need.append(f"t{tm:g}"); taken.append(te)
+        if need is None or any(tg not in entry for tg in need):
+            x, y, t = read_run(rd)
+            T = float(t[-1])
+            entry["_T"] = T
+            evals = [("end", T)]
+            if T > 1.1 * common_time_tauB * TAUB_S:
+                evals.append(("common", common_time_tauB * TAUB_S))
+            for tm in want:
+                te = tm * TAUB_S
+                if te < 0.97 * T and not any(abs(te - e) < 0.02 * TAUB_S for _, e in evals):
+                    evals.append((f"t{tm:g}", te))
+            need = [tg for tg, _ in evals]
+            for tg, te in evals:
+                if tg not in entry:
+                    rr = dict(p)
+                    rr["eval"] = tg
+                    rr["T_actual_tauB"] = float(T / TAUB_S)
+                    rr.update(_evaluate(x, y, t, te, rc, box, lag_tauB * TAUB_S))
+                    entry[tg] = rr
+            cache[key] = entry
+            n_new += 1
+            if _time.time() - last_save > 30:      # keep partial work if the page is reloaded
+                _save(); last_save = _time.time()
+        rows.extend(dict(entry[tg]) for tg in need)
+    if n_new or any(k not in seen for k in cache if k != "_version" and k[3] == base):
+        _save()
     if progress:
         progress(1.0, "done")
     df = pd.DataFrame(rows)
