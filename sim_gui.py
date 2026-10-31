@@ -197,6 +197,13 @@ def list_jobs(out_root):
         state = ("failed" if os.path.exists(os.path.join(jd, "failed")) else
                  "stopped" if os.path.exists(os.path.join(jd, "STOP")) and not os.path.exists(os.path.join(jd, "done")) else
                  "done" if os.path.exists(os.path.join(jd, "done")) else "running")
+        if state == "running":   # no progress written for 15 min: the window was closed / the process killed
+            try:
+                last = max(os.path.getmtime(os.path.join(jd, f)) for f in os.listdir(jd))
+                if time.time() - last > 900:
+                    state = "stopped"
+            except ValueError:
+                pass
         if state != "running":   # job is over: a run still marked running/waiting either finished or never ran
             for r in st:
                 if r.get("state") in ("running", "waiting"):
