@@ -721,6 +721,135 @@ def param_of(m):
     return m.param
 
 
+STATE_ORDER = ["fluid", "disordered clusters", "ordered clusters", "disordered network", "ordered network"]
+
+
+@dataclass
+class PhaseMap:
+    regime: str
+    param: str
+    data: pd.DataFrame
+    gpc: object
+    classes: list
+    mu: np.ndarray
+    sd: np.ndarray
+    potential: str = "LJ"
+
+    def proba(self, xvals, A_vals):
+        X = np.c_[np.log10(xvals), A_vals]
+        return self.gpc.predict_proba((X - self.mu) / self.sd)
+
+
+def fit_phase_map(d: pd.DataFrame, regime: str, param: str, potential="LJ") -> PhaseMap:
+    """One model for all states at once (Gaussian-process classifier, one-vs-rest): for any point it gives the
+    probability of each state, so the map can show every region and the borders between them."""
+    from sklearn.gaussian_process import GaussianProcessClassifier
+    from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
+    classes = [c for c in STATE_ORDER if c in set(d.state)] + sorted(set(d.state) - set(STATE_ORDER))
+    if len(classes) < 2:
+        raise ValueError(f"all {len(d)} runs here are '{classes[0] if classes else '?'}': a phase diagram needs at "
+                         "least two states")
+    X = np.c_[np.log10(d[param].values.astype(float)), d.A.values]
+    mu, sd = X.mean(0), X.std(0)
+    sd[sd == 0] = 1.0
+    y = np.array([classes.index(s_) for s_ in d.state])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gpc = GaussianProcessClassifier(C(1.0, (0.1, 10)) * RBF([1.0, 1.0], (0.3, 100)), n_restarts_optimizer=2,
+                                        random_state=0, multi_class="one_vs_rest").fit((X - mu) / sd, y)
+    return PhaseMap(regime, param, d, gpc, classes, mu, sd, potential)
+
+
+def fig_phase_map(pm: PhaseMap, show_runs=True, per_run=True, region_labels=True, confidence=False,
+                  borders=True, colors=None, title=None, figsize=(8.5, 5.6), even_spacing=True):
+    """Smooth phase diagram: every state as a coloured region (most likely state), smooth borders where two
+    states are equally likely, optional run dots (COMSOL hollow) and fading where the model is unsure."""
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap, to_rgb
+    _style(plt)
+    col = {**STATE_COLORS, **(colors or {})}
+    d, prm = pm.data, pm.param
+    TK = np.sort(d[prm].unique())
+    LTK = np.log10(TK)
+    if even_spacing:
+        pos = lambda v: np.interp(np.log10(v), LTK, np.arange(len(TK)))
+        U = np.linspace(-0.45, len(TK) - 0.55, 500)
+        GLx = np.interp(U, np.arange(len(TK)), LTK)
+    else:
+        pos = lambda v: np.log10(v)
+        U = np.linspace(LTK[0] - 0.05, LTK[-1] + 0.05, 500)
+        GLx = U
+    A_lo, A_hi = d.A.min(), d.A.max()
+    pad = 0.12 * (A_hi - A_lo or 1)
+    UA = np.linspace(A_lo - pad, A_hi + pad, 260)
+    GU, GA = np.meshgrid(U, UA)
+    GL, _ = np.meshgrid(GLx, UA)
+    P = pm.gpc.predict_proba((np.c_[GL.ravel(), GA.ravel()] - pm.mu) / pm.sd).reshape(len(UA), len(U), -1)
+    lab = P.argmax(-1)
+    conf = P.max(-1)
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    rgb = np.array([to_rgb(col.get(c, "#999")) for c in pm.classes])
+    img = rgb[lab]
+    alpha = (0.25 + 0.55 * np.clip((conf - 1 / len(pm.classes)) / (1 - 1 / len(pm.classes)), 0, 1)) if confidence \
+        else np.full(conf.shape, 0.55)
+    img = np.concatenate([img, alpha[..., None]], -1)
+    ax.imshow(img, origin="lower", aspect="auto", extent=(U[0], U[-1], UA[0], UA[-1]), interpolation="bilinear", zorder=0)
+    if borders:
+        for i in range(len(pm.classes)):
+            other = np.delete(P, i, axis=-1).max(-1)
+            ax.contour(GU, GA, P[..., i] - other, levels=[0], colors="#333", linewidths=1.3, zorder=2)
+    if region_labels:
+        for i, c in enumerate(pm.classes):
+            m = lab == i
+            if m.sum() < 0.01 * m.size:
+                continue
+            # label at the point deepest inside the region
+            from scipy.ndimage import distance_transform_edt
+            dist = distance_transform_edt(m)
+            yi, xi = np.unravel_index(dist.argmax(), dist.shape)
+            ax.text(U[xi], UA[yi], c.upper().replace(" ", "\n"), ha="center", va="center", fontsize=9, weight="bold",
+                    color="#222", alpha=0.75, zorder=4)
+    if show_runs:
+        dd = d.sort_values(["A", prm, "name"]).copy()
+        if per_run:
+            dd["k"] = dd.groupby(["A", prm]).cumcount()
+            dd["n"] = dd.groupby(["A", prm]).name.transform("count")
+            step = 0.12 if even_spacing else 0.012
+            dd["xp"] = pos(dd[prm]) + (dd.k - (dd.n - 1) / 2) * min(step, (0.8 if even_spacing else 0.08) / dd.n.max())
+        else:
+            dd = dd.drop_duplicates(["A", prm]).assign(xp=lambda q: pos(q[prm]))
+        hollow = (dd["source"] == "COMSOL") if "source" in dd else pd.Series(False, index=dd.index)
+        for c in pm.classes:
+            s_ = dd[dd.state == c]
+            h_ = hollow[s_.index]
+            ax.scatter(s_.xp[~h_], s_.A[~h_], c=col.get(c, "#888"), marker=STATE_MARKERS.get(c, "o"), s=30,
+                       edgecolors="white", linewidths=0.7, zorder=5)
+            ax.scatter(s_.xp[h_], s_.A[h_], facecolors="white", edgecolors=col.get(c, "#888"),
+                       marker=STATE_MARKERS.get(c, "o"), s=30, linewidths=1.3, zorder=5)
+    from matplotlib.patches import Patch
+    hand = [Patch(facecolor=col.get(c, "#999"), alpha=0.6, label=c) for c in pm.classes]
+    if show_runs and "source" in d and (d.source == "COMSOL").any() and (d.source != "COMSOL").any():
+        hand.append(plt.Line2D([], [], ls="", marker="o", mfc="white", mec="#555", label="hollow = COMSOL run"))
+    ax.legend(handles=hand, frameon=False, fontsize=8.5, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3)
+    if even_spacing:
+        ax.set_xticks(np.arange(len(TK)))
+        ax.set_xticklabels([f"{v:g}" for v in TK], rotation=45 if len(TK) > 12 else 0)
+        ax.set_xlabel(axis_label(prm) + "; tested values evenly spaced")
+    else:
+        ax.set_xticks(LTK[:: max(1, len(LTK) // 10)])
+        ax.set_xticklabels([f"{v:g}" for v in TK[:: max(1, len(TK) // 10)]])
+        ax.set_xlabel(axis_label(prm) + " (log scale)")
+    ax.set_yticks(np.unique(np.round(d.A.values, 3)))
+    ax.set_ylabel("attraction A (k$_B$T" + ("; AO matched by B$_2$*)" if pm.potential == "AO" else ")"))
+    ax.set_xlim(U[0], U[-1]); ax.set_ylim(UA[0], UA[-1])
+    ax.set_title(title or (("States over time" if prm == "t_map" else
+                            f"States after {d.t_eval_tauB.round(1).iloc[0]:g} τ$_B$") +
+                           f" ({regime_label(pm.regime)}, {pm.potential})"), loc="left", fontsize=11, pad=36)
+    for s_ in ("top", "right"):
+        ax.spines[s_].set_visible(False)
+    return fig
+
+
 def map_animation(df, regime, param, potential, value="nonfluid", times=None, title=""):
     """Plotly animation of the map over the evaluation times: a heat map of a measure per (A, parameter)
     point, or (value='states') every run as a dot coloured by its state. Slider + play button."""

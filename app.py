@@ -4964,7 +4964,10 @@ elif plot_mode == "Run viewer":
                         rr = np.hypot(*(Pk - Pk[int(shown)]).T); rr[int(shown)] = np.inf
                         rng_ = 2 * (1 + lmodel.ao[0]) if lmodel.ao else (6.0 if lmodel.A > 0 else 2.0)
                         why = []
-                        if not (rr < rng_).any():
+                        if not lmodel.ao and lmodel.A <= 0:
+                            why.append("this run has no attraction (A = 0), so the only pair force is the repulsive "
+                                       f"core, which acts only below 2 µm (nearest neighbour {rr.min():.2f} µm)")
+                        elif not (rr < rng_).any():
                             why.append(f"no other particle within the {'AO' if lmodel.ao else 'LJ' if lmodel.A > 0 else 'core'} "
                                        f"range ({rng_:.1f} µm centre to centre; nearest is {rr.min():.2f} µm)")
                         else:
