@@ -631,59 +631,16 @@ def sidebar_runs_common_ui(
         return base
 
     if available_runs:
-        all_tkbs = sorted({r[1] for r in available_runs})
-        all_taus = sorted({r[2] for r in available_runs})
-        all_thirds = sorted({r[3] for r in available_runs if r[3] is not None})
-        all_units = sorted({r[4] for r in available_runs if r[4] is not None})
+        import run_filter as rf
+        _keep = rf.widgets(rf.metas_from_paths([r[0] for r in available_runs]), key=f"multi__{dataset_tag}",
+                           container=st.sidebar)
+        filtered_runs = [r for r, k in zip(available_runs, _keep) if k]
 
-        st.sidebar.markdown("**Filter runs:**")
-        _is_bd = lambda r: bool(re.search(r"(^|_)BD(_|$)", run_tag(r[0])))
-        if any(_is_bd(r) for r in available_runs) and not all(_is_bd(r) for r in available_runs):
-            src = st.sidebar.radio("Source", ["COMSOL and Python", "COMSOL only", "Python (BD) only"],
-                                   horizontal=False, key=f"multi_filter_src__{dataset_tag}")
-            if src == "COMSOL only":
-                available_runs = [r for r in available_runs if not _is_bd(r)]
-            elif src == "Python (BD) only":
-                available_runs = [r for r in available_runs if _is_bd(r)]
-            all_tkbs = sorted({r[1] for r in available_runs})
-            all_taus = sorted({r[2] for r in available_runs})
-            all_thirds = sorted({r[3] for r in available_runs if r[3] is not None})
-            all_units = sorted({r[4] for r in available_runs if r[4] is not None})
-        # Widget keys are namespaced by dataset_tag so switching data folders
-        # always starts with everything selected instead of carrying over the
-        # previous folder's (likely mismatched) TkB/TauB/run selections.
-        filter_tkbs = st.sidebar.multiselect(
-            "TkB values", all_tkbs, default=all_tkbs, key=f"multi_filter_tkb__{dataset_tag}"
-        )
-        filter_taus = st.sidebar.multiselect(
-            "TauB values", all_taus, default=all_taus, key=f"multi_filter_tau__{dataset_tag}"
-        )
-        if all_thirds:
-            unit_label = "/".join(all_units) if all_units else "3rd param"
-            filter_thirds = st.sidebar.multiselect(
-                f"{unit_label} values", all_thirds, default=all_thirds,
-                key=f"multi_filter_third__{dataset_tag}"
-            )
-        else:
-            filter_thirds = []
-
-        def run_passes_filter(r):
-            if r[1] not in filter_tkbs:
-                return False
-            if r[2] not in filter_taus:
-                return False
-            if all_thirds and r[3] not in filter_thirds:
-                return False
-            return True
-
-        filtered_runs = [r for r in available_runs if run_passes_filter(r)]
-
-        # Re-select every filtered run whenever the TkB/TauB/3rd-param filter
-        # choice itself changes, instead of keeping whatever subset of runs
-        # was previously (de)selected -- a filter change means "show me
-        # everything matching this new filter", not "keep my old picks".
+        # Re-select every filtered run whenever the filter itself changes, instead of keeping whatever
+        # subset of runs was previously (de)selected -- a filter change means "show me everything
+        # matching this new filter", not "keep my old picks".
         runs_key = f"multi_runs__{dataset_tag}"
-        filter_signature = (tuple(sorted(filter_tkbs)), tuple(sorted(filter_taus)), tuple(sorted(filter_thirds)))
+        filter_signature = tuple(_keep)
         filter_signature_key = f"multi_runs_filter_signature__{dataset_tag}"
         if st.session_state.get(filter_signature_key) != filter_signature:
             st.session_state[runs_key] = filtered_runs
@@ -692,7 +649,6 @@ def sidebar_runs_common_ui(
         selected_runs = st.sidebar.multiselect(
             "Select runs (from filtered):",
             options=filtered_runs,
-            default=filtered_runs,
             key=runs_key,
             format_func=format_run_option,
         )
@@ -2850,14 +2806,26 @@ elif plot_mode == "Phase diagram":
     st.sidebar.header("3. TkB rows")
 
     available_tkbs_phase = []
+    phase_folders = {}          # TkB -> the run folder shown in that row
     if base_dir and os.path.isdir(base_dir):
         try:
-            folder_re = re.compile(r"^([0-9]+(?:\.[0-9]+)?)Tkb_")
-            for fn in os.listdir(base_dir):
-                m = folder_re.match(fn)
-                if m:
-                    available_tkbs_phase.append(float(m.group(1)))
-            available_tkbs_phase = sorted(set(available_tkbs_phase))
+            import run_filter as rf
+            _names = sorted(fn for fn in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, fn)))
+            _metas = [rf.meta(fn, os.path.basename(base_dir.rstrip("\\/"))) for fn in _names]
+            _keep = rf.widgets(_metas, key=f"phase__{base_dir}", container=st.sidebar,
+                               title="Filter runs (one run per TkB row)")
+            by_tkb = {}
+            for fn, m, k in zip(_names, _metas, _keep):
+                if k and m is not None:
+                    by_tkb.setdefault(float(m["A"]), []).append(fn)
+            available_tkbs_phase = sorted(by_tkb)
+            for tkb, fns in by_tkb.items():
+                if len(fns) > 1:
+                    pick = st.sidebar.selectbox(f"Run for TkB = {tkb:g} ({len(fns)} pass the filter)", fns,
+                                                key=f"phase_pick__{base_dir}__{tkb:g}")
+                else:
+                    pick = fns[0]
+                phase_folders[tkb] = os.path.join(base_dir, pick)
         except Exception as e:
             st.sidebar.error(f"Could not scan TkB folders in {base_dir}: {e}")
 
@@ -3116,6 +3084,7 @@ elif plot_mode == "Phase diagram":
         cb_label = None
 
     fig, axes = make_snapshot_phase_panel(
+        folders=phase_folders,
         base_dir=base_dir,
         tkb_rows=tkb_rows,
         column_times_s=column_times_s,
@@ -3245,12 +3214,18 @@ elif plot_mode == "Summary plots":
         return f"{tkb:g} Tkb (TauB: {tau:g})"
 
 
+    import run_filter as rf
+    _keep = rf.widgets(rf.metas_from_paths([r[0] for r in available_runs]), key=f"summary__{base_dir}",
+                       container=st.sidebar)
+    _summary_opts = [r for r, k in zip(available_runs, _keep) if k]
+    if st.session_state.get("summary_runs_sig") != tuple(_keep):     # new filter: select everything it lets through
+        st.session_state["summary_runs"] = _summary_opts
+        st.session_state["summary_runs_sig"] = tuple(_keep)
     selected_runs = st.sidebar.multiselect(
         "Select runs:",
-        options=available_runs,
-        default=available_runs,
+        options=_summary_opts,
         key="summary_runs",
-        format_func=format_run_option,
+        format_func=lambda r: f"{r[1]:g} Tkb (TauB: {r[2]:g})  {os.path.basename(r[0])}",
     )
 
 
@@ -3974,15 +3949,14 @@ elif plot_mode == "Regime state model":
     if rsm_obs.empty:
         st.warning("No runs found. Folder names must look like 3Tkb_1TauB_2000nm, 50Tkb_0.75TauB_1000F or 5Tkb_2TauB.")
         st.stop()
-    if "source" in rsm_obs and rsm_obs.source.nunique() > 1:
-        rsm_src = st.sidebar.radio("6. Runs to use", ["COMSOL only", "COMSOL and Python", "Python (BD) only"],
-                                   key="rsm_source",
-                                   help="The folder holds both COMSOL (_CS) and Python (_BD) runs. "
-                                        "The original boundary model is fitted on the COMSOL runs.")
-        if rsm_src == "COMSOL only":
-            rsm_obs = rsm_obs[rsm_obs.source == "COMSOL"]
-        elif rsm_src == "Python (BD) only":
-            rsm_obs = rsm_obs[rsm_obs.source == "BD"]
+    import run_filter as rf
+    st.sidebar.caption("6. Runs to use (starts with the COMSOL runs, on which the boundary model was fitted; "
+                       "add Python runs or narrow by any parameter):")
+    rsm_obs = rf.filter_frame(rsm_obs, key=f"rsm__{rsm_root}", container=st.sidebar,
+                              defaults={"source": ["COMSOL"]})
+    if rsm_obs.empty:
+        st.warning("No runs pass the filter.")
+        st.stop()
     rsm_df = rsm.label_runs(rsm_obs, rsm_th)
 
     tab_states, tab_map, tab_trans, tab_next, tab_checks = st.tabs(
@@ -4640,8 +4614,10 @@ elif plot_mode == "Run viewer":
 
     rv_all = rv.list_run_folders(rv_base)
     st.sidebar.header("3. Runs (up to 4, shown side by side)")
-    rv_filter = st.sidebar.text_input("Filter names (e.g. 2750nm AO seed1):", value="", key="rv_filter")
-    rv_opts = [r for r in rv_all if all(tok.lower() in r.lower() for tok in rv_filter.split())]
+    import run_filter as rf
+    _rv_keep = rf.widgets([rf.meta(n, rv_regime) for n in rv_all], key=f"rv__{rv_base}", container=st.sidebar,
+                          expanded=False)
+    rv_opts = [r for r, k in zip(rv_all, _rv_keep) if k] + [r for r in rv_all if rf.meta(r, rv_regime) is None]
     rv_sel = st.sidebar.multiselect("Runs:", rv_opts, default=rv_opts[:1], key="rv_runs")
     if len(rv_sel) > 4:
         st.sidebar.warning("Showing the first 4 selected runs.")

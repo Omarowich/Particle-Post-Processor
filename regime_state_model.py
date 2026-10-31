@@ -98,6 +98,10 @@ def parse_run_name(regime: str, name: str) -> dict | None:
         "potential": "AO" if re.search(r"(^|_)AO(_|$)", m.group(5) or "") else "LJ",
         "q": _tag_value(m.group(5), "q", float, np.nan),
         "phi_p": _tag_value(m.group(5), "phi", float, np.nan),
+        "dt": _tag_value(m.group(5), "dt", int, 0),
+        # anything else in the name (e.g. a tag like N256 or test2), for the run filters
+        "extra": "_".join(t for t in (m.group(5) or "").lstrip("_").split("_")
+                          if t and not re.fullmatch(r"(?i)(CS|BD|AO|core|q[\d.]+|phi[\d.]+|dt\d+|seed\d+)", t)),
     }
 
 

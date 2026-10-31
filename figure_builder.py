@@ -97,7 +97,7 @@ def new_recipe(kind="time"):
 # --------------------------------------------------------------------------- data
 def load_data(data_root, include_comsol=True, progress=None):
     """Observables of every run (Python and, if wanted, COMSOL), cached like the Paper figures page."""
-    df, _ = pf.load_series(data_root, progress=progress, sources=("BD", "CS") if include_comsol else ("BD",))
+    df, _ = pf.load_series(data_root, progress=progress, sources=("BD", "COMSOL") if include_comsol else ("BD",))
     return df
 
 
@@ -347,7 +347,7 @@ def starter_recipes():
                         {"label": "Python AO (matched B$_2$*)", "color": O, "marker": "s",
                          "filter": {"regime": "AAF", "source": "BD", "potential": "AO"}},
                         {"label": "COMSOL LJ", "color": K, "marker": "x", "ls": "", "band": False,
-                         "filter": {"regime": "AAF", "source": "CS", "potential": "LJ"}}]})
+                         "filter": {"regime": "AAF", "source": "COMSOL", "potential": "LJ"}}]})
     L.append({"name": "Regime IV break-up over time", "kind": "time", "columns": 4, "panel_size": [4.2, 3.2],
               "title": "Regime IV  Break-up under streaming, LJ vs AO at the same B$_2$*",
               "panels": [{"metric": m, "filter": {"A": A, "F": F}, "title": f"{pf.LAB[m]}, A = {A}, F$_0$ = {F}",
