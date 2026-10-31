@@ -197,6 +197,11 @@ def list_jobs(out_root):
         state = ("failed" if os.path.exists(os.path.join(jd, "failed")) else
                  "stopped" if os.path.exists(os.path.join(jd, "STOP")) and not os.path.exists(os.path.join(jd, "done")) else
                  "done" if os.path.exists(os.path.join(jd, "done")) else "running")
+        if state != "running":   # job is over: a run still marked running/waiting either finished or never ran
+            for r in st:
+                if r.get("state") in ("running", "waiting"):
+                    fin = r.get("folder") and os.path.isfile(os.path.join(r["folder"], "datax.csv"))
+                    r.update({"state": "done", "frac": 1.0} if fin else {"state": "not run", "frac": 0.0})
         out.append({"id": j, "dir": jd, "config": c, "status": st, "state": state})
     return out
 
