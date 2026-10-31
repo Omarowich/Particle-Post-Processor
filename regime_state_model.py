@@ -536,19 +536,38 @@ def suggest_runs(model: BoundaryModel, df: pd.DataFrame, *, step=250.0, n_repeat
 # ---------------------------------------------------------------------------
 def data_checks(root: str, regimes=REGIMES) -> pd.DataFrame:
     rows, hashes, first = [], {}, {}
+    cache_file = os.path.join(root, "_datachecks_cache.pkl")
+    try:
+        with open(cache_file, "rb") as fh:
+            cache = pickle.load(fh)
+    except Exception:
+        cache = {}
+    fresh = {}
     for p, rd in discover_runs(root, regimes):
         key = f"{p['regime']}/{p['name']}"
-        with open(os.path.join(rd, "datax.csv"), "rb") as fh:
-            h = hashlib.md5(fh.read()).hexdigest()
-        if h in hashes:
-            rows.append(dict(run=key, issue=f"identical datax.csv to {hashes[h]}"))
-        hashes.setdefault(h, key)
-        x, y, t = read_run(rd)
-        T = t[-1] / TAUB_S
-        if abs(T - p["T_name"]) > 0.1 * p["T_name"] + 0.05:
-            rows.append(dict(run=key, issue=f"name says {p['T_name']:g} τB, data runs {T:.2f} τB"))
-        if len(x) > 1:
-            first.setdefault((p["regime"], len(x[0])), []).append((key, x[1] - x[0], p.get("source", "")))
+        ck = (key, _run_stamp(rd))
+        info = cache.get(ck)
+        if info is None:                       # only new or changed runs are read
+            with open(os.path.join(rd, "datax.csv"), "rb") as fh:
+                h = hashlib.md5(fh.read()).hexdigest()
+            x, y, t = read_run(rd)
+            info = dict(h=h, T=t[-1] / TAUB_S, n=len(x[0]) if len(x) else 0,
+                        dx=(x[1] - x[0]) if len(x) > 1 else None)
+        fresh[ck] = info
+        if info["h"] in hashes:
+            rows.append(dict(run=key, issue=f"identical datax.csv to {hashes[info['h']]}"))
+        hashes.setdefault(info["h"], key)
+        if abs(info["T"] - p["T_name"]) > 0.1 * p["T_name"] + 0.05:
+            rows.append(dict(run=key, issue=f"name says {p['T_name']:g} τB, data runs {info['T']:.2f} τB"))
+        if info["dx"] is not None:
+            first.setdefault((p["regime"], info["n"]), []).append((key, info["dx"], p.get("source", "")))
+    if fresh.keys() != cache.keys():
+        try:
+            with open(cache_file + ".tmp", "wb") as fh:
+                pickle.dump(fresh, fh)
+            os.replace(cache_file + ".tmp", cache_file)
+        except OSError:
+            pass
     for (reg, _), lst in first.items():
         groups = {}
         for key, dx, src in lst:      # runs whose first step agrees to 1e-6 µm share their random kicks

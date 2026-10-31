@@ -4,6 +4,12 @@
     python sim_runner.py job_folder/config.json
     python sim_runner.py "<Data>/_batches/my_batch.json"      (a batch saved from the app's Batch tab)
     python sim_runner.py "<Data>/_batches/runs.csv" [--workers 6] [--priority 1,2] [--out "<Data>"]
+    python sim_runner.py a.json b.csv c.csv                     (several files, one after the other)
+    python sim_runner.py --queue "<Data>/_batches/queue" [--watch]
+
+Queue: every .json / .csv in the queue folder is run in name order (prefix 1_, 2_ ... to set the order) and
+then moved to queue/done (or queue/failed). Files added while it runs are picked up too. With --watch it keeps
+waiting for new files instead of stopping when the queue is empty (stop with Ctrl+C).
 
 A CSV has one row per parameter set; its columns are setting names (regime, potential, A, q, phi_p,
 dn_nm, flow_F, T_tauB, steps_per_tauB, seeds, core, tag, ...). Empty cells keep the default, seeds are
@@ -285,6 +291,8 @@ def main(cfg_path, workers=None, priorities=None, out=None):
                 log.write(f"{name}: {res}\n")
         open(os.path.join(job_dir, "done"), "w").close()
         log.write(f"finished {time.ctime()}\n")
+        print(f"finished {len(jobs)} run(s)")
+        return True
     except Exception as ex:
         log.write(traceback.format_exc())
         if isinstance(ex, MemoryError) or "BrokenProcessPool" in type(ex).__name__ or "Memory" in type(ex).__name__:
@@ -292,15 +300,63 @@ def main(cfg_path, workers=None, priorities=None, out=None):
                       "fewer 'runs at the same time', and close other simulations first. Finished runs are kept and "
                       "skipped on the next start.\n")
         open(os.path.join(job_dir, "failed"), "w").close()
+        print(f"FAILED - see {os.path.join(job_dir, 'log.txt')}")
+        return False
+
+
+def run_queue(qdir, workers=None, priorities=None, out=None, watch=False, poll_s=30):
+    """Run every .json / .csv in qdir (name order), move each to done/ or failed/ afterwards, pick up new files."""
+    os.makedirs(os.path.join(qdir, "done"), exist_ok=True)
+    os.makedirs(os.path.join(qdir, "failed"), exist_ok=True)
+    print(f"queue: {qdir}  (add .json/.csv files any time{'; Ctrl+C to stop' if watch else ''})")
+    while True:
+        todo = sorted(f for f in os.listdir(qdir) if f.lower().endswith((".json", ".csv"))
+                      and os.path.isfile(os.path.join(qdir, f)))
+        if not todo:
+            if not watch:
+                print("queue empty - done")
+                return
+            time.sleep(poll_s)
+            continue
+        f = todo[0]
+        src = os.path.join(qdir, f)
+        print(f"{time.strftime('%H:%M')}  starting {f}  ({len(todo) - 1} more waiting)")
+        # a queue file without an output folder writes next to the queue's _batches folder (the Data folder)
+        dflt_out = out or (os.path.dirname(os.path.dirname(os.path.abspath(qdir)))
+                           if os.path.basename(os.path.dirname(os.path.abspath(qdir))) == "_batches" else None)
+        w = int(workers or 4)
+        tries = [w] + [x for x in (w - 1, w - 2) if x >= 2]   # out of memory: retry with fewer at once
+        ok = False
+        for k, wk in enumerate(tries):
+            if k:
+                print(f"{time.strftime('%H:%M')}  retrying {f} with {wk} at once (finished runs are skipped)")
+                time.sleep(60)
+            try:
+                ok = main(src, wk, priorities, dflt_out) is not False
+            except Exception:
+                traceback.print_exc()
+                ok = False
+            if ok:
+                break
+        dest = os.path.join(qdir, "done" if ok else "failed", time.strftime("%Y%m%d-%H%M_") + f)
+        os.replace(src, dest)
+        print(f"{time.strftime('%H:%M')}  {'finished' if ok else 'FAILED'} {f} -> {os.path.relpath(dest, qdir)}")
 
 
 if __name__ == "__main__":
     import argparse
-    ap = argparse.ArgumentParser(description="Run airpods_bd simulations from a settings / batch file (.json or .csv)")
-    ap.add_argument("file")
+    ap = argparse.ArgumentParser(description="Run airpods_bd simulations from settings / batch files (.json or .csv)")
+    ap.add_argument("files", nargs="*", help="one or more files, run one after the other")
+    ap.add_argument("--queue", help="queue folder: run every file in it, in name order")
+    ap.add_argument("--watch", action="store_true", help="with --queue: keep waiting for new files")
     ap.add_argument("--workers", type=int, help="runs at the same time (default: from the file, else 1)")
     ap.add_argument("--priority", help="CSV only: run only rows with these priorities, e.g. 1 or 1,2")
     ap.add_argument("--out", help="data folder for the results (default: from the file / the folder above _batches)")
     a = ap.parse_args()
     pr = {int(x) for x in a.priority.split(",")} if a.priority else None
-    main(a.file, a.workers, pr, a.out)
+    if a.queue:
+        run_queue(a.queue, a.workers, pr, a.out, a.watch)
+    for f in a.files:
+        main(f, a.workers, pr, a.out)
+    if not a.queue and not a.files:
+        ap.print_help()
