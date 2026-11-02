@@ -1144,3 +1144,69 @@ def fig_transitions(df: pd.DataFrame, metric="psi6", threshold=None, regimes=("A
         ax.spines[s].set_visible(False)
     ax.legend(frameon=False, fontsize=9)
     return fig
+
+# ---------------------------------------------------------------------------
+# How fast states settle
+# ---------------------------------------------------------------------------
+def settling_curve(df: pd.DataFrame, by=("regime", "potential"), relative=False, step=0.05):
+    """Share of runs whose state at time t already equals their final state (state at the end of the run).
+    by: grouping columns (one curve each). relative=True: x = t / run length (0..1) instead of τB.
+    Returns columns: group columns, x, share, n."""
+    d = df[~is_check_run(df)].copy()
+    d["tn"] = nominal_time(d)
+    key = ["regime", "name"]
+    fin = d[d["eval"] == "end"].drop_duplicates(key).set_index(key)["state"].rename("final")
+    d = d[d["eval"] != "end"].join(fin, on=key).dropna(subset=["final"])
+    if d.empty:
+        return pd.DataFrame(columns=list(by) + ["x", "share", "n"])
+    d["same"] = (d.state == d.final).astype(float)
+    if relative:
+        d["x"] = (np.round(d.tn / d.T_actual_tauB / step) * step).clip(0, 1)
+    else:
+        d["x"] = d.tn.round(2).map(snap_times(d.tn.values))
+    by = [b for b in by if b in d]
+    for b in by:
+        d[b] = d[b].fillna("LJ" if b == "potential" else "?")
+    g = d.groupby(by + ["x"]).same.agg(["mean", "size"]).reset_index().rename(columns={"mean": "share", "size": "n"})
+    # each curve ends at 100 %: the end of the runs
+    ends = (d.groupby(by).apply(lambda q: (1.0 if relative else float(q.T_actual_tauB.max())), include_groups=False)
+            .rename("x").reset_index().assign(share=1.0, n=np.nan))
+    return pd.concat([g, ends], ignore_index=True).sort_values(by + ["x"])
+
+
+REGIME_COLORS = {"NAF": "#7a7a7a", "ARF": "#2a78d6", "AAF": "#2e9e6b", "ASF": "#eb6834"}
+
+
+def fig_settling(curves: pd.DataFrame, relative=False, min_runs=3, figsize=(8.5, 4.8), title=None, log_x=False):
+    """Settling curves: one line per regime (colour) and attraction (solid LJ, dashed AO); the time at
+    which 90 % of runs have reached their final state is marked."""
+    import matplotlib.pyplot as plt
+    _style(plt)
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    grp = [c for c in curves.columns if c not in ("x", "share", "n")]
+    for keyv, c in curves.groupby(grp):
+        keyv = keyv if isinstance(keyv, tuple) else (keyv,)
+        info = dict(zip(grp, keyv))
+        c = c[(c.n.isna()) | (c.n >= min_runs)].sort_values("x")
+        if len(c) < 2:
+            continue
+        reg = info.get("regime", "")
+        ls = "--" if info.get("potential") == "AO" else "-"
+        fmt = {"T_name": lambda v: f"{float(v):g} τB runs", "q": lambda v: f"q={v}", "A": lambda v: f"A={float(v):g}",
+               "dn": lambda v: f"{float(v):g} nm", "F": lambda v: f"F₀={float(v):g}"}
+        lab = " ".join([regime_label(reg) if reg else ""] + [fmt.get(k, str)(v) for k, v in info.items()
+                                                            if k != "regime"]).strip()
+        ax.plot(c.x, 100 * c.share, ls, color=REGIME_COLORS.get(reg, "#555"), lw=1.8, label=lab)
+        hit = c[c.share >= 0.9]
+        if len(hit):
+            x90 = hit.x.iloc[0]
+            ax.plot([x90], [90], "o", color=REGIME_COLORS.get(reg, "#555"), ms=4)
+    ax.axhline(90, color="#bbb", lw=0.8, ls=":")
+    ax.set_ylim(0, 102)
+    ax.set_ylabel("runs already in their final state (%)")
+    ax.set_xlabel("fraction of the run length" if relative else "time (τ$_B$)")
+    if log_x and not relative:
+        ax.set_xscale("log")
+    ax.legend(frameon=False, fontsize=8.5, ncol=2, loc="lower right")
+    ax.set_title(title or "How fast the states settle (dot: 90 % of runs settled)", fontsize=10, loc="left")
+    return fig

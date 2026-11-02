@@ -3995,8 +3995,8 @@ elif plot_mode == "Regime state model":
         st.stop()
     rsm_df = rsm.label_runs(rsm_obs, rsm_th)
 
-    tab_states, tab_map, tab_trans, tab_next, tab_checks = st.tabs(
-        ["States", "Boundary map", "Transitions along A", "Suggested runs", "Data checks"]
+    tab_states, tab_map, tab_settle, tab_trans, tab_next, tab_checks = st.tabs(
+        ["States", "Boundary map", "State settling", "Transitions along A", "Suggested runs", "Data checks"]
     )
 
     with tab_states:
@@ -4223,6 +4223,34 @@ elif plot_mode == "Regime state model":
                     st.caption("Press ▶ Play or drag the slider. Each frame uses the runs that reach that time.")
             except ValueError as e:
                 st.warning(str(e))
+
+    with tab_settle:
+        st.caption("For every run: is its state at time t already the state it ends in? The curve is the share of "
+                   "runs for which that holds. It shows how long runs must be before the state is final, per regime "
+                   "and attraction. States are only known at the map times (sidebar 4.).")
+        s1, s2, s3, s4 = st.columns([2, 1.3, 1, 1])
+        se_by = s1.multiselect("One curve per", ["regime", "potential", "T_name", "q", "A", "dn", "F"],
+                               default=["regime", "potential", "T_name"], key="rsm_se_by",
+                               format_func=lambda k_: {"T_name": "run length", "potential": "attraction",
+                                                       "dn": "d_n", "F": "F₀"}.get(k_, k_),
+                               help="Keep 'run length': runs of 1, 10 or 20 τB end at different times, so their "
+                                    "'final state' means something different.")
+        se_rel = s2.radio("x axis", ["time (τB)", "fraction of run length"], key="rsm_se_rel") == "fraction of run length"
+        se_min = s3.number_input("min runs per point", 1, 50, 3, key="rsm_se_min")
+        se_log = s4.checkbox("log time axis", False, key="rsm_se_log", disabled=se_rel)
+        se_regs = st.multiselect("Regimes", rsm_regimes, default=list(rsm_regimes), key="rsm_se_regs",
+                                 format_func=lambda r_: rsm.regime_label(r_, long=True))
+        cur = rsm.settling_curve(rsm_df[rsm_df.regime.isin(se_regs)], by=tuple(se_by) or ("regime",), relative=se_rel)
+        if cur.empty:
+            st.info("No runs with map-time evaluations for this selection.")
+        else:
+            fig = rsm.fig_settling(cur, relative=se_rel, min_runs=int(se_min), log_x=se_log)
+            st.pyplot(fig)
+            save_figure_if_requested(fig, "state_settling", save_plots, output_dir)
+            plt.close(fig)
+            t90 = (cur[cur.share >= 0.9].groupby([c for c in cur.columns if c not in ("x", "share", "n")]).x.min()
+                   .rename("90 % settled at").reset_index())
+            st.dataframe(t90, hide_index=True)
 
     with tab_trans:
         tr_regs = [r for r in ("AAF", "NAF", "ASF") if r in rsm_regimes]
