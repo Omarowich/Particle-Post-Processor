@@ -142,13 +142,17 @@ def fig_squeeze_map(X, Y, S, title="", box=50.0, vmax=None):
     return fig
 
 
-def fig_squeeze_vs_dn(summary, metric="squeeze_centre"):
+def fig_squeeze_vs_dn(summary, metric="squeeze_centre", by=("potential", "q")):
     """Squeeze at the band centre (or metric="squeeze_peak": 95th percentile of the map) against d_n, one line
-    per potential / q / A (spread = seeds). Runs without a field (Regime I) are drawn as a grey reference band."""
+    per group (default: potential and q; markers = mean, bars = range over A and seeds; add "A" to `by` for one
+    line per attraction). Runs without a field (Regime I) are drawn as a grey reference band."""
     import matplotlib.pyplot as plt
     ref = summary[(summary.dn.astype(float).fillna(0) <= 0)]
     d = summary[summary.dn.astype(float).fillna(0) > 0].copy()
-    d["label"] = d.apply(lambda r: f"{r.potential}" + (f" q={r.q:g}" if r.potential == "AO" else "") + f", A={r.A:g}", axis=1)
+    def _lab(r):
+        s_ = str(r.potential) + (f", q = {r.q:g}" if r.potential == "AO" and "q" in by else "")
+        return s_ + (f", A = {r.A:g}" if "A" in by else "")
+    d["label"] = d.apply(_lab, axis=1)
     fig, ax = plt.subplots(figsize=(7.2, 4.6))
     for lab, g in d.groupby("label"):
         g = g.groupby("dn")[metric].agg(["mean", "min", "max"]).reset_index()
