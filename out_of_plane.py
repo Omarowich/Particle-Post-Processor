@@ -170,3 +170,49 @@ def fig_squeeze_vs_dn(summary, metric="squeeze_centre", by=("potential", "q")):
     ax.set_title("Where particles would try to leave the plane", loc="left", fontsize=10)
     fig.tight_layout()
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Quasi-3D runs (simulation/airpods_bd3d.py): side view of the band
+# ---------------------------------------------------------------------------
+LIFT_Z_UM = 2.0     # a particle counts as lifted when its centre is more than one radius above the floor layer
+
+
+def read_run3d(run_dir):
+    """x, y, z (frames x N, µm) and t (s) of a quasi-3D run (datax / datay / dataz)."""
+    x, y, t = rsm.read_run(run_dir)
+    raw = np.loadtxt(os.path.join(run_dir, "dataz.csv"), delimiter=",", skiprows=1)
+    return x, y, raw[0::2], t
+
+
+def lifted_share(run_dir, t_from=0.8):
+    x, y, z, t = read_run3d(run_dir)
+    k = t >= t_from * t[-1]
+    zz, yy = z[k], y[k]
+    centre = np.abs(yy) < 4.0
+    return float((zz > LIFT_Z_UM).mean()), float((zz[centre] > LIFT_Z_UM).mean()) if centre.any() else np.nan, float(zz.max())
+
+
+def fig_side_profiles(runs, t_from=0.8, zmax=None):
+    """Side view (y–z plane, all x together) of each run's late frames: particle density, one panel per run.
+    runs: list of (label, folder)."""
+    import matplotlib.pyplot as plt
+    n = len(runs)
+    fig, axs = plt.subplots(n, 1, figsize=(7.5, 1.35 * n + 0.8), sharex=True, squeeze=False)
+    for ax, (lab, rd) in zip(axs[:, 0], runs):
+        x, y, z, t = read_run3d(rd)
+        k = t >= t_from * t[-1]
+        Y, Z = y[k].ravel(), z[k].ravel()
+        top = zmax or max(6.0, float(np.percentile(Z, 99.9)) + 1)
+        h, ye, ze = np.histogram2d(Y, Z, [np.arange(-25, 25.01, 0.5), np.arange(0, top + 0.01, 0.25)])
+        ax.pcolormesh(ye, ze, (h / k.sum()).T, cmap="Greys", vmin=0, vmax=np.percentile(h / k.sum(), 99.5))
+        ax.axhline(bd.A_P, color="#2a78d6", lw=0.8, ls=":")
+        ax.text(0.99, 0.9, f"{lab}   mean height {Z.mean():.1f} µm, band width (2 SD) {2 * Y.std():.1f} µm",
+                transform=ax.transAxes, ha="right", va="top", fontsize=8,
+                bbox=dict(fc="white", ec="none", alpha=0.8))
+        ax.set_ylim(0, top)
+        ax.set_ylabel("z (µm)", fontsize=8)
+    axs[-1, 0].set_xlabel("y (µm)  (pressure node at y = 0; floor layer dotted)")
+    fig.suptitle("Side view of the band (last 20 % of each run, all x)", fontsize=10, x=0.01, ha="left")
+    fig.tight_layout()
+    return fig

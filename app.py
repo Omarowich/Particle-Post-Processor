@@ -4339,6 +4339,20 @@ elif plot_mode == "Regime state model":
                 buf = io.BytesIO(); fig2.savefig(buf, format="png", dpi=200, bbox_inches="tight")
                 st.download_button("Download map (PNG)", buf.getvalue(), file_name=f"squeeze_map_{nm}.png", key="oop_dl3")
 
+        q3 = os.path.join(rsm_root, "_quasi3D")
+        if os.path.isdir(q3):
+            st.subheader("Quasi-3D runs: side view (y–z)")
+            st.caption("Runs of simulation/airpods_bd3d.py (floor, gravity, optional ceiling) in the _quasi3D folder of the "
+                       "data folder.")
+            q3_runs = sorted(d for d in os.listdir(q3) if os.path.isfile(os.path.join(q3, d, "dataz.csv")))
+            q3_pick = st.multiselect("Runs", q3_runs, default=q3_runs[:4], key="oop_q3")
+            if q3_pick:
+                zt = st.number_input("Top of the plot (µm)", 4.0, 50.0, 10.0, 1.0, key="oop_q3_z")
+                fig3 = oop.fig_side_profiles([(r, os.path.join(q3, r)) for r in q3_pick], 1.0 - float(oop_from), zt)
+                st.pyplot(fig3)
+                buf = io.BytesIO(); fig3.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+                st.download_button("Download side views (PNG)", buf.getvalue(), file_name="side_views.png", key="oop_dl4")
+
     st.stop()
 
 # ---------------------------------------------------------------------
