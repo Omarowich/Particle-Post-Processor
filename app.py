@@ -3995,8 +3995,9 @@ elif plot_mode == "Regime state model":
         st.stop()
     rsm_df = rsm.label_runs(rsm_obs, rsm_th)
 
-    tab_states, tab_map, tab_settle, tab_trans, tab_next, tab_checks = st.tabs(
-        ["States", "Boundary map", "State settling", "Transitions along A", "Suggested runs", "Data checks"]
+    tab_states, tab_map, tab_settle, tab_trans, tab_next, tab_checks, tab_oop = st.tabs(
+        ["States", "Boundary map", "State settling", "Transitions along A", "Suggested runs", "Data checks",
+         "Out-of-plane load"]
     )
 
     with tab_states:
@@ -4287,6 +4288,56 @@ elif plot_mode == "Regime state model":
             st.success("No duplicate files, run-length mismatches or shared random seeds found.")
         else:
             st.dataframe(checks, hide_index=True)
+
+    with tab_oop:
+        import out_of_plane as oop
+        st.caption(
+            "Where particles would try to leave the plane (the model itself is 2D). For every particle the pair forces "
+            "from its neighbours are summed (+ pushed, − pulled) and averaged over the late frames in 2 µm bins: bonds "
+            "held at contact average out, what remains is the squeeze the field or flow adds. A particle can lift where "
+            "the squeeze beats buoyant weight + k_BT/a: "
+            + ", ".join(f"{k} {v:.2f} k_BT/µm" for k, v in oop.THRESHOLDS.items()) + ". An estimate, not a 3D simulation."
+        )
+        o1, o2 = st.columns(2)
+        oop_from = o1.slider("Average over the last … of each run", 0.05, 1.0, 0.2, 0.05, key="oop_last",
+                             help="0.2 = last 20 % of the frames.")
+        oop_metric = o2.radio("Squeeze measure", ["squeeze_centre", "squeeze_peak"], horizontal=True, key="oop_metric",
+                              format_func=lambda m: {"squeeze_centre": "band centre (|y| < 2 µm)",
+                                                     "squeeze_peak": "95th percentile of the map"}[m])
+        oop_runs = rsm_df.drop_duplicates(["regime", "name"])
+        st.write(f"{len(oop_runs)} run(s) from the sidebar filter (narrow it there, e.g. to Regime II and one potential).")
+
+        @st.cache_data(show_spinner=False)
+        def _oop_summary(root, names, t_from):
+            d = oop_runs[oop_runs.apply(lambda r: (r["regime"], r["name"]) in set(names), axis=1)]
+            bar = st.progress(0.0, text="Computing squeeze…")
+            out = oop.squeeze_summary(d, root, t_from, progress=lambda f, s: bar.progress(min(f, 1.0), text=s))
+            bar.empty()
+            return out
+
+        if st.button("Compute squeeze for these runs", key="oop_go", type="primary") or st.session_state.get("oop_done"):
+            st.session_state["oop_done"] = True
+            names = tuple(zip(oop_runs.regime, oop_runs.name))
+            summ = _oop_summary(rsm_root, names, 1.0 - float(oop_from))
+            if summ.empty:
+                st.warning("No runs could be read.")
+            else:
+                fig = oop.fig_squeeze_vs_dn(summ, oop_metric)
+                st.pyplot(fig)
+                buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+                st.download_button("Download plot (PNG)", buf.getvalue(), file_name="squeeze_vs_dn.png", key="oop_dl1")
+                st.dataframe(summ, hide_index=True)
+                st.download_button("Download table (CSV)", summ.to_csv(index=False).encode(), file_name="squeeze_by_run.csv",
+                                   key="oop_dl2")
+                st.subheader("Squeeze map of one run")
+                pick = st.selectbox("Run", summ.regime + "/" + summ.name, key="oop_pick")
+                rg, nm = pick.split("/", 1)
+                p = oop_runs[(oop_runs.regime == rg) & (oop_runs.name == nm)].iloc[0].to_dict()
+                X, Y, S, nf = oop.run_squeeze(os.path.join(rsm_root, rg, nm), p, 1.0 - float(oop_from))
+                fig2 = oop.fig_squeeze_map(X, Y, S, title=f"{nm}  ({nf} frames)")
+                st.pyplot(fig2)
+                buf = io.BytesIO(); fig2.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+                st.download_button("Download map (PNG)", buf.getvalue(), file_name=f"squeeze_map_{nm}.png", key="oop_dl3")
 
     st.stop()
 
