@@ -1214,3 +1214,21 @@ def fig_settling(curves: pd.DataFrame, relative=False, min_runs=3, figsize=(8.5,
     ax.legend(frameon=False, fontsize=8.5, ncol=2, loc="lower right")
     ax.set_title(title or "How fast the states settle (dot: 90 % of runs settled)", fontsize=10, loc="left")
     return fig
+
+
+def drop_repeated_seeds(df: pd.DataFrame) -> pd.DataFrame:
+    """A short run and a longer run with the same parameters, seed and time step get the same random kicks, so
+    up to the short run's end they are the same trajectory (e.g. a 1 τB run and the first τB of a 10 τB run).
+    Keep one copy per time: the row of the longest run. Otherwise every such point is counted twice."""
+    if df.empty:
+        return df
+    d = df.copy()
+    keys = [c for c in ("regime", "potential", "q", "phi_p", "A", "dn", "F", "seed", "dt", "extra", "source", "N")
+            if c in d]
+    d["_t"] = d["t_eval_tauB"].round(2)
+    d["_len"] = d["T_actual_tauB"]
+    filled = d[keys].astype(object).where(d[keys].notna(), "∅")
+    d["_k"] = filled.astype(str).agg("|".join, axis=1)
+    d = d.sort_values("_len", ascending=False)
+    out = d.drop_duplicates(["_k", "_t"], keep="first").drop(columns=["_t", "_len", "_k"])
+    return out.sort_index()
