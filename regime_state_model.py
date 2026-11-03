@@ -216,6 +216,7 @@ def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: flo
     so maps can be drawn at any of those times (and played over time)."""
     import time as _time
     runs = discover_runs(root, regimes)
+    scanned = set(regimes)
     cache_file = os.path.join(root, "_observables_cache.pkl")
     try:
         with open(cache_file, "rb") as fh:
@@ -230,7 +231,10 @@ def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: flo
 
     def _save():
         try:
-            keep = {k: v for k, v in cache.items() if k == "_version" or k in seen or k[3] != base}
+            # drop only stale entries of the regimes scanned now (deleted or re-run runs); runs of other
+            # regimes and other analysis settings are kept, so a page that shows fewer regimes loses nothing
+            keep = {k: v for k, v in cache.items()
+                    if k == "_version" or k in seen or k[3] != base or k[0] not in scanned}
             with open(cache_file + ".tmp", "wb") as fh:
                 pickle.dump(keep, fh)
             os.replace(cache_file + ".tmp", cache_file)
@@ -276,7 +280,7 @@ def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: flo
             if _time.time() - last_save > 30:      # keep partial work if the page is reloaded
                 _save(); last_save = _time.time()
         rows.extend(dict(entry[tg]) for tg in need)
-    if n_new or any(k not in seen for k in cache if k != "_version" and k[3] == base):
+    if n_new or any(k not in seen for k in cache if k != "_version" and k[3] == base and k[0] in scanned):
         _save()
     if progress:
         progress(1.0, "done")
