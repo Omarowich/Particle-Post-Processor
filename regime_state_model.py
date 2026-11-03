@@ -1225,7 +1225,7 @@ def drop_repeated_seeds(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
     keys = [c for c in ("regime", "potential", "q", "phi_p", "A", "dn", "F", "seed", "dt", "extra", "source", "N")
             if c in d]
-    d["_t"] = d["t_eval_tauB"].round(2)
+    d["_t"] = d["t_eval_tauB"].round(1)      # 1.0 and 1.01 τB (one frame apart) are the same map time
     d["_len"] = d["T_actual_tauB"]
     filled = d[keys].astype(object).where(d[keys].notna(), "∅")
     d["_k"] = filled.astype(str).agg("|".join, axis=1)
