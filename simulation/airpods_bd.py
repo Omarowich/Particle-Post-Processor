@@ -171,18 +171,70 @@ def radial_force(r, A, ao=None, core=None):
     return fr
 
 
-def pair_forces(P, A, ao=None, core=None):
-    """Return (N,2) forces in kBT/um from all pair interactions."""
+# ---- other attraction models (paper 2): all act between particle surfaces like AO ----
+# att = {"model": "LJ2n" | "SW" | "YUK", "eps": depth in kBT, + range parameter}
+#   LJ2n : 4 eps [(s/r)^2n - (s/r)^n], s = 2a, own repulsion  (Vliegenthart & Lekkerkerker 2000; Noro & Frenkel 2000)
+#   SW   : continuous square well, attraction only: -eps/2 [1 - tanh((r - 2a - width)/w)], w = soft * width (0.25)
+#   YUK  : attractive Yukawa: -eps (2a/r) exp(-kappa (r - 2a)), cut where it is < 1e-4 eps
+# For SW and YUK the force below contact (r < 2a) is the contact value, as for AO; the core does the repulsion.
+def att_force(r, att):
+    """Radial force (kBT/um, + = repulsive) of the extra attraction models."""
+    r = np.asarray(r, float)
+    m, eps = att["model"], float(att["eps"])
+    if m == "LJ2n":
+        n = float(att["n"])
+        rc = np.maximum(r, 0.9 * SIGMA)                 # avoid overflow; the core keeps r near 2a anyway
+        x = (SIGMA / rc) ** n
+        f = 4 * eps * n / rc * (2 * x * x - x)
+        return np.where(r < SIGMA * 4000.0 ** (1 / n), f, 0.0)   # tail beyond: < 0.1 % of eps
+    rc = np.maximum(r, 2 * A_P)
+    if m == "SW":
+        width = float(att["width"]); w = width * float(att.get("soft", 0.25))
+        u = (rc - 2 * A_P - width) / w
+        f = -eps / (2 * w) / np.cosh(np.clip(u, -50, 50)) ** 2
+        return np.where(u < 12, f, 0.0)
+    if m == "YUK":
+        k = float(att["kappa"])
+        e = np.exp(-k * (rc - 2 * A_P))
+        f = -eps * 2 * A_P * e * (1 / rc ** 2 + k / rc)
+        return np.where(e > 1e-4, f, 0.0)
+    raise ValueError(f"unknown attraction model {m}")
+
+
+def att_potential(r, att):
+    """Potential (kBT) of att_force, zero at infinity, for r >= 2a (used for B2* and depth)."""
+    r = np.asarray(r, float)
+    m, eps = att["model"], float(att["eps"])
+    if m == "LJ2n":
+        n = float(att["n"]); x = (SIGMA / r) ** n
+        return 4 * eps * (x * x - x)
+    if m == "SW":
+        width = float(att["width"]); w = width * float(att.get("soft", 0.25))
+        return -eps / 2 * (1 - np.tanh((r - 2 * A_P - width) / w))
+    if m == "YUK":
+        k = float(att["kappa"])
+        return -eps * 2 * A_P / r * np.exp(-k * (r - 2 * A_P))
+    raise ValueError(m)
+
+
+def pair_forces(P, A, ao=None, core=None, att=None, radii=None):
+    """Return (N,2) forces in kBT/um from all pair interactions.
+    radii: per-particle radii (polydispersity); the pair force is then evaluated at the surface
+    separation, r - (a_i + a_j - 2a), i.e. every potential is shifted to the pair's contact distance."""
     dx = P[:, None, :] - P[None, :, :]            # i - j
     r2 = (dx ** 2).sum(-1)
     np.fill_diagonal(r2, np.inf)
     r = np.sqrt(r2)
-    fr = radial_force(r, A, ao, core)
+    re = r if radii is None else np.maximum(r - (radii[:, None] + radii[None, :] - 2 * A_P), 1e-3)
+    if att is None:
+        fr = radial_force(re, A, ao, core)
+    else:
+        fr = radial_force(re, 0.0, None, core) + att_force(re, att)
     return ((fr / r)[:, :, None] * dx).sum(1)
 
 
 def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, steps_per_tauB=4000, out_per_tauB=100,
-             seed=1, core=None, verbose=True, start=None, progress=None, flow_F=0.0):
+             seed=1, core=None, verbose=True, start=None, progress=None, flow_F=0.0, att=None, radii=None):
     """Return x, y (frames x N, um) and t (s). start: (N, 2) start positions; default the 12 x 12 grid.
     progress(step, n_steps, n_capped) is called at every saved frame (raise inside it to stop)."""
     rng = np.random.default_rng(seed)
@@ -200,13 +252,19 @@ def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, steps_per_tauB=4000, o
         raise ValueError("steps_per_tauB must be a multiple of out_per_tauB")
     frames = [P.copy()]
     times = [0.0]
-    noise = np.sqrt(2 * D * dt)
+    if radii is not None:                       # polydisperse: D ~ 1/a, radiation force ~ a^3
+        radii = np.asarray(radii, float)
+        Dp = (D * A_P / radii)[:, None]
+        arf_scale = (radii / A_P) ** 3
+    else:
+        Dp, arf_scale = D, 1.0
+    noise = np.sqrt(2 * Dp * dt)
     clipped = 0
     t0 = time.time()
     for s in range(1, n_steps + 1):
-        F = pair_forces(P, A, ao, core)
-        F[:, 1] += arf_force(P[:, 1], dn_nm)
-        move = D * F * dt
+        F = pair_forces(P, A, ao, core) if att is None and radii is None else pair_forces(P, A, ao, core, att, radii)
+        F[:, 1] += arf_scale * arf_force(P[:, 1], dn_nm)
+        move = Dp * F * dt
         mag = np.linalg.norm(move, axis=1)
         big = mag > MAX_STEP_UM
         if big.any():
@@ -243,7 +301,7 @@ def write_comsol_csv(folder, x, y, t):
         np.savetxt(os.path.join(folder, name), rows, delimiter=",", header=header, comments="", fmt="%.10g")
 
 
-def run_name(A, T_tauB, dn_nm, ao=None, seed=1, steps=4000, regime=None, flow_F=0.0):
+def run_name(A, T_tauB, dn_nm, ao=None, seed=1, steps=4000, regime=None, flow_F=0.0, att=None, pd=0.0):
     if regime == "ASF":
         base = f"{A:g}Tkb_{T_tauB:g}TauB_{flow_F:g}F"
     else:
@@ -251,6 +309,11 @@ def run_name(A, T_tauB, dn_nm, ao=None, seed=1, steps=4000, regime=None, flow_F=
     base += "_BD"
     if ao:
         base += f"_AO_q{ao[0]:g}_phi{ao[1]:g}"
+    if att:
+        par = {"LJ2n": "n", "SW": "width", "YUK": "kappa"}[att["model"]]
+        base += f"_{att['model']}_{par[0]}{float(att[par]):g}_eps{float(att['eps']):.4g}"
+    if pd:
+        base += f"_pd{pd:g}"
     if steps != STEPS:
         base += f"_dt{steps}"
     return base + f"_seed{seed}"

@@ -40,7 +40,7 @@ import airpods_bd as bd  # noqa: E402
 
 # settings that can be changed, with the values of the COMSOL model
 DEFAULTS = {
-    "potential": "LJ",            # "LJ", "AO" or "none" (core only)
+    "potential": "LJ",            # "LJ", "AO", "none" (core only), or "LJ2n" / "SW" / "YUK" (need eps + n / width / kappa)
     "A": 3.0,                     # LJ depth (kBT); for AO the matched LJ value, used in the run name
     "q": 0.2, "phi_p": 0.633,     # AO size ratio and polymer volume fraction
     "core": "coulomb",            # "coulomb" (COMSOL), "phs", "wca", "none"
@@ -131,11 +131,34 @@ def regime_of(c):
     return "AAF" if c["start"].get("kind") in ("aaf", "run") else "NAF"
 
 
+ATT_MODELS = {"LJ2n": "n", "SW": "width", "YUK": "kappa"}
+
+
+def att_of(c):
+    """Settings of the extra attraction models (paper 2), or None for LJ / AO / none."""
+    m = c["potential"]
+    if m not in ATT_MODELS:
+        return None
+    return {"model": m, "eps": float(c["eps"]), ATT_MODELS[m]: float(c[ATT_MODELS[m]])}
+
+
+def radii_of(c, seed):
+    """Per-particle radii for polydisperse runs (Gaussian, relative width c['polydispersity'], cut at +-2 sigma),
+    drawn from the run seed so a repeat gives the same particles; None = monodisperse."""
+    pd = float(c.get("polydispersity", 0) or 0)
+    if pd <= 0:
+        return None
+    rng = np.random.default_rng(int(seed) + 5000)
+    z = np.clip(rng.standard_normal(4096), -2, 2)
+    return bd.A_P * (1 + pd * z)
+
+
 def run_folder_name(c, seed):
     ao = (float(c["q"]), float(c["phi_p"])) if c["potential"] == "AO" else None
     reg = regime_of(c)
     name = bd.run_name(float(c["A"]) if c["potential"] != "none" else 0.0, float(c["T_tauB"]), float(c["dn_nm"]),
-                       ao, seed, int(c["steps_per_tauB"]), reg, float(c.get("flow_F", 0)))
+                       ao, seed, int(c["steps_per_tauB"]), reg, float(c.get("flow_F", 0)),
+                       att_of(c), float(c.get("polydispersity", 0) or 0))
     tag = c.get("tag", "").strip().strip("_")
     if tag:
         name = name.replace(f"_seed{seed}", f"_{tag}_seed{seed}")
@@ -167,6 +190,10 @@ def run_one(args):
         return name, "already existed"
     P0 = start_positions(c["start"], seed)
     ao = (float(c["q"]), float(c["phi_p"])) if c["potential"] == "AO" else None
+    att = att_of(c)
+    radii = radii_of(c, seed)
+    if radii is not None:
+        radii = radii[:len(P0)]
     A = float(c["A"]) if c["potential"] == "LJ" else 0.0
     t0 = time.time()
     stop = os.path.join(job_dir, "STOP")
@@ -183,7 +210,8 @@ def run_one(args):
         x, y, t = bd.simulate(A, float(c["dn_nm"]), float(c["T_tauB"]), ao=ao,
                               steps_per_tauB=int(c["steps_per_tauB"]), out_per_tauB=int(c["out_per_tauB"]),
                               seed=seed, core=c["core"] if c["core"] != "none" else "off", verbose=False,
-                              start=P0, progress=progress, flow_F=float(c.get("flow_F", 0)))
+                              start=P0, progress=progress, flow_F=float(c.get("flow_F", 0)),
+                              **({"att": att} if att else {}), **({"radii": radii} if radii is not None else {}))
     except KeyboardInterrupt:
         _status(job_dir, key, state="stopped", name=name, folder=folder, frac=0.0)
         return name, "stopped"
@@ -207,7 +235,7 @@ def expand_jobs(c, job_dir):
     return [(c, int(s), job_dir, int(s)) for s in c["seeds"]]
 
 
-CSV_NUMERIC = {"A", "q", "phi_p", "dn_nm", "flow_F", "T_tauB", "steps_per_tauB", "out_per_tauB", "core_Z",
+CSV_NUMERIC = {"eps", "n", "width", "kappa", "polydispersity", "A", "q", "phi_p", "dn_nm", "flow_F", "T_tauB", "steps_per_tauB", "out_per_tauB", "core_Z",
                "lj_cutoff_sigma"}
 REGIME_START = {"NAF": {"kind": "grid", "n_side": 12, "spacing": 4.0},
                 "ARF": {"kind": "grid", "n_side": 12, "spacing": 4.0},
