@@ -3993,7 +3993,7 @@ elif plot_mode == "Regime state model":
     if rsm_obs.empty:
         st.warning("No runs pass the filter.")
         st.stop()
-    rsm_df = rsm.label_runs(rsm_obs, rsm_th)
+    rsm_df = rsm.drop_repeated_seeds(rsm.label_runs(rsm_obs, rsm_th))   # a 1 τB run = first τB of the 10 τB run
 
     tab_states, tab_map, tab_settle, tab_trans, tab_next, tab_checks, tab_oop = st.tabs(
         ["States", "Boundary map", "State settling", "Transitions along A", "Suggested runs", "Data checks",
