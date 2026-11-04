@@ -93,3 +93,13 @@ def match_F0(gf: GridForce, dn_nm=4000.0, F0_ref=18.4, dn_ref=4000.0, z_mid_um=N
     s = F0_ref * (dn_nm / dn_ref) ** 2 / peak if peak > 0 else 1.0
     gf.F *= s
     return s
+
+
+def save_force(path, axes_m, F):
+    """Store a force grid (kBT/um, unscaled) for reuse: npz with xs, ys, zs (m) and F (nx, ny, nz, 3)."""
+    np.savez_compressed(path, xs=axes_m[0], ys=axes_m[1], zs=axes_m[2], F=F)
+
+
+def load_force(path):
+    d = np.load(path)
+    return (d["xs"], d["ys"], d["zs"]), d["F"]

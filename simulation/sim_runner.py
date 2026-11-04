@@ -198,9 +198,12 @@ def _arf3d_force(c):
     import arf3d_field as af
     key = (c["arf3d_file"], float(c["dn_nm"]), str(c.get("arf3d_offset_um")), c.get("arf3d_rho_p"), c.get("arf3d_c_p"))
     if key not in _ARF3D_CACHE:
-        axes, p, v = af.load_grid(c["arf3d_file"])
-        f1, f2 = af.contrast_factors(float(c.get("arf3d_rho_p", 1050.0)), float(c.get("arf3d_c_p", 2350.0)))
-        F = af.force_grid(axes, p, v, f1=f1, f2=f2, freq=c.get("arf3d_freq"))
+        if str(c["arf3d_file"]).lower().endswith(".npz"):     # precomputed force grid (acoustic3d / save_force)
+            axes, F = af.load_force(c["arf3d_file"])
+        else:
+            axes, p, v = af.load_grid(c["arf3d_file"])
+            f1, f2 = af.contrast_factors(float(c.get("arf3d_rho_p", 1050.0)), float(c.get("arf3d_c_p", 2350.0)))
+            F = af.force_grid(axes, p, v, f1=f1, f2=f2, freq=c.get("arf3d_freq"))
         gf = af.GridForce(axes, F, offset_um=tuple(c.get("arf3d_offset_um", (0.0, 0.0, 0.0))))
         if c.get("arf3d_match", True):
             af.match_F0(gf, float(c["dn_nm"]), float(c.get("arf_F0_ref", bd.ARF_F0_REF)))
