@@ -4970,16 +4970,31 @@ elif plot_mode == "3D viewer":
     v3_metas = [rf.meta3d(l.split("/")[-1], v3_fold.upper(), _v3_cfg(p_)) for l, p_ in v3_in]
     v3_keep = rf.widgets(v3_metas, key=f"v3__{v3_root}__{v3_fold}", container=st.sidebar, title="Filter 3D runs",
                          expanded=False, extra_params=rf.PARAMS_3D)
-    v3_opts = [(l, p_) for (l, p_), k_, m_ in zip(v3_in, v3_keep, v3_metas) if k_ or m_ is None]
-    if not v3_opts:
+    v3_pass = [(l, p_, m_) for (l, p_), k_, m_ in zip(v3_in, v3_keep, v3_metas) if k_ or m_ is None]
+    if not v3_pass:
         st.info("No run passes the filter."); st.stop()
+    v3_topics = {}
+    for l, p_, m_ in v3_pass:
+        v3_topics.setdefault(rf.topic3d(m_), []).append((l, p_, m_))
+    v3_tlist = ["all topics"] + sorted(v3_topics)
+    v3_topic = st.sidebar.selectbox("Topic", v3_tlist, key=f"v3_topic_{v3_fold}",
+                                    format_func=lambda t_: f"{t_} ({len(v3_pass) if t_ == 'all topics' else len(v3_topics[t_])} runs)",
+                                    help="Runs grouped by what they test: field on or off, which field / lid, system size.")
+    v3_grp = v3_pass if v3_topic == "all topics" else v3_topics[v3_topic]
+    v3_short = dict(zip([l for l, _, _ in v3_grp], rf.short_labels([m_ for _, _, m_ in v3_grp], [l.split("/")[-1] for l, _, _ in v3_grp])))
+    v3_opts = [(l, p_) for l, p_, _ in v3_grp]
     st.sidebar.header("3. Runs (up to 4, side by side)")
     v3_sel = st.sidebar.multiselect("Runs", [l for l, _ in v3_opts], default=[v3_opts[0][0]], max_selections=4,
-                                    key="v3_runs", format_func=lambda l: l.split("/")[-1])
+                                    key="v3_runs", format_func=lambda l: v3_short.get(l, l.split("/")[-1]),
+                                    help="Labels show only what differs between the runs of this topic; the full name "
+                                         "is in the panel title if 'Full run name' is on.")
     if not v3_sel:
         st.info("Pick one or more runs in the sidebar."); st.stop()
     v3_paths = dict(v3_opts)
-    v3_data = [(l, _v3_load(v3_paths[l], os.path.getmtime(os.path.join(v3_paths[l], "dataz.csv")))) for l in v3_sel]
+    v3_fullname = st.sidebar.checkbox("Full run name in titles", False, key="v3_fullname")
+    v3_data = [((l.split("/")[-1] if v3_fullname else v3_short.get(l, l.split("/")[-1])),
+                _v3_load(v3_paths[l], os.path.getmtime(os.path.join(v3_paths[l], "dataz.csv")))) for l in v3_sel]
+    v3_label_of = dict(zip(v3_sel, [d_[0] for d_ in v3_data]))
 
     st.sidebar.header("4. View")
     v3_view_name = st.sidebar.radio("View", list(v3.VIEWS), key="v3_view",
@@ -5082,21 +5097,21 @@ elif plot_mode == "3D viewer":
                 with open(os.path.join(output_dir, "3D_run_animation.gif"), "wb") as fh:
                     fh.write(st.session_state["v3_gif"])
     with tab3_live:
-        live3 = st.selectbox("Run", v3_sel, key="v3_live_run", format_func=lambda l: l.split("/")[-1]) \
+        live3 = st.selectbox("Run", v3_sel, key="v3_live_run", format_func=lambda l: v3_label_of[l]) \
             if len(v3_sel) > 1 else v3_sel[0]
-        fr3, tt3, cf3 = dict(v3_data)[live3]
+        fr3, tt3, cf3 = dict(zip(v3_sel, [d_[1] for d_ in v3_data]))[live3]
         st.caption("Drag to rotate, scroll to zoom; ▶ plays through up to 80 saved frames.")
         try:
             v3_lsize = st.slider("Marker size", 2, 14, 6, key="v3_lsize")
             st.plotly_chart(v3.fig_3d_animated(fr3, tt3, cf3, v3_by if v3_by != "coordination" else "height", v3_plain,
-                                               title=live3.split("/")[-1], opacity=float(v3_alpha), size=v3_lsize),
+                                               title=v3_label_of[live3], opacity=float(v3_alpha), size=v3_lsize),
                             use_container_width=True)
         except ImportError:
             st.error("The interactive view needs plotly: run `pip install plotly` and restart the app.")
     with tab3_obs:
-        obs3 = st.selectbox("Run", v3_sel, key="v3_obs_run", format_func=lambda l: l.split("/")[-1]) \
+        obs3 = st.selectbox("Run", v3_sel, key="v3_obs_run", format_func=lambda l: v3_label_of[l]) \
             if len(v3_sel) > 1 else v3_sel[0]
-        fr3, tt3, cf3 = dict(v3_data)[obs3]
+        fr3, tt3, cf3 = dict(zip(v3_sel, [d_[1] for d_ in v3_data]))[obs3]
         if cf3:
             st.caption(", ".join(f"{k} = {cf3[k]}" for k in ("potential", "A", "q", "phi_p", "eps", "dn_nm", "H", "drho",
                                                             "T_tauB", "steps_per_tauB", "run_seed") if k in cf3))

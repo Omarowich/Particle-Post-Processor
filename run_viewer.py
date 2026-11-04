@@ -449,7 +449,9 @@ def draw_frame(ax, x, y, t, k, opts: DrawOptions, *, title=None, model=None, box
     if info:
         lines.append("   ".join(info))
     if lines:
-        ax.set_title("\n".join(lines), loc="left", fontsize=opts.font_size)
+        import textwrap
+        width = max(20, int(opts.panel_size * 72 / (0.62 * opts.font_size)))
+        ax.set_title("\n".join(textwrap.fill(l_, width) for l_ in lines), loc="left", fontsize=opts.font_size)
     return vals, rng
 
 

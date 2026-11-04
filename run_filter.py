@@ -108,9 +108,10 @@ def meta3d(name, regime="", cfg=None):
         lid = "hard" if "HARD" in (f + ex).upper() else "PDMS" if "PDMS" in (f + ex).upper() else "absorbing" if "ABSORB" in (f + ex).upper() else ""
         m["field"] = f"IDT (SSAW{' ' + fr.group(1) + ' MHz' if fr else ''}){', ' + lid + ' lid' if lid else ''}"
     elif f or "lid" in ex.lower():
-        m["field"] = "side walls, PDMS lid" if ("impedance" in f or "PDMS" in ex) else "side walls, hard lid (solved)"
+        m["field"] = ("side-wall drive, PDMS lid (computed 3D field)" if ("impedance" in f or "PDMS" in ex)
+                      else "side-wall drive, glass lid (computed 3D field)")
     elif m.get("dn") and m["dn"] == m["dn"] and m["dn"] > 0:
-        m["field"] = "1D standing wave (extruded)"
+        m["field"] = "fitted 1D standing wave (same at every height)"
     else:
         m["field"] = "no field"
     n_ = re.search(r"(?:^|_)N(\d+)", ex)
@@ -169,3 +170,42 @@ def filter_frame(df, key, container, **kw):
     keep = widgets(metas, key, container, **kw)
     ok = {(r.get("regime", ""), r["name"]) for (_, r), k in zip(runs.iterrows(), keep) if k}
     return df[[(r.get("regime", ""), r["name"]) in ok for _, r in df.iterrows()]]
+
+
+def topic3d(m):
+    """Group of a 3D run for the run picker: field on/off, field type, system size."""
+    if m is None:
+        return "other runs"
+    size = f"N = {m['N']}, {m['box']:g} µm box" if m.get("N") not in (None, NONE) else f"{m['box']:g} µm box"
+    if m["field"] == "no field":
+        return f"No field (gel / crystal) · {size}"
+    return f"Band in the field · {m['field']} · {size}"
+
+
+SHORT_KEYS = [("potential", lambda v: str(v)), ("A", lambda v: f"A {v:g}"), ("q", lambda v: f"q {v:g}"),
+              ("phi_p", lambda v: f"φp {v:g}"), ("dn", lambda v: f"{v:g} nm"), ("T_name", lambda v: f"{v:g} τB"),
+              ("H", lambda v: f"H {v:g}"), ("drho", lambda v: f"Δρ {v:g}"), ("field", lambda v: str(v)),
+              ("N", lambda v: f"N {v}"), ("box", lambda v: f"box {v:g}")]
+
+
+def short_labels(metas, names):
+    """Short run labels: only the parameters that differ between the given runs, plus the seed."""
+    def val(m, k):
+        return _val(m, k) if m is not None else NONE
+    vary = [(k, f) for k, f in SHORT_KEYS if len({str(val(m, k)) for m in metas}) > 1]
+    out = []
+    for m, nm in zip(metas, names):
+        if m is None:
+            out.append(nm); continue
+        parts = []
+        for k, f in vary:
+            v = val(m, k)
+            if v != NONE:
+                try:
+                    parts.append(f(v))
+                except (ValueError, TypeError):
+                    parts.append(str(v))
+        seed = m.get("seed")
+        parts.append(f"seed {seed}" if seed else "")
+        out.append(" · ".join(p_ for p_ in parts if p_) or nm)
+    return out

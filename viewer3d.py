@@ -300,7 +300,8 @@ def particle_colours(P, by="plain", plain="#e34948", rc=2.9, rng=None, cmap="vir
             if ru != rv:
                 lab[ru] = rv
         roots = np.array([root(u) for u in range(n)])
-        big = roots == np.argmax(np.bincount(roots))
+        cnt = np.bincount(roots)
+        big = (roots == np.argmax(cnt)) & (cnt.max() >= 3)      # no "largest cluster" while everything is single
         return np.array([to_rgba(plain) if b else to_rgba("#b8b6ad") for b in big]), None
     if by == "height":
         v = P[:, 2]
@@ -414,7 +415,9 @@ def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e3494
                 if info:
                     lines.append("   ".join(info))
                 if lines:
-                    ax.set_title("\n".join(lines), loc="left", fontsize=font)
+                    import textwrap
+                    width = max(20, int(panel * 72 / (0.62 * font)))       # characters that fit the panel
+                    ax.set_title("\n".join(textwrap.fill(l_, width) for l_ in lines), loc="left", fontsize=font)
     if color_by in ("height", "coordination") and rng_all is not None:
         cb = fig.colorbar(ScalarMappable(Normalize(*rng_all), plt.get_cmap(cmap)), ax=axes, shrink=0.75)
         cb.set_label(COLOR_BY[color_by], fontsize=font)
