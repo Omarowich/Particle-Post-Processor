@@ -4956,10 +4956,23 @@ elif plot_mode == "3D viewer":
         st.stop()
     v3_folders = sorted(set(l.split("/")[0] for l, _ in v3_runs))
     v3_fold = st.sidebar.selectbox("Folder", v3_folders, key="v3_fold")
-    v3_txt = st.sidebar.text_input("Name contains (e.g. H4, drho0, phi0.244)", "", key="v3_txt")
-    v3_opts = [(l, p_) for l, p_ in v3_runs if l.split("/")[0] == v3_fold and v3_txt.lower() in l.lower()]
+    import run_filter as rf
+
+    @st.cache_data(show_spinner=False)
+    def _v3_cfg(path):
+        import json as _j
+        f_ = os.path.join(path, "sim_config.json")
+        try:
+            return _j.load(open(f_)) if os.path.isfile(f_) else {}
+        except Exception:
+            return {}
+    v3_in = [(l, p_) for l, p_ in v3_runs if l.split("/")[0] == v3_fold]
+    v3_metas = [rf.meta3d(l.split("/")[-1], v3_fold.upper(), _v3_cfg(p_)) for l, p_ in v3_in]
+    v3_keep = rf.widgets(v3_metas, key=f"v3__{v3_root}__{v3_fold}", container=st.sidebar, title="Filter 3D runs",
+                         expanded=False, extra_params=rf.PARAMS_3D)
+    v3_opts = [(l, p_) for (l, p_), k_, m_ in zip(v3_in, v3_keep, v3_metas) if k_ or m_ is None]
     if not v3_opts:
-        st.info("No run matches."); st.stop()
+        st.info("No run passes the filter."); st.stop()
     st.sidebar.header("3. Runs (up to 4, side by side)")
     v3_sel = st.sidebar.multiselect("Runs", [l for l, _ in v3_opts], default=[v3_opts[0][0]], max_selections=4,
                                     key="v3_runs", format_func=lambda l: l.split("/")[-1])

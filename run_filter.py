@@ -80,7 +80,50 @@ def _sort_key(v):
     return (1, 0.0, "") if v == NONE else ((0, float(v), "") if not isinstance(v, str) else (0, 0.0, v))
 
 
-def widgets(metas, key, container, title="Filter runs", show_name_box=True, expanded=True, skip=(), defaults=None):
+PARAMS_3D = [
+    ("H", "Chamber height H (µm)", "{:g}"),
+    ("drho", "Δρ (kg/m³; 0 = density-matched)", "{:g}"),
+    ("field", "Acoustic field / lid", None),
+    ("N", "Particles N", "{:d}"),
+    ("box", "Box side (µm)", "{:g}"),
+]
+
+
+def meta3d(name, regime="", cfg=None):
+    """meta() plus the 3D settings: chamber height, Δρ, field / lid, N, box side (from the name, the run's
+    sim_config.json when given)."""
+    import re
+    m = meta(name, regime.split("_")[0] if regime else "")
+    if m is None:
+        return None
+    ex = m.get("extra") or ""
+    cfg = cfg or {}
+    g = re.search(r"_H([0-9.]+)|^H([0-9.]+)|3D_H([0-9.]+)", "_" + ex)
+    m["H"] = float(cfg["H"]) if cfg.get("H") not in (None, "", 0) else (float(next(x for x in g.groups() if x)) if g else NONE)
+    g = re.search(r"drho([0-9.]+)", ex)
+    m["drho"] = float(cfg.get("drho", g.group(1) if g else 0) or 0)
+    f = str(cfg.get("arf3d_file") or "")
+    if "SSAW" in f.upper() or "ssaw" in ex.lower():
+        fr = re.search(r"SSAW(\d+)", f.upper() + ex.upper())
+        lid = "hard" if "HARD" in (f + ex).upper() else "PDMS" if "PDMS" in (f + ex).upper() else "absorbing" if "ABSORB" in (f + ex).upper() else ""
+        m["field"] = f"IDT (SSAW{' ' + fr.group(1) + ' MHz' if fr else ''}){', ' + lid + ' lid' if lid else ''}"
+    elif f or "lid" in ex.lower():
+        m["field"] = "side walls, PDMS lid" if ("impedance" in f or "PDMS" in ex) else "side walls, hard lid (solved)"
+    elif m.get("dn") and m["dn"] == m["dn"] and m["dn"] > 0:
+        m["field"] = "1D standing wave (extruded)"
+    else:
+        m["field"] = "no field"
+    n_ = re.search(r"(?:^|_)N(\d+)", ex)
+    st_ = cfg.get("start") or {}
+    n_cfg = (int(st_.get("n_side", 0)) ** 2 * int(st_.get("layers", 1))) if st_.get("kind") in ("grid", "grid3d") else None
+    m["N"] = int(n_.group(1)) if n_ else (n_cfg or 144)
+    b_ = re.search(r"box(\d+)", ex)
+    m["box"] = 2 * float(cfg["box_half"]) if cfg.get("box_half") else (float(b_.group(1)) if b_ else 50.0)
+    return m
+
+
+def widgets(metas, key, container, title="Filter runs", show_name_box=True, expanded=True, skip=(), defaults=None,
+            extra_params=()):
     """Draw the filter and return a list of booleans (one per run: passes the filter).
     defaults: {column: [values selected at first]}, e.g. {"source": ["COMSOL"]}; otherwise all are selected."""
     n = len(metas)
@@ -89,7 +132,7 @@ def widgets(metas, key, container, title="Filter runs", show_name_box=True, expa
         return keep
     box = container.expander(f"{title} ({n} runs)", expanded=expanded)
     chosen = {}
-    for col, label, fmt in PARAMS:
+    for col, label, fmt in list(PARAMS) + list(extra_params):
         if col in skip:
             continue
         vals = sorted({_val(m, col) for m in metas if m is not None}, key=_sort_key)
