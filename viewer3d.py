@@ -222,13 +222,13 @@ def particle_colours(P, by="plain", plain="#e34948", rc=2.9, rng=None, cmap="vir
     return plt.get_cmap(cmap)(np.clip((v - lo) / (hi - lo), 0, 1)), (lo, hi)
 
 
-def _draw_2d(ax, P, cols, plane, half, top, scale=1.0, show_box=True, edge="#ffffff"):
+def _draw_2d(ax, P, cols, plane, half, top, scale=1.0, show_box=True, edge="#ffffff", alpha=1.0):
     from matplotlib.collections import PatchCollection
     from matplotlib.patches import Circle, Rectangle
     a_, b_, depth = {"xy": (0, 1, 2), "yz": (1, 2, 0), "xz": (0, 2, 1)}[plane]
     order = np.argsort(P[:, depth])                     # far particles first
     ax.add_collection(PatchCollection([Circle((P[k, a_], P[k, b_]), A_UM * scale) for k in order],
-                                      facecolors=cols[order], edgecolors=edge, linewidths=0.3, zorder=3))
+                                      facecolors=cols[order], edgecolors=edge, linewidths=0.3, alpha=alpha, zorder=3))
     lim = {0: (-half, half), 1: (-half, half), 2: (0.0, top)}
     if show_box:
         (x0, x1), (y0, y1) = lim[a_], lim[b_]
@@ -241,11 +241,13 @@ def _draw_2d(ax, P, cols, plane, half, top, scale=1.0, show_box=True, edge="#fff
     ax.set_ylabel(f"{names[b_]} (µm)" + (", field axis" if b_ == 1 else ""))
 
 
-def _draw_3d(ax, P, cols, half, top, elev=22, azim=-60, scale=1.0, show_box=True, panel_in=4.6):
+def _draw_3d(ax, P, cols, half, top, elev=22, azim=-60, scale=1.0, show_box=True, panel_in=4.6, alpha=1.0,
+             depthshade=False, edge="#ffffff"):
     span = max(2 * half, top)
     pts_per_um = panel_in * 72 * 0.62 / span                 # rough: axes fill ~62 % of the panel
     s = (2 * A_UM * scale * pts_per_um) ** 2
-    ax.scatter(P[:, 0], P[:, 1], P[:, 2], s=s, c=cols, edgecolors="none", depthshade=True)
+    ax.scatter(P[:, 0], P[:, 1], P[:, 2], s=s, c=cols, edgecolors=edge, linewidths=0.3, alpha=alpha,
+               depthshade=depthshade)
     if show_box:
         xs = [-half, half, half, -half, -half]; ys = [-half, -half, half, half, -half]
         for zz in (0.0, top):
@@ -265,7 +267,7 @@ def _draw_3d(ax, P, cols, half, top, elev=22, azim=-60, scale=1.0, show_box=True
 
 def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e34948", elev=22, azim=-60,
                   scale=1.0, show_box=True, show_time=True, show_stats=True, show_name=True, panel=4.6,
-                  font=9, fixed_range=None, cmap="viridis", dpi=None):
+                  font=9, fixed_range=None, cmap="viridis", dpi=None, alpha=1.0, depthshade=False, edge="#ffffff"):
     """One figure, one column per run. runs: list of (label, (frames, t, cfg)). view: a value of VIEWS."""
     import matplotlib.pyplot as plt
     from matplotlib.cm import ScalarMappable
@@ -289,10 +291,10 @@ def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e3494
         for r, pl in enumerate(planes):
             if pl == "3d":
                 ax = fig.add_subplot(gs[r, c], projection="3d")
-                _draw_3d(ax, P, cols, half, top, elev, azim, scale, show_box, panel)
+                _draw_3d(ax, P, cols, half, top, elev, azim, scale, show_box, panel, alpha, depthshade, edge)
             else:
                 ax = fig.add_subplot(gs[r, c])
-                _draw_2d(ax, P, cols, pl, half, top, scale, show_box)
+                _draw_2d(ax, P, cols, pl, half, top, scale, show_box, edge, alpha)
                 ax.spines[["top", "right"]].set_visible(False)
             ax.tick_params(labelsize=font - 1)
             axes.append(ax)
@@ -360,7 +362,8 @@ def make_gif3d(runs, view="3d", *, t_start_s, t_end_s, n_frames=60, fps=12, dpi=
     return out.getvalue()
 
 
-def fig_3d_animated(frames, t, cfg=None, color_by="plain", plain="#e34948", n_max=80, title=""):
+def fig_3d_animated(frames, t, cfg=None, color_by="plain", plain="#e34948", n_max=80, title="", opacity=1.0,
+                    size=None):
     """Plotly 3D figure with a play button and time slider (rotate / zoom while it plays)."""
     import plotly.graph_objects as go
     from matplotlib.colors import to_hex
@@ -372,8 +375,8 @@ def fig_3d_animated(frames, t, cfg=None, color_by="plain", plain="#e34948", n_ma
     def trace(k):
         cols, _ = particle_colours(frames[k], color_by, plain, rng=rng)
         return go.Scatter3d(x=frames[k][:, 0], y=frames[k][:, 1], z=frames[k][:, 2], mode="markers",
-                            marker=dict(size=4 if frames.shape[1] > 500 else 6, color=[to_hex(c) for c in cols],
-                                        line=dict(width=0)), hoverinfo="skip")
+                            marker=dict(size=size or (4 if frames.shape[1] > 500 else 6), color=[to_hex(c) for c in cols],
+                                        opacity=opacity, line=dict(width=0)), hoverinfo="skip")
     xs, ys = [-half, half, half, -half, -half], [-half, -half, half, half, -half]
     box = [go.Scatter3d(x=xs, y=ys, z=[zz] * 5, mode="lines", line=dict(color="#999", width=2), hoverinfo="skip")
            for zz in (0.0, top)]

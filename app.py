@@ -4992,8 +4992,13 @@ elif plot_mode == "3D viewer":
         v3_scale = st.slider("Particle size (× real size)", 0.3, 1.5, 1.0, 0.05, key="v3_scale")
         v3_panel = st.slider("Panel size (inches)", 3.0, 8.0, 4.6, 0.2, key="v3_panel")
         v3_font = st.slider("Font size", 6, 16, 9, key="v3_font")
+        v3_alpha = st.slider("Opacity", 0.1, 1.0, 1.0, 0.05, key="v3_alpha",
+                             help="1 = solid particles; lower to see particles behind others.")
+        v3_depth = st.checkbox("Fade far particles (3D depth shading)", False, key="v3_depth",
+                               help="3D perspective only: particles further from the camera are drawn paler.")
+        v3_edge = st.color_picker("Particle outline", "#ffffff", key="v3_edge")
     v3_kw = dict(color_by=v3_by, plain=v3_plain, elev=v3_elev, scale=v3_scale, panel=v3_panel, font=v3_font,
-                 cmap=v3_cmap, **v3_show)
+                 cmap=v3_cmap, alpha=float(v3_alpha), depthshade=bool(v3_depth), edge=v3_edge, **v3_show)
     t3max = min(d_[1][1][-1] for d_ in v3_data) / v3.TAUB_S
 
     tab3_snap, tab3_anim, tab3_live, tab3_obs = st.tabs(["Snapshot", "Animation", "Interactive 3D", "Observables"])
@@ -5043,8 +5048,10 @@ elif plot_mode == "3D viewer":
         fr3, tt3, cf3 = dict(v3_data)[live3]
         st.caption("Drag to rotate, scroll to zoom; ▶ plays through up to 80 saved frames.")
         try:
+            v3_lsize = st.slider("Marker size", 2, 14, 6, key="v3_lsize")
             st.plotly_chart(v3.fig_3d_animated(fr3, tt3, cf3, v3_by if v3_by != "coordination" else "height", v3_plain,
-                                               title=live3.split("/")[-1]), use_container_width=True)
+                                               title=live3.split("/")[-1], opacity=float(v3_alpha), size=v3_lsize),
+                            use_container_width=True)
         except ImportError:
             st.error("The interactive view needs plotly: run `pip install plotly` and restart the app.")
     with tab3_obs:
