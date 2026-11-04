@@ -4523,7 +4523,8 @@ elif plot_mode == "Run simulation":
                  "sim_eps": 5.0, "sim_attp": 0.0, "sim_match_eps": True, "sim_pd": 0.0, "sim_dim": "2D",
                  "sim_H": 20.0, "sim_drho": 52.0, "sim_layers": 1, "sim_dz": 3.0, "sim_fshape": "1D", "sim_freq": 20.0,
                  "sim_lid": "absorb", "sim_csaw": 3990.0, "sim_ffile": "", "sim_fprofile": "uniform",
-                 "sim_rayA": 0.0, "sim_secE": 0.0, "sim_nl": False}.items():
+                 "sim_rayA": 0.0, "sim_secE": 0.0, "sim_nl": False, "sim_fauto": False, "sim_ffac": 1.0,
+                 "sim_radoff": False}.items():
         _d(k, v)
 
     def _apply_config(c):
@@ -4685,6 +4686,13 @@ elif plot_mode == "Run simulation":
                                     SS.sim_ffile = _pth; SS.sim_finfo = _inf
                                 except Exception as ex:
                                     st.error(f"Could not compute the field: {ex}")
+                        st.checkbox("Also add the streaming computed from this field", key="sim_fauto",
+                                    help="Boundary-layer slip at every wall + Stokes flow (simulation/streaming2d.py), "
+                                         "with the same acoustic amplitude as the radiation force. Computed when the run "
+                                         "starts and cached in <output>/_fields.")
+                        if SS.get("sim_fauto"):
+                            st.number_input("Streaming factor (1 = as computed)", 0.0, 100.0, step=0.5, key="sim_ffac")
+                            st.checkbox("Streaming only (radiation force off, Regime IV-like)", key="sim_radoff")
                         if SS.sim_ffile and SS.get("sim_finfo", {}).get("drive") == fsh:
                             st.caption(f"Using `{os.path.basename(SS.sim_ffile)}` · " + ", ".join(
                                 f"{k_} {v_:.3g}" if isinstance(v_, float) else f"{k_} {v_}" for k_, v_ in SS.sim_finfo.items()))
@@ -4790,7 +4798,11 @@ elif plot_mode == "Run simulation":
         if dim3:
             cfg.update({"dim": 3, "H": float(SS.sim_H) if SS.sim_H > 0 else None, "drho": float(SS.sim_drho),
                         "flow_profile": SS.sim_fprofile, "rayleigh_A": float(SS.sim_rayA)})
-            if field and SS.sim_fshape in ("side", "idt", "file") and SS.sim_ffile:
+            if field and SS.sim_fshape in ("side", "idt") and SS.get("sim_fauto"):
+                cfg.update({"field_auto": {"drive": SS.sim_fshape, "lid": SS.sim_lid, "freq_MHz": float(SS.sim_freq)},
+                            "field_auto_streaming": float(SS.get("sim_ffac", 1.0)),
+                            "radiation_off": bool(SS.get("sim_radoff", False))})
+            elif field and SS.sim_fshape in ("side", "idt", "file") and SS.sim_ffile:
                 cfg.update({"arf3d_file": clean_path(SS.sim_ffile), "arf3d_match": True})
 
         # ---- sanity checks before anything runs ----
