@@ -361,6 +361,35 @@ class DrawOptions:
     font_size: float = 9.0
     fixed_range: tuple | None = None     # (lo, hi) for the colour scale; None = automatic
     panel_size: float = 4.6
+    field_overlay: str = "none"          # none | potential | force | nodes  (Regime II runs: the 1D standing wave)
+    field_alpha: float = 0.35
+
+
+def field_1d(dn_nm, y):
+    """Radiation force F_y (kBT/um) and Gor'kov potential U (kBT, minimum 0 at the nodes) of the fitted 1D standing
+    wave: F = -F0 sin(k y), U = (F0 / k)(1 - cos(k y)), F0 = 18.4 (d_n / 4000 nm)^2, k = 0.124 / um."""
+    F0 = ARF_F0_REF * (dn_nm / ARF_DN_REF) ** 2
+    return -F0 * np.sin(ARF_K * y), F0 / ARF_K * (1 - np.cos(ARF_K * y))
+
+
+def draw_field_2d(ax, model, box, opts):
+    """Background of the acoustic field (top view): potential or |force| shading along y, node lines dashed."""
+    dn = getattr(model, "dn", 0.0) if model is not None else 0.0
+    if not dn or opts.field_overlay == "none":
+        return
+    yy = np.linspace(-box, box, 400)
+    F, U = field_1d(dn, yy)
+    if opts.field_overlay in ("potential", "force"):
+        v = U if opts.field_overlay == "potential" else np.abs(F)
+        ax.imshow(v[:, None] * np.ones((1, 2)), extent=(-box, box, -box, box), origin="lower", aspect="auto",
+                  cmap="Blues" if opts.field_overlay == "potential" else "Oranges", alpha=opts.field_alpha, zorder=0,
+                  interpolation="bilinear")
+    if opts.field_overlay in ("potential", "force", "nodes"):
+        n = int(np.ceil(box * ARF_K / (2 * np.pi)))
+        for m in range(-n, n + 1):
+            yn = 2 * np.pi * m / ARF_K
+            if abs(yn) <= box:
+                ax.axhline(yn, color="#2a78d6", lw=0.8, ls="--", alpha=0.8, zorder=0.5)
 
 
 def draw_frame(ax, x, y, t, k, opts: DrawOptions, *, title=None, model=None, box=None):
@@ -386,6 +415,7 @@ def draw_frame(ax, x, y, t, k, opts: DrawOptions, *, title=None, model=None, box
             cols = cmap(np.clip((vals - rng[0]) / max(rng[1] - rng[0], 1e-12), 0, 1))
 
     ax.clear()
+    draw_field_2d(ax, model, box, opts)
     if opts.show_box:
         ax.add_patch(Rectangle((-box, -box), 2 * box, 2 * box, fill=False, ec="#c3c2b7", lw=1))
     if opts.trail > 0:

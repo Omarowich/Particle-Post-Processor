@@ -4979,7 +4979,9 @@ elif plot_mode == "3D viewer":
         v3_elev = cv1.slider("Elevation (°)", -10, 90, 22, 2, key="v3_elev")
         v3_azim = cv2.slider("Azimuth (°)", -180, 180, -60, 5, key="v3_azim")
     st.sidebar.header("5. Colour and show")
-    v3_by = st.sidebar.selectbox("Colour by", list(v3.COLOR_BY), format_func=lambda k_: v3.COLOR_BY[k_], key="v3_by")
+    v3_by = st.sidebar.selectbox("Colour by", list(v3.COLOR_BY), format_func=lambda k_: v3.COLOR_BY[k_], key="v3_by",
+                                 index=1, help="'resting on another particle': stacked particles in the particle colour, "
+                                               "particles on the floor or beside others in grey.")
     cc1, cc2 = st.sidebar.columns(2)
     v3_plain = cc1.color_picker("Particle colour", "#e34948", key="v3_plain")
     v3_cmap = cc2.selectbox("Colour scale", ["viridis", "plasma", "magma", "cividis", "Blues", "Reds"], key="v3_cmap")
@@ -4997,8 +4999,32 @@ elif plot_mode == "3D viewer":
         v3_depth = st.checkbox("Fade far particles (3D depth shading)", False, key="v3_depth",
                                help="3D perspective only: particles further from the camera are drawn paler.")
         v3_edge = st.color_picker("Particle outline", "#ffffff", key="v3_edge")
+    v3_stretch = st.sidebar.slider("Height stretch (×)", 1.0, 8.0, 1.0, 0.5, key="v3_stretch",
+                                   help="Exaggerates the vertical axis in the 3D and side views so thin layers and "
+                                        "stacking are easier to see (particles in the side views become ellipses).")
+    st.sidebar.header("6. Acoustic field")
+    v3_fmode = st.sidebar.selectbox("Overlay", list(v3.FIELD_OVERLAYS), format_func=lambda k_: v3.FIELD_OVERLAYS[k_],
+                                    key="v3_fmode",
+                                    help="The field the run used: its solved / COMSOL field file (sim_config arf3d_file, "
+                                         "looked up in Data/_fields) or the fitted 1D standing wave. Top view: slice at the "
+                                         "particles' median height; side views: slice through the middle; 3D view: the y–z "
+                                         "slice on the back wall. Darker blue = higher potential (particles collect in the "
+                                         "white valleys).")
+    v3_falpha = st.sidebar.slider("Overlay strength", 0.1, 1.0, 0.45, 0.05, key="v3_falpha") if v3_fmode != "none" else 0.45
+
+    @st.cache_resource(show_spinner=False)
+    def _v3_field(cfg_json, root):
+        import json as _json
+        return v3.RunField(_json.loads(cfg_json), root)
+    import json as _json3
+    v3_fields = [_v3_field(_json3.dumps(d_[1][2], sort_keys=True, default=str), v3_root) for d_ in v3_data] \
+        if v3_fmode != "none" else None
+    if v3_fields:
+        st.sidebar.caption("; ".join(f"{l.split('/')[-1][:28]}…: {f_.kind} field {f_.note}".strip()
+                                     for l, f_ in zip(v3_sel, v3_fields)))
     v3_kw = dict(color_by=v3_by, plain=v3_plain, elev=v3_elev, scale=v3_scale, panel=v3_panel, font=v3_font,
-                 cmap=v3_cmap, alpha=float(v3_alpha), depthshade=bool(v3_depth), edge=v3_edge, **v3_show)
+                 cmap=v3_cmap, alpha=float(v3_alpha), depthshade=bool(v3_depth), edge=v3_edge, stretch=float(v3_stretch),
+                 fields=v3_fields, field_mode=v3_fmode, field_alpha=float(v3_falpha), **v3_show)
     t3max = min(d_[1][1][-1] for d_ in v3_data) / v3.TAUB_S
 
     tab3_snap, tab3_anim, tab3_live, tab3_obs = st.tabs(["Snapshot", "Animation", "Interactive 3D", "Observables"])
@@ -5127,11 +5153,19 @@ elif plot_mode == "Run viewer":
         rv_scale = st.slider("Particle size (× real size)", 0.3, 1.5, 1.0, 0.05, key="rv_scale")
         rv_font = st.slider("Font size", 6, 18, 9, key="rv_font")
         rv_panel = st.slider("Panel size (inches)", 3.0, 8.0, 4.6, 0.2, key="rv_panel")
+    rv_field = st.sidebar.selectbox("Acoustic field overlay (Regime II runs)", ["none", "potential", "force", "nodes"],
+                                    key="rv_field", format_func=lambda k_: {"none": "none",
+                                    "potential": "Gor'kov potential (shading) + nodes", "force": "|force| (shading) + nodes",
+                                    "nodes": "pressure-node lines only"}[k_],
+                                    help="The fitted 1D standing wave F = −F0 sin(k y) of the run's d_n; darker = higher "
+                                         "potential / stronger force. Dashed: pressure nodes, where the band forms.")
+    rv_falpha = st.sidebar.slider("Overlay strength", 0.05, 1.0, 0.35, 0.05, key="rv_falpha") if rv_field in ("potential", "force") else 0.35
 
     rv_opts_draw = rv.DrawOptions(metric=rv_metric, plain_color=rv_plain, edge_color=rv_edge, bond_color=rv_bondc,
                                   trail_color=rv_trailc, trail=int(rv_trail), rc=float(rv_rc),
                                   particle_scale=float(rv_scale), font_size=float(rv_font),
-                                  fixed_range=rv_range, panel_size=float(rv_panel), **rv_o)
+                                  fixed_range=rv_range, panel_size=float(rv_panel), field_overlay=rv_field,
+                                  field_alpha=float(rv_falpha), **rv_o)
 
     st.header("Run viewer")
     if not rv_base or not os.path.isdir(rv_base):

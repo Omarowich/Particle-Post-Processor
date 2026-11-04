@@ -183,11 +183,91 @@ def fig_stats_over_time(frames, t, cfg=None, every=None):
     return fig, S
 
 
+# --------------------------------------------------------------------------- acoustic field of a run
+class RunField:
+    """Radiation force of a 3D run on a grid (kBT/um) and its Gor'kov potential (kBT). From the run's arf3d_file
+    (solved / COMSOL field, .npz with xs, ys, zs in m and F; scaled like the run: to the 2D fit at mid-height unless
+    arf3d_match is false) or, without one, the fitted 1D standing wave F_y = -F0 sin(k y), uniform in z."""
+
+    def __init__(self, cfg, data_root=None, frames=None):
+        self.kind, self.note = "1D", ""
+        half, top = _box_geometry(cfg, frames if frames is not None else np.zeros((1, 3)))
+        dn = float(cfg.get("dn_nm", 0) or 0)
+        f = cfg.get("arf3d_file")
+        if f:
+            path = f if os.path.isfile(f) else None
+            if path is None and data_root:                 # Windows path from another machine: look in Data/_fields
+                cand = os.path.join(data_root, "_fields", os.path.basename(str(f).replace("\\", "/")))
+                path = cand if os.path.isfile(cand) else None
+            if path and path.endswith(".npz"):
+                d = np.load(path)
+                xs, ys, zs = d["xs"] * 1e6, d["ys"] * 1e6, d["zs"] * 1e6
+                F = np.nan_to_num(d["F"])
+                if cfg.get("arf3d_match", True):
+                    ix, iz = len(xs) // 2, len(zs) // 2
+                    peak = np.abs(F[ix, :, iz, 1]).max()
+                    F = F * (float(cfg.get("arf_F0_ref", 18.4)) * (dn / 4000.0) ** 2 / peak if peak > 0 else 1.0)
+                self.xs, self.ys, self.zs, self.F, self.kind = xs, ys, zs, F, "3D"
+                self.note = os.path.basename(path)
+            else:
+                self.note = f"field file {os.path.basename(str(f))} not found: showing the 1D standing wave"
+        if self.kind == "1D":
+            F0 = float(cfg.get("arf_F0_ref", 18.4)) * (dn / 4000.0) ** 2
+            k = float(cfg.get("arf_k", 0.124))
+            self.xs = np.linspace(-half, half, 21); self.ys = np.linspace(-half, half, 201)
+            self.zs = np.linspace(0, top, 21)
+            Fy = -F0 * np.sin(k * self.ys)
+            self.F = np.zeros((len(self.xs), len(self.ys), len(self.zs), 3))
+            self.F[:, :, :, 1] = Fy[None, :, None]
+        self.U = self._potential()
+        self.empty = not np.any(self.F)
+
+    def _potential(self):
+        """U = -integral of F (path: along y at each x, z; plus along z at y = ys[0]), minimum set to 0."""
+        def cum(v, x, ax):
+            dx = np.diff(x)
+            sl = lambda a, b: tuple(slice(a, b) if i == ax else slice(None) for i in range(v.ndim))
+            inc = 0.5 * (v[sl(1, None)] + v[sl(None, -1)]) * dx.reshape([-1 if i == ax else 1 for i in range(v.ndim)])
+            return np.concatenate([np.zeros_like(v[sl(0, 1)]), np.cumsum(inc, axis=ax)], axis=ax)
+        Uy = -cum(self.F[..., 1], self.ys, 1)
+        Uz0 = -cum(self.F[:, :1, :, 2], self.zs, 2)
+        U = Uy + Uz0
+        return U - U.min()
+
+    def plane(self, which, at):
+        """2D slice (a-axis values, b-axis values, U, Fa, Fb) of plane 'xy' (at z), 'yz' (at x), 'xz' (at y)."""
+        if which == "xy":
+            k = int(np.argmin(np.abs(self.zs - at)))
+            return self.xs, self.ys, self.U[:, :, k].T, self.F[:, :, k, 0].T, self.F[:, :, k, 1].T
+        if which == "yz":
+            k = int(np.argmin(np.abs(self.xs - at)))
+            return self.ys, self.zs, self.U[k].T, self.F[k, :, :, 1].T, self.F[k, :, :, 2].T
+        k = int(np.argmin(np.abs(self.ys - at)))
+        return self.xs, self.zs, self.U[:, k].T, self.F[:, k, :, 0].T, self.F[:, k, :, 2].T
+
+
+def _overlay_2d(ax, field, plane, at, mode, alpha=0.45):
+    if field is None or field.empty or mode == "none":
+        return
+    a, b, U, Fa, Fb = field.plane(plane, at)
+    if "potential" in mode or mode == "force":
+        img = U if "potential" in mode else np.hypot(Fa, Fb)
+        ax.imshow(img, extent=(a[0], a[-1], b[0], b[-1]), origin="lower", aspect="auto", alpha=alpha, zorder=0,
+                  cmap="Blues" if "potential" in mode else "Oranges", interpolation="bilinear")
+    if "arrows" in mode:
+        sa = max(1, len(a) // 14); sb = max(1, len(b) // (10 if plane == "xy" else 6))
+        A_, B_ = np.meshgrid(a[::sa], b[::sb])
+        ax.quiver(A_, B_, Fa[::sb, ::sa], Fb[::sb, ::sa], color="#2a78d6", alpha=0.8, zorder=1, width=0.004,
+                  scale=None, pivot="mid")
+
+
 # --------------------------------------------------------------------------- views, snapshots and animations
 VIEWS = {"3D perspective": "3d", "Top (x–y)": "xy", "Side along x (y–z, field axis)": "yz",
          "Side along y (x–z)": "xz", "Top + side": "xy+yz"}
-COLOR_BY = {"plain": "plain colour", "height": "height z (µm)", "coordination": "3D coordination",
-            "clusters": "largest cluster"}
+COLOR_BY = {"plain": "plain colour", "stacked": "resting on another particle", "height": "height z (µm)",
+            "coordination": "3D coordination", "clusters": "largest cluster"}
+FIELD_OVERLAYS = {"none": "none", "potential": "Gor'kov potential (shading)", "force": "|force| (shading)",
+                  "arrows": "force arrows", "potential+arrows": "potential + arrows"}
 
 
 def particle_colours(P, by="plain", plain="#e34948", rc=2.9, rng=None, cmap="viridis"):
@@ -197,6 +277,15 @@ def particle_colours(P, by="plain", plain="#e34948", rc=2.9, rng=None, cmap="vir
     n = len(P)
     if by == "plain":
         return np.tile(to_rgba(plain), (n, 1)), None
+    if by == "stacked":
+        ii, jj = _pairs(P, 4.2 * A_UM)
+        dz = P[ii, 2] - P[jj, 2]
+        lat = np.hypot(P[ii, 0] - P[jj, 0], P[ii, 1] - P[jj, 1])
+        top = np.zeros(n, bool)
+        sel = lat < 2.2 * A_UM
+        top[ii[sel & (dz > A_UM)]] = True
+        top[jj[sel & (dz < -A_UM)]] = True
+        return np.array([to_rgba(plain) if t_ else to_rgba("#c9c7bd") for t_ in top]), None
     if by == "clusters":
         i, j = _pairs(P, rc)
         lab = np.arange(n)
@@ -222,10 +311,13 @@ def particle_colours(P, by="plain", plain="#e34948", rc=2.9, rng=None, cmap="vir
     return plt.get_cmap(cmap)(np.clip((v - lo) / (hi - lo), 0, 1)), (lo, hi)
 
 
-def _draw_2d(ax, P, cols, plane, half, top, scale=1.0, show_box=True, edge="#ffffff", alpha=1.0):
+def _draw_2d(ax, P, cols, plane, half, top, scale=1.0, show_box=True, edge="#ffffff", alpha=1.0, field=None,
+             field_mode="none", field_alpha=0.45, stretch=1.0):
     from matplotlib.collections import PatchCollection
     from matplotlib.patches import Circle, Rectangle
     a_, b_, depth = {"xy": (0, 1, 2), "yz": (1, 2, 0), "xz": (0, 2, 1)}[plane]
+    at = {"xy": float(np.median(P[:, 2])), "yz": 0.0, "xz": 0.0}[plane]
+    _overlay_2d(ax, field, plane, at, field_mode, field_alpha)
     order = np.argsort(P[:, depth])                     # far particles first
     ax.add_collection(PatchCollection([Circle((P[k, a_], P[k, b_]), A_UM * scale) for k in order],
                                       facecolors=cols[order], edgecolors=edge, linewidths=0.3, alpha=alpha, zorder=3))
@@ -235,14 +327,14 @@ def _draw_2d(ax, P, cols, plane, half, top, scale=1.0, show_box=True, edge="#fff
         ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False, ec="#c3c2b7", lw=1, zorder=1))
     pad = 1.0
     ax.set_xlim(lim[a_][0] - pad, lim[a_][1] + pad); ax.set_ylim(lim[b_][0] - pad, lim[b_][1] + pad)
-    ax.set_aspect("equal")
+    ax.set_aspect(stretch if plane in ("yz", "xz") else "equal")
     names = "xyz"
     ax.set_xlabel(f"{names[a_]} (µm)" + (", field axis" if a_ == 1 else ""))
     ax.set_ylabel(f"{names[b_]} (µm)" + (", field axis" if b_ == 1 else ""))
 
 
 def _draw_3d(ax, P, cols, half, top, elev=22, azim=-60, scale=1.0, show_box=True, panel_in=4.6, alpha=1.0,
-             depthshade=False, edge="#ffffff"):
+             depthshade=False, edge="#ffffff", stretch=1.0, field=None, field_mode="none", field_alpha=0.45):
     span = max(2 * half, top)
     pts_per_um = panel_in * 72 * 0.62 / span                 # rough: axes fill ~62 % of the panel
     s = (2 * A_UM * scale * pts_per_um) ** 2
@@ -254,9 +346,17 @@ def _draw_3d(ax, P, cols, half, top, elev=22, azim=-60, scale=1.0, show_box=True
             ax.plot(xs, ys, [zz] * 5, color="#c3c2b7", lw=0.8)
         for x0, y0 in zip(xs[:4], ys[:4]):
             ax.plot([x0, x0], [y0, y0], [0, top], color="#c3c2b7", lw=0.8)
+    if field is not None and not field.empty and field_mode != "none":
+        a, b, U, Fa, Fb = field.plane("yz", 0.0)
+        img = U if "potential" in field_mode or "arrows" in field_mode else np.hypot(Fa, Fb)
+        import matplotlib.pyplot as plt
+        Y_, Z_ = np.meshgrid(a, b)
+        cm = plt.get_cmap("Blues" if "potential" in field_mode or "arrows" in field_mode else "Oranges")
+        ax.plot_surface(np.full_like(Y_, -half), Y_, Z_, facecolors=cm((img - img.min()) / max(np.ptp(img), 1e-12)),
+                        shade=False, alpha=field_alpha, rstride=1, cstride=max(1, len(a) // 60), linewidth=0, zorder=0)
     ax.set_xlim(-half, half); ax.set_ylim(-half, half); ax.set_zlim(0, top)
     try:
-        ax.set_box_aspect((2 * half, 2 * half, max(top, 0.15 * 2 * half)))
+        ax.set_box_aspect((2 * half, 2 * half, max(top * stretch, 0.15 * 2 * half)))
     except Exception:
         pass
     ax.view_init(elev=elev, azim=azim)
@@ -267,7 +367,8 @@ def _draw_3d(ax, P, cols, half, top, elev=22, azim=-60, scale=1.0, show_box=True
 
 def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e34948", elev=22, azim=-60,
                   scale=1.0, show_box=True, show_time=True, show_stats=True, show_name=True, panel=4.6,
-                  font=9, fixed_range=None, cmap="viridis", dpi=None, alpha=1.0, depthshade=False, edge="#ffffff"):
+                  font=9, fixed_range=None, cmap="viridis", dpi=None, alpha=1.0, depthshade=False, edge="#ffffff",
+                  stretch=1.0, fields=None, field_mode="none", field_alpha=0.45):
     """One figure, one column per run. runs: list of (label, (frames, t, cfg)). view: a value of VIEWS."""
     import matplotlib.pyplot as plt
     from matplotlib.cm import ScalarMappable
@@ -275,14 +376,15 @@ def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e3494
     n = len(runs)
     rows = 2 if view == "xy+yz" else 1
     # side views are as tall as the chamber (plus room for labels)
-    asp = max(max(_box_geometry(c_, f_)[1] / (2 * _box_geometry(c_, f_)[0]) for _, (f_, _t, c_) in runs), 0.08)
+    asp = max(max(_box_geometry(c_, f_)[1] / (2 * _box_geometry(c_, f_)[0]) for _, (f_, _t, c_) in runs), 0.08) * stretch
     side_h = panel * asp + 0.9
     h = {"xy+yz": panel + side_h, "yz": side_h + 0.4, "xz": side_h + 0.4}.get(view, panel)
     fig = plt.figure(figsize=(panel * n + (0.9 if color_by in ("height", "coordination") else 0), h + 0.4), dpi=dpi,
                      constrained_layout=True)
     gs = fig.add_gridspec(rows, n, height_ratios=[panel, side_h] if rows == 2 else [1])
     rng_all, axes = None, []
-    for c, ((label, (frames, t, cfg)), k) in enumerate(zip(runs, k_per_run)):
+    fields = fields or [None] * n
+    for c, ((label, (frames, t, cfg)), k, fld) in enumerate(zip(runs, k_per_run, fields)):
         P = frames[k]
         half, top = _box_geometry(cfg, frames)
         cols, rng = particle_colours(P, color_by, plain, rng=fixed_range, cmap=cmap)
@@ -291,10 +393,11 @@ def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e3494
         for r, pl in enumerate(planes):
             if pl == "3d":
                 ax = fig.add_subplot(gs[r, c], projection="3d")
-                _draw_3d(ax, P, cols, half, top, elev, azim, scale, show_box, panel, alpha, depthshade, edge)
+                _draw_3d(ax, P, cols, half, top, elev, azim, scale, show_box, panel, alpha, depthshade, edge, stretch,
+                         fld, field_mode, field_alpha)
             else:
                 ax = fig.add_subplot(gs[r, c])
-                _draw_2d(ax, P, cols, pl, half, top, scale, show_box, edge, alpha)
+                _draw_2d(ax, P, cols, pl, half, top, scale, show_box, edge, alpha, fld, field_mode, field_alpha, stretch)
                 ax.spines[["top", "right"]].set_visible(False)
             ax.tick_params(labelsize=font - 1)
             axes.append(ax)
