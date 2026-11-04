@@ -4947,7 +4947,8 @@ elif plot_mode == "3D viewer":
 
     st.title("3D viewer")
     st.caption("Runs with a z coordinate: simulation/bd_engine.py with dim = 3 (folders like ARF_3D, NAF_3D) and the "
-               "quasi-3D runs (_quasi3D). Same pair forces as 2D; field = 1D standing wave along y; no hydrodynamics.")
+               "quasi-3D runs (_quasi3D). Same pair forces as 2D; no hydrodynamics.")
+    st.sidebar.header("2. Data folder")
     v3_root = st.sidebar.text_input("Data folder", value=source_root, key="v3_root").strip().strip('"').strip("'")
     v3_runs = v3.list_3d_runs(v3_root)
     if not v3_runs:
@@ -4956,33 +4957,106 @@ elif plot_mode == "3D viewer":
     v3_folders = sorted(set(l.split("/")[0] for l, _ in v3_runs))
     v3_fold = st.sidebar.selectbox("Folder", v3_folders, key="v3_fold")
     v3_txt = st.sidebar.text_input("Name contains (e.g. H4, drho0, phi0.244)", "", key="v3_txt")
-    v3_opts = [(l, p) for l, p in v3_runs if l.split("/")[0] == v3_fold and v3_txt.lower() in l.lower()]
+    v3_opts = [(l, p_) for l, p_ in v3_runs if l.split("/")[0] == v3_fold and v3_txt.lower() in l.lower()]
     if not v3_opts:
         st.info("No run matches."); st.stop()
-    v3_lab = st.sidebar.selectbox("Run", [l for l, _ in v3_opts], key="v3_run",
-                                  format_func=lambda l: l.split("/")[-1])
-    v3_path = dict(v3_opts)[v3_lab]
-    frames, t3, cfg3 = _v3_load(v3_path, os.path.getmtime(os.path.join(v3_path, "dataz.csv")))
-    tt = t3 / v3.TAUB_S
-    k3 = st.slider("Time (τ_B)", 0, len(tt) - 1, len(tt) - 1, key="v3_k", format="frame %d")
-    P3 = frames[k3]
-    stats3, z3 = v3.frame_stats(P3, box=2 * float(cfg3.get("box_half", 25.0)))
-    st.markdown(f"**t = {tt[k3]:.2f} τ_B** · N = {len(P3)} · 3D coordination {stats3['z3']:.2f} · largest cluster "
-                f"{stats3['Smax']:.0%}{' (spans the box)' if stats3['spans'] else ''} · resting on another particle "
-                f"{stats3['f_on_top']:.0%} · ≥ 10 neighbours {stats3['f_cryst']:.0%} · mean height {stats3['h_mean']:.2f} µm")
-    v3c1, v3c2 = st.columns([1, 3])
-    v3_col = v3c1.radio("Colour", ["height", "coordination"], key="v3_col")
-    if cfg3:
-        v3c1.caption(", ".join(f"{k} = {cfg3[k]}" for k in ("potential", "A", "q", "phi_p", "eps", "dn_nm", "H", "drho",
-                                                           "T_tauB", "steps_per_tauB", "run_seed") if k in cfg3))
-    try:
-        v3c2.plotly_chart(v3.fig_3d(P3, cfg3, v3_col, z3, title=v3_lab.split("/")[-1]), use_container_width=True)
-    except ImportError:
-        v3c2.error("The 3D view needs plotly: run `pip install plotly` and restart the app.")
-    st.pyplot(v3.fig_views(P3, cfg3))
-    if st.checkbox("Observables over time (computed on up to 60 frames)", key="v3_time"):
-        figt, _ = v3.fig_stats_over_time(frames, t3, cfg3)
+    st.sidebar.header("3. Runs (up to 4, side by side)")
+    v3_sel = st.sidebar.multiselect("Runs", [l for l, _ in v3_opts], default=[v3_opts[0][0]], max_selections=4,
+                                    key="v3_runs", format_func=lambda l: l.split("/")[-1])
+    if not v3_sel:
+        st.info("Pick one or more runs in the sidebar."); st.stop()
+    v3_paths = dict(v3_opts)
+    v3_data = [(l, _v3_load(v3_paths[l], os.path.getmtime(os.path.join(v3_paths[l], "dataz.csv")))) for l in v3_sel]
+
+    st.sidebar.header("4. View")
+    v3_view_name = st.sidebar.radio("View", list(v3.VIEWS), key="v3_view",
+                                    help="Top and side views draw particles to scale; the side views show every "
+                                         "particle projected along the hidden axis (nearer ones on top).")
+    v3_view = v3.VIEWS[v3_view_name]
+    v3_elev, v3_azim = 22, -60
+    if v3_view == "3d":
+        cv1, cv2 = st.sidebar.columns(2)
+        v3_elev = cv1.slider("Elevation (°)", -10, 90, 22, 2, key="v3_elev")
+        v3_azim = cv2.slider("Azimuth (°)", -180, 180, -60, 5, key="v3_azim")
+    st.sidebar.header("5. Colour and show")
+    v3_by = st.sidebar.selectbox("Colour by", list(v3.COLOR_BY), format_func=lambda k_: v3.COLOR_BY[k_], key="v3_by")
+    cc1, cc2 = st.sidebar.columns(2)
+    v3_plain = cc1.color_picker("Particle colour", "#e34948", key="v3_plain")
+    v3_cmap = cc2.selectbox("Colour scale", ["viridis", "plasma", "magma", "cividis", "Blues", "Reds"], key="v3_cmap")
+    cs1, cs2 = st.sidebar.columns(2)
+    v3_show = dict(show_name=cs1.checkbox("Run name", True, key="v3_s_name"),
+                   show_time=cs2.checkbox("Time stamp", True, key="v3_s_time"),
+                   show_stats=cs1.checkbox("z / S_max / on top", True, key="v3_s_stats"),
+                   show_box=cs2.checkbox("Chamber outline", True, key="v3_s_box"))
+    with st.sidebar.expander("More display settings"):
+        v3_scale = st.slider("Particle size (× real size)", 0.3, 1.5, 1.0, 0.05, key="v3_scale")
+        v3_panel = st.slider("Panel size (inches)", 3.0, 8.0, 4.6, 0.2, key="v3_panel")
+        v3_font = st.slider("Font size", 6, 16, 9, key="v3_font")
+    v3_kw = dict(color_by=v3_by, plain=v3_plain, elev=v3_elev, scale=v3_scale, panel=v3_panel, font=v3_font,
+                 cmap=v3_cmap, **v3_show)
+    t3max = min(d_[1][1][-1] for d_ in v3_data) / v3.TAUB_S
+
+    tab3_snap, tab3_anim, tab3_live, tab3_obs = st.tabs(["Snapshot", "Animation", "Interactive 3D", "Observables"])
+    with tab3_snap:
+        t3sel = st.slider("Time (τB)", 0.0, float(t3max), float(t3max), max(float(t3max) / 200, 0.01), key="v3_t",
+                          help="Same time for all selected runs (limited by the shortest run).")
+        ks3 = [int(np.clip(np.searchsorted(d_[1][1], t3sel * v3.TAUB_S - 1e-9), 0, len(d_[1][1]) - 1)) for d_ in v3_data]
+        fig3 = v3.make_figure3d(v3_data, ks3, v3_view, azim=v3_azim, **v3_kw)
+        st.pyplot(fig3)
+        buf3 = io.BytesIO(); fig3.savefig(buf3, format="png", dpi=300, bbox_inches="tight")
+        st.download_button("Download PNG (300 dpi)", buf3.getvalue(), f"3D_snapshot_{t3sel:.2f}tauB.png", "image/png",
+                           key="v3_dl_png")
+        save_figure_if_requested(fig3, f"3D_snapshot_{'_vs_'.join(l.split('/')[-1] for l in v3_sel)}_{t3sel:.2f}tauB",
+                                 save_plots, output_dir)
+        plt.close(fig3)
+    with tab3_anim:
+        a1_, a2_, a3_, a4_, a5_ = st.columns([2, 1, 1, 1, 1])
+        ar0, ar1 = a1_.slider("Time range (τB)", 0.0, float(t3max), (0.0, float(t3max)), key="v3_arange")
+        n3 = a2_.number_input("Frames", 5, 400, 60, 5, key="v3_nframes")
+        fps3 = a3_.number_input("Frames per second", 1, 30, 12, 1, key="v3_fps")
+        dpi3 = a4_.number_input("Resolution (dpi)", 50, 200, 90, 10, key="v3_dpi")
+        orbit3 = a5_.number_input("Camera turn (°)", 0, 720, 0, 15, key="v3_orbit", disabled=v3_view != "3d",
+                                  help="3D view only: the camera turns this far around the chamber during the animation.")
+        st.caption(f"View: {v3_view_name}. Uses the colour and show settings from the sidebar; the colour scale is "
+                   "fixed over the whole animation.")
+        if st.button("Make animation", key="v3_make_gif", type="primary"):
+            bar3 = st.progress(0.0, text="Drawing frames...")
+            try:
+                st.session_state["v3_gif"] = v3.make_gif3d(
+                    v3_data, v3_view, t_start_s=ar0 * v3.TAUB_S, t_end_s=ar1 * v3.TAUB_S, n_frames=int(n3), fps=int(fps3),
+                    dpi=int(dpi3), orbit=float(orbit3), azim=v3_azim,
+                    progress=lambda p_: bar3.progress(p_, text=f"Drawing frames... {p_:.0%}"), **v3_kw)
+            except Exception as e:
+                st.error(f"Could not make the animation: {e}")
+            bar3.empty()
+        if st.session_state.get("v3_gif"):
+            st.image(st.session_state["v3_gif"])
+            st.download_button("Download GIF", st.session_state["v3_gif"], "3D_run_animation.gif", "image/gif",
+                               key="v3_dl_gif")
+            if save_plots and output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+                with open(os.path.join(output_dir, "3D_run_animation.gif"), "wb") as fh:
+                    fh.write(st.session_state["v3_gif"])
+    with tab3_live:
+        live3 = st.selectbox("Run", v3_sel, key="v3_live_run", format_func=lambda l: l.split("/")[-1]) \
+            if len(v3_sel) > 1 else v3_sel[0]
+        fr3, tt3, cf3 = dict(v3_data)[live3]
+        st.caption("Drag to rotate, scroll to zoom; ▶ plays through up to 80 saved frames.")
+        try:
+            st.plotly_chart(v3.fig_3d_animated(fr3, tt3, cf3, v3_by if v3_by != "coordination" else "height", v3_plain,
+                                               title=live3.split("/")[-1]), use_container_width=True)
+        except ImportError:
+            st.error("The interactive view needs plotly: run `pip install plotly` and restart the app.")
+    with tab3_obs:
+        obs3 = st.selectbox("Run", v3_sel, key="v3_obs_run", format_func=lambda l: l.split("/")[-1]) \
+            if len(v3_sel) > 1 else v3_sel[0]
+        fr3, tt3, cf3 = dict(v3_data)[obs3]
+        if cf3:
+            st.caption(", ".join(f"{k} = {cf3[k]}" for k in ("potential", "A", "q", "phi_p", "eps", "dn_nm", "H", "drho",
+                                                            "T_tauB", "steps_per_tauB", "run_seed") if k in cf3))
+        figt, _ = v3.fig_stats_over_time(fr3, tt3, cf3)
         st.pyplot(figt)
+        plt.close(figt)
     st.stop()
 
 elif plot_mode == "Run viewer":
@@ -5016,7 +5090,7 @@ elif plot_mode == "Run viewer":
 
     st.sidebar.header("4. Colour")
     rv_metric = st.sidebar.selectbox("Colour particles by:", list(rv.METRICS), key="rv_mode")
-    rv_plain = st.sidebar.color_picker("Particle colour (Plain)", "#2a78d6", key="rv_plain")
+    rv_plain = st.sidebar.color_picker("Particle colour (Plain)", "#e34948", key="rv_plain")
     c1, c2 = st.sidebar.columns(2)
     rv_edge = c1.color_picker("Outline", "#ffffff", key="rv_edge")
     rv_bondc = c2.color_picker("Bonds", "#6b6a63", key="rv_bondc")
@@ -5065,7 +5139,9 @@ elif plot_mode == "Run viewer":
         f = os.path.join(rv_base, name)
         try:
             rv_runs.append((name, _rv_load(f, os.path.getmtime(os.path.join(f, "datax.csv")))))
-            rv_models.append(rv.RunModel.from_name(rv_regime, name))
+            _m = rv.RunModel.from_name(rv_regime, name)
+            _m.box = rv.run_box(f, *rv_runs[-1][1][:2])          # N = 576 etc. use a larger box
+            rv_models.append(_m)
         except Exception as e:
             st.error(f"Could not read {name}: {e}")
     if not rv_runs:

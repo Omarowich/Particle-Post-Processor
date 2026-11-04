@@ -41,6 +41,7 @@ class RunModel:
     ao: tuple | None = None
     F: float = 0.0                     # streaming body force F0 (N/m^3), Regime IV
     notes: list = field(default_factory=list)
+    box: float | None = None           # half box side (um); None = from the data (see run_box)
 
     @classmethod
     def from_name(cls, regime: str, name: str):
@@ -192,6 +193,29 @@ def load_run(folder: str):
     return x[:n], y[:n], t[:n]
 
 
+def run_box(folder: str | None = None, x=None, y=None) -> float:
+    """Half box side (um): box_half from the run's sim_config.json (Python runs; N = 576 uses 49 um), else the
+    smallest of 25 um (the COMSOL / N = 144 box) and the data extent that holds every particle."""
+    if folder:
+        f = os.path.join(folder, "sim_config.json")
+        if os.path.isfile(f):
+            try:
+                import json
+                with open(f) as fh:
+                    return float(json.load(fh).get("box_half", 25.0))
+            except Exception:
+                pass
+    if x is None:
+        return 25.0
+    ext = float(np.nanmax(np.abs(np.r_[np.ravel(x), np.ravel(y)])))
+    return 25.0 if ext <= 25.5 else float(np.ceil(ext + 0.5))
+
+
+def _box_of(model, x, y):
+    b = getattr(model, "box", None) if model is not None else None
+    return float(b) if b else run_box(None, x, y)
+
+
 def frame_at_time(t, t_s):
     return int(np.clip(np.searchsorted(t, t_s - 1e-9), 0, len(t) - 1))
 
@@ -319,7 +343,7 @@ def value_range(name, vals):
 @dataclass
 class DrawOptions:
     metric: str = "Plain"
-    plain_color: str = "#2a78d6"
+    plain_color: str = "#e34948"
     edge_color: str = "#ffffff"
     bond_color: str = "#6b6a63"
     trail_color: str = "#b8b6ad"
@@ -339,8 +363,10 @@ class DrawOptions:
     panel_size: float = 4.6
 
 
-def draw_frame(ax, x, y, t, k, opts: DrawOptions, *, title=None, model=None, box=25.0):
-    """Draw frame k of a run on ax (particles to scale). Returns (values, range) for the colour bar."""
+def draw_frame(ax, x, y, t, k, opts: DrawOptions, *, title=None, model=None, box=None):
+    """Draw frame k of a run on ax (particles to scale). Returns (values, range) for the colour bar.
+    box: half box side (um); None = the run's own box (model.box, else from the data)."""
+    box = _box_of(model, x, y) if box is None else box
     from matplotlib.collections import LineCollection, PatchCollection
     from matplotlib.patches import Circle, Rectangle
     P = np.c_[x[k], y[k]]
@@ -476,7 +502,7 @@ def live_figure(x, y, t, k, opts: DrawOptions, model=None, selected=None, height
     z, psi, lab, b = cache
     kind = METRICS[opts.metric][0]
     fig = go.Figure()
-    box = 25.0
+    box = _box_of(model, x, y)
     if opts.show_box:
         fig.add_shape(type="rect", x0=-box, y0=-box, x1=box, y1=box, line=dict(color="#c3c2b7", width=1))
     if opts.show_bonds and len(b):
@@ -524,7 +550,7 @@ def live_figure(x, y, t, k, opts: DrawOptions, model=None, selected=None, height
     for v in sel:
         sel_ring.append(dict(type="circle", xref="x", yref="y", x0=P[v, 0] - 1.15 * R, y0=P[v, 1] - 1.15 * R,
                              x1=P[v, 0] + 1.15 * R, y1=P[v, 1] + 1.15 * R,
-                             line=dict(color="#e34948", width=4 if v == primary else 2.5)))
+                             line=dict(color="#111111", width=4 if v == primary else 2.5)))
     fig.update_layout(shapes=shapes + sel_ring)
     if cbar_trace is not None:
         fig.add_trace(cbar_trace)

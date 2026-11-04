@@ -103,7 +103,7 @@ def frame_stats(P, rc=2.9, box=50.0, a=A_UM):
 def _box_geometry(cfg, P):
     half = float(cfg.get("box_half", 25.0))
     H = cfg.get("H")
-    top = float(H) if H not in (None, "", 0) else max(float(np.max(P[..., 2])) + A_UM, 4.0)
+    top = float(H) if H not in (None, "", 0) else max(float(np.max(np.asarray(P)[..., 2])) + A_UM, 4.0)
     return half, top
 
 
@@ -181,3 +181,218 @@ def fig_stats_over_time(frames, t, cfg=None, every=None):
         a.set_xlabel("t (τ$_B$)")
         a.spines[["top", "right"]].set_visible(False)
     return fig, S
+
+
+# --------------------------------------------------------------------------- views, snapshots and animations
+VIEWS = {"3D perspective": "3d", "Top (x–y)": "xy", "Side along x (y–z, field axis)": "yz",
+         "Side along y (x–z)": "xz", "Top + side": "xy+yz"}
+COLOR_BY = {"plain": "plain colour", "height": "height z (µm)", "coordination": "3D coordination",
+            "clusters": "largest cluster"}
+
+
+def particle_colours(P, by="plain", plain="#e34948", rc=2.9, rng=None, cmap="viridis"):
+    """RGBA per particle and the (lo, hi) value range (None for plain / clusters)."""
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_rgba
+    n = len(P)
+    if by == "plain":
+        return np.tile(to_rgba(plain), (n, 1)), None
+    if by == "clusters":
+        i, j = _pairs(P, rc)
+        lab = np.arange(n)
+
+        def root(u):
+            while lab[u] != u:
+                lab[u] = lab[lab[u]]
+                u = lab[u]
+            return u
+        for u, v in zip(i, j):
+            ru, rv = root(u), root(v)
+            if ru != rv:
+                lab[ru] = rv
+        roots = np.array([root(u) for u in range(n)])
+        big = roots == np.argmax(np.bincount(roots))
+        return np.array([to_rgba(plain) if b else to_rgba("#b8b6ad") for b in big]), None
+    if by == "height":
+        v = P[:, 2]
+    else:
+        i, j = _pairs(P, rc)
+        v = np.bincount(np.r_[i, j], minlength=n).astype(float)
+    lo, hi = rng if rng is not None else (float(v.min()), float(max(v.max(), v.min() + 1e-6)))
+    return plt.get_cmap(cmap)(np.clip((v - lo) / (hi - lo), 0, 1)), (lo, hi)
+
+
+def _draw_2d(ax, P, cols, plane, half, top, scale=1.0, show_box=True, edge="#ffffff"):
+    from matplotlib.collections import PatchCollection
+    from matplotlib.patches import Circle, Rectangle
+    a_, b_, depth = {"xy": (0, 1, 2), "yz": (1, 2, 0), "xz": (0, 2, 1)}[plane]
+    order = np.argsort(P[:, depth])                     # far particles first
+    ax.add_collection(PatchCollection([Circle((P[k, a_], P[k, b_]), A_UM * scale) for k in order],
+                                      facecolors=cols[order], edgecolors=edge, linewidths=0.3, zorder=3))
+    lim = {0: (-half, half), 1: (-half, half), 2: (0.0, top)}
+    if show_box:
+        (x0, x1), (y0, y1) = lim[a_], lim[b_]
+        ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False, ec="#c3c2b7", lw=1, zorder=1))
+    pad = 1.0
+    ax.set_xlim(lim[a_][0] - pad, lim[a_][1] + pad); ax.set_ylim(lim[b_][0] - pad, lim[b_][1] + pad)
+    ax.set_aspect("equal")
+    names = "xyz"
+    ax.set_xlabel(f"{names[a_]} (µm)" + (", field axis" if a_ == 1 else ""))
+    ax.set_ylabel(f"{names[b_]} (µm)" + (", field axis" if b_ == 1 else ""))
+
+
+def _draw_3d(ax, P, cols, half, top, elev=22, azim=-60, scale=1.0, show_box=True, panel_in=4.6):
+    span = max(2 * half, top)
+    pts_per_um = panel_in * 72 * 0.62 / span                 # rough: axes fill ~62 % of the panel
+    s = (2 * A_UM * scale * pts_per_um) ** 2
+    ax.scatter(P[:, 0], P[:, 1], P[:, 2], s=s, c=cols, edgecolors="none", depthshade=True)
+    if show_box:
+        xs = [-half, half, half, -half, -half]; ys = [-half, -half, half, half, -half]
+        for zz in (0.0, top):
+            ax.plot(xs, ys, [zz] * 5, color="#c3c2b7", lw=0.8)
+        for x0, y0 in zip(xs[:4], ys[:4]):
+            ax.plot([x0, x0], [y0, y0], [0, top], color="#c3c2b7", lw=0.8)
+    ax.set_xlim(-half, half); ax.set_ylim(-half, half); ax.set_zlim(0, top)
+    try:
+        ax.set_box_aspect((2 * half, 2 * half, max(top, 0.15 * 2 * half)))
+    except Exception:
+        pass
+    ax.view_init(elev=elev, azim=azim)
+    from matplotlib.ticker import MaxNLocator
+    ax.zaxis.set_major_locator(MaxNLocator(3))
+    ax.set_xlabel("x (µm)"); ax.set_ylabel("y (µm), field"); ax.set_zlabel("z (µm)")
+
+
+def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e34948", elev=22, azim=-60,
+                  scale=1.0, show_box=True, show_time=True, show_stats=True, show_name=True, panel=4.6,
+                  font=9, fixed_range=None, cmap="viridis", dpi=None):
+    """One figure, one column per run. runs: list of (label, (frames, t, cfg)). view: a value of VIEWS."""
+    import matplotlib.pyplot as plt
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+    n = len(runs)
+    rows = 2 if view == "xy+yz" else 1
+    # side views are as tall as the chamber (plus room for labels)
+    asp = max(max(_box_geometry(c_, f_)[1] / (2 * _box_geometry(c_, f_)[0]) for _, (f_, _t, c_) in runs), 0.08)
+    side_h = panel * asp + 0.9
+    h = {"xy+yz": panel + side_h, "yz": side_h + 0.4, "xz": side_h + 0.4}.get(view, panel)
+    fig = plt.figure(figsize=(panel * n + (0.9 if color_by in ("height", "coordination") else 0), h + 0.4), dpi=dpi,
+                     constrained_layout=True)
+    gs = fig.add_gridspec(rows, n, height_ratios=[panel, side_h] if rows == 2 else [1])
+    rng_all, axes = None, []
+    for c, ((label, (frames, t, cfg)), k) in enumerate(zip(runs, k_per_run)):
+        P = frames[k]
+        half, top = _box_geometry(cfg, frames)
+        cols, rng = particle_colours(P, color_by, plain, rng=fixed_range, cmap=cmap)
+        rng_all = rng or rng_all
+        planes = ["xy", "yz"] if view == "xy+yz" else [view]
+        for r, pl in enumerate(planes):
+            if pl == "3d":
+                ax = fig.add_subplot(gs[r, c], projection="3d")
+                _draw_3d(ax, P, cols, half, top, elev, azim, scale, show_box, panel)
+            else:
+                ax = fig.add_subplot(gs[r, c])
+                _draw_2d(ax, P, cols, pl, half, top, scale, show_box)
+                ax.spines[["top", "right"]].set_visible(False)
+            ax.tick_params(labelsize=font - 1)
+            axes.append(ax)
+            if r == 0:
+                lines = []
+                if show_name:
+                    lines.append(label.split("/")[-1])
+                info = []
+                if show_time:
+                    info.append(f"t = {t[k] / TAUB_S:.2f} τ$_B$")
+                if show_stats:
+                    s_, _ = frame_stats(P, box=2 * half)
+                    info.append(f"z = {s_['z3']:.2f}  S$_{{max}}$ = {s_['Smax']:.2f}  on top = {s_['f_on_top']:.0%}")
+                if info:
+                    lines.append("   ".join(info))
+                if lines:
+                    ax.set_title("\n".join(lines), loc="left", fontsize=font)
+    if color_by in ("height", "coordination") and rng_all is not None:
+        cb = fig.colorbar(ScalarMappable(Normalize(*rng_all), plt.get_cmap(cmap)), ax=axes, shrink=0.75)
+        cb.set_label(COLOR_BY[color_by], fontsize=font)
+    return fig
+
+
+def colour_range(runs, color_by, t_end_s=None):
+    """A fixed colour range for animations: over the first and last frame of every run."""
+    if color_by not in ("height", "coordination"):
+        return None
+    lo, hi = np.inf, -np.inf
+    for _, (frames, t, cfg) in runs:
+        ks = [0, len(t) - 1 if t_end_s is None else int(np.clip(np.searchsorted(t, t_end_s), 0, len(t) - 1))]
+        for k in ks:
+            _, r = particle_colours(frames[k], color_by)
+            lo, hi = min(lo, r[0]), max(hi, r[1])
+    return lo, hi
+
+
+def make_gif3d(runs, view="3d", *, t_start_s, t_end_s, n_frames=60, fps=12, dpi=90, orbit=0.0, progress=None,
+               azim=-60, **kw):
+    """Animated GIF (bytes) of the runs side by side. orbit: degrees the camera turns over the animation (3D view)."""
+    import io
+    import matplotlib.pyplot as plt
+    from PIL import Image
+    times = np.linspace(t_start_s, t_end_s, int(n_frames))
+    if kw.get("fixed_range") is None:
+        kw["fixed_range"] = colour_range(runs, kw.get("color_by", "plain"), t_end_s)
+    frames, size = [], None
+    for i, ts in enumerate(times):
+        ks = [int(np.clip(np.searchsorted(r[1][1], ts - 1e-9), 0, len(r[1][1]) - 1)) for r in runs]
+        fig = make_figure3d(runs, ks, view, azim=azim + orbit * i / max(len(times) - 1, 1), **kw)
+        if size is None:
+            size = fig.get_size_inches()
+        fig.set_size_inches(size)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=dpi)
+        plt.close(fig)
+        buf.seek(0)
+        frames.append(Image.open(buf).convert("RGB"))
+        if progress:
+            progress((i + 1) / len(times))
+    w = min(f.width for f in frames); h = min(f.height for f in frames)
+    frames = [f.crop((0, 0, w, h)).convert("P", palette=Image.ADAPTIVE, colors=255) for f in frames]
+    out = io.BytesIO()
+    frames[0].save(out, format="GIF", save_all=True, append_images=frames[1:],
+                   duration=int(round(1000 / max(fps, 1))), loop=0, disposal=2)
+    return out.getvalue()
+
+
+def fig_3d_animated(frames, t, cfg=None, color_by="plain", plain="#e34948", n_max=80, title=""):
+    """Plotly 3D figure with a play button and time slider (rotate / zoom while it plays)."""
+    import plotly.graph_objects as go
+    from matplotlib.colors import to_hex
+    cfg = cfg or {}
+    half, top = _box_geometry(cfg, frames)
+    idx = np.unique(np.linspace(0, len(t) - 1, min(n_max, len(t))).astype(int))
+    rng = colour_range([("", (frames, t, cfg))], color_by)
+
+    def trace(k):
+        cols, _ = particle_colours(frames[k], color_by, plain, rng=rng)
+        return go.Scatter3d(x=frames[k][:, 0], y=frames[k][:, 1], z=frames[k][:, 2], mode="markers",
+                            marker=dict(size=4 if frames.shape[1] > 500 else 6, color=[to_hex(c) for c in cols],
+                                        line=dict(width=0)), hoverinfo="skip")
+    xs, ys = [-half, half, half, -half, -half], [-half, -half, half, half, -half]
+    box = [go.Scatter3d(x=xs, y=ys, z=[zz] * 5, mode="lines", line=dict(color="#999", width=2), hoverinfo="skip")
+           for zz in (0.0, top)]
+    box += [go.Scatter3d(x=[x0, x0], y=[y0, y0], z=[0, top], mode="lines", line=dict(color="#999", width=2),
+                         hoverinfo="skip") for x0, y0 in zip(xs[:4], ys[:4])]
+    fig = go.Figure(data=[trace(idx[0])] + box,
+                    frames=[go.Frame(data=[trace(k)], traces=[0], name=f"{t[k] / TAUB_S:.2f}") for k in idx])
+    steps = [dict(method="animate", label=f"{t[k] / TAUB_S:.2f}",
+                  args=[[f"{t[k] / TAUB_S:.2f}"], dict(mode="immediate", frame=dict(duration=0, redraw=True))])
+             for k in idx]
+    fig.update_layout(title=title, height=640, margin=dict(l=0, r=0, t=40, b=0), showlegend=False,
+                      scene=dict(xaxis_title="x (µm)", yaxis_title="y (µm) – field axis", zaxis_title="z (µm)",
+                                 xaxis=dict(range=[-half, half]), yaxis=dict(range=[-half, half]),
+                                 zaxis=dict(range=[0, top]), aspectmode="manual",
+                                 aspectratio=dict(x=1, y=1, z=max(top / (2 * half), 0.15))),
+                      updatemenus=[dict(type="buttons", showactive=False, x=0.02, y=0.02, xanchor="left", yanchor="bottom",
+                                        buttons=[dict(label="▶ play", method="animate",
+                                                      args=[None, dict(frame=dict(duration=120, redraw=True), fromcurrent=True)]),
+                                                 dict(label="⏸", method="animate",
+                                                      args=[[None], dict(mode="immediate", frame=dict(duration=0))])])],
+                      sliders=[dict(steps=steps, currentvalue=dict(prefix="t (τB) = "), x=0.15, len=0.8)])
+    return fig
