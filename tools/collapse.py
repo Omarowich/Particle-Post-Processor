@@ -1,0 +1,56 @@
+"""Does a contact-shell second virial coefficient B2c* (attraction counted only within r_c of contact) collapse the
+order of all attraction models onto one curve, where the full B2* does not?"""
+import sys, numpy as np, pandas as pd
+sys.path.insert(0, "/home/claude/particle-post-processor"); sys.path.insert(0, "/home/claude/particle-post-processor/simulation")
+import sim_gui as sg, airpods_bd as bd
+T = "/mnt/user-data/uploads/AIRPODS Paper 2627/Data/_tools/"
+base = {"core": "coulomb", "core_Z": 100, "q": 0.05, "phi_p": 0.1, "A": 0.0, "lj_cutoff_sigma": 3.0}
+EXTRA = {"2n-n LJ": ("LJ2n", "n", 57.55), "Yukawa": ("YUK", "kappa", 17.28), "square well": ("SW", "width", 0.03319)}
+r = np.linspace(1.5, 12, 120001)
+cache = {}
+def cfg(model, A):
+    if model == "LJ 12-6":
+        return {**base, "potential": "LJ", "A": A}
+    if model.startswith("AO"):
+        q = float(model.split("=")[1]); phi, _ = sg.match_phi({**base, "q": q}, A); return {**base, "potential": "AO", "q": q, "phi_p": phi}
+    pot, pk, pv = EXTRA[model]; c = {**base, "potential": pot, pk: pv, "eps": 1.0}
+    e, _ = sg.match_eps(c, A); return {**c, "eps": e}
+def b2s(model, A, cuts):
+    key = (model, A)
+    if key not in cache:
+        _, U, _ = sg.potential_curve(cfg(model, A), r); cache[key] = U
+    U = cache[key]; out = []
+    for rc in cuts:
+        Uc = np.where(r <= rc, U, 0.0) if rc else U
+        f = 1 - np.exp(-np.clip(Uc, -50, 700))
+        out.append((np.trapezoid(f * r, r) + r[0] ** 2 / 2) / (bd.SIGMA ** 2 / 2))
+    return out
+CUTS = [None, 2.1, 2.2, 2.4, 2.6]          # full, 1.05, 1.10, 1.20, 1.30 sigma
+rows = []
+for f, reg, T_ in (("states_RegimeI.csv", "I", 10.0), ("states_RegimeIII.csv", "III", 10.0)):
+    d = pd.read_csv(T + f); d = d[np.isclose(d.t_tauB, T_) & (d.A > 0)]
+    for (m, A), g in d.groupby(["model", "A"]):
+        try:
+            bs = b2s(m, float(A), CUTS)
+        except Exception as ex:
+            continue
+        rows.append(dict(regime=reg, model=m, A=A, psi6=g.psi6.mean(), psd=g.psi6.std(), z=g.z.mean(),
+                         **{("B2" if c is None else f"B2c_{c/2:.2f}"): b for c, b in zip(CUTS, bs)}))
+R = pd.DataFrame(rows); R.to_csv("/home/claude/sim/b2c/collapse.csv", index=False)
+# onset of order (psi6 = 0.8 crossing) per model, in each variable; spread across models = how well it collapses
+cols = [c for c in R.columns if c.startswith("B2")]
+for reg in ("I", "III"):
+    print("Regime", reg)
+    on = {}
+    for m, g in R[R.regime == reg].groupby("model"):
+        g = g.sort_values("A")
+        for c in cols:
+            x = -g[c].values; y = g.psi6.values
+            i = np.where((y[:-1] < 0.8) & (y[1:] >= 0.8))[0]
+            if len(i):
+                k = i[0]; xx = np.exp(np.interp(0.8, [y[k], y[k + 1]], [np.log(max(x[k], 1e-3)), np.log(max(x[k + 1], 1e-3))]))
+                on.setdefault(c, {})[m] = -xx
+    for c, dct in on.items():
+        v = np.array(list(dct.values()))
+        print(f"  {c:10s} onset per model: " + ", ".join(f"{k}: {x:.2f}" for k, x in dct.items()) +
+              f"  -> spread (max/min of |onset|) = {np.abs(v).max() / np.abs(v).min():.2f}")
