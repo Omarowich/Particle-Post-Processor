@@ -161,7 +161,7 @@ def run_folder_name(c, seed):
     ao = (float(c["q"]), float(c["phi_p"])) if c["potential"] == "AO" else None
     reg = regime_of(c)
     name = bd.run_name(float(c["A"]) if c["potential"] != "none" else 0.0, float(c["T_tauB"]), float(c["dn_nm"]),
-                       ao, seed, int(c["steps_per_tauB"]), reg, float(c.get("flow_F", 0)),
+                       ao, seed, int(c["steps_per_tauB"]), reg.split("_")[0], float(c.get("flow_F", 0)),
                        att_of(c), float(c.get("polydispersity", 0) or 0))
     tag = c.get("tag", "").strip().strip("_")
     if int(c.get("dim", 2)) == 3:
