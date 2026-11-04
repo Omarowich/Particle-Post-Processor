@@ -92,3 +92,37 @@ def chamber_force(H=20e-6, *, top="hard", h=1e-6, d_n=4000e-9, freq=20e6, c0=203
     if match_2d:
         gf.scale_abs = af.match_F0(gf, d_n * 1e9)
     return gf, axes, p
+
+
+def make_field_file(drive, out_dir, *, freq_MHz=20.0, lid="glass", H_um=20.0, box_half_um=25.0, c_saw=3990.0,
+                    c0=None, rho0=1180.0, rho_p=1050.0, c_p=2350.0, h_um=None, Z_pdms=1.0e6):
+    """Solve the chamber field and save the Gor'kov force grid (npz) for sim_runner's arf3d_file.
+    drive: 'side' (the two y walls move along y, COMSOL set-up) or 'idt' (standing SAW on the floor, LiNbO3 c_SAW).
+    lid: 'glass' (hard), 'pdms' (impedance Z_pdms) or 'absorb' (Z = rho0 c0). The field is uniform in x, so it is
+    solved on a thin y-z slab and copied along x. Returns (path, info dict). Strength: scaled to the 2D fit by the run."""
+    import os
+    import arf3d_field as af
+    c0 = (2030.0 if drive == "side" else 1850.0) if c0 is None else c0
+    f = freq_MHz * 1e6
+    Ly, H = 2 * box_half_um * 1e-6, H_um * 1e-6
+    h = (h_um or (0.5 if H_um <= 10 else 1.0)) * 1e-6
+    kw = dict(top="hard") if lid == "glass" else dict(top="impedance", Z_top=Z_pdms if lid == "pdms" else rho0 * c0)
+    info = {"drive": drive, "freq_MHz": freq_MHz, "lid": lid, "H_um": H_um, "box_half_um": box_half_um, "c0": c0}
+    if drive == "idt":
+        k = 2 * np.pi * f / c_saw
+        info.update(k_saw_per_um=k * 1e-6, node_spacing_um=np.pi / k * 1e6,
+                    rayleigh_angle_deg=float(np.degrees(np.arcsin(min(1.0, c0 / c_saw)))))
+        axes, p = solve_box(Lx=2e-6, Ly=Ly, H=H, h=h, freq=f, c0=c0, rho0=rho0, actuate="ssaw", k_saw=k, **kw)
+    else:
+        info.update(node_spacing_um=c0 / f / 2 * 1e6)
+        axes, p = solve_box(Lx=2e-6, Ly=Ly, H=H, h=h, freq=f, c0=c0, rho0=rho0, actuate="y", **kw)
+    f1, f2 = af.contrast_factors(rho_p, c_p, rho0, c0)
+    F = af.force_grid(axes, p, None, f1=f1, f2=f2, rho0=rho0, c0=c0, freq=f)
+    xs = np.linspace(-box_half_um * 1e-6, box_half_um * 1e-6, 21)
+    Fe = np.repeat(F[F.shape[0] // 2:F.shape[0] // 2 + 1], len(xs), axis=0)
+    Fe[..., 0] = 0.0
+    os.makedirs(out_dir, exist_ok=True)
+    name = f"field_{'SSAW' if drive == 'idt' else 'SIDE'}{freq_MHz:g}_H{H_um:g}_box{2 * box_half_um:g}_{lid}_PS.npz"
+    path = os.path.join(out_dir, name)
+    af.save_force(path, (xs, axes[1], axes[2]), Fe)
+    return path, info

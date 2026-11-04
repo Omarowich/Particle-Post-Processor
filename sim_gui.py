@@ -17,11 +17,17 @@ import sim_runner as sr  # noqa: E402
 
 bd = sr.bd
 
-POTENTIALS = {"LJ": "Lennard-Jones (ε = A k_BT, σ = 2a)", "AO": "Asakura–Oosawa depletion (q, φ_p)",
-              "none": "no attraction (core only)"}
+POTENTIALS = {"LJ": "Lennard-Jones 12-6 (ε = A k_BT, σ = 2a)", "AO": "Asakura–Oosawa depletion (q, φ_p)",
+              "LJ2n": "2n–n Lennard-Jones (Noro–Frenkel; n, ε)", "SW": "continuous square well (width, ε)",
+              "YUK": "attractive Yukawa (κ, ε)", "none": "no attraction (core only)"}
+ATT_PARAM = {"LJ2n": ("n", "exponent n", 57.55), "SW": ("width", "well width (µm)", 0.03319),
+             "YUK": ("kappa", "κ (1/µm)", 17.28)}
+FIELD_SHAPES = {"1D": "fitted 1D standing wave (same at every height)", "side": "computed: side-wall drive (bulk wave)",
+                "idt": "computed: IDT drive (standing SAW from the floor)", "file": "field file (.npz or COMSOL .csv)"}
+LIDS = {"glass": "glass (reflects)", "pdms": "PDMS (Z = 1 MRayl)", "absorb": "absorbing (Z = ρ₀c₀)"}
 CORES = {"coulomb": "Coulomb, Z = 100, below 2a (= COMSOL)", "phs": "pseudo-hard sphere (Mie 50/49)",
          "wca": "soft WCA (old)", "none": "no core"}
-STARTS = {"grid": "square grid (like COMSOL)", "random": "random, minimum distance",
+STARTS = {"grid": "square grid (like COMSOL)", "grid3d": "stacked square layers (3D)", "random": "random, minimum distance",
           "aaf": "band of the COMSOL Regime III runs", "run": "a frame of an existing run",
           "file": "CSV file with x, y columns"}
 
@@ -38,6 +44,9 @@ def potential_curve(c, r=None):
     A = float(c["A"]) if c["potential"] == "LJ" else 0.0
     core = c["core"] if c["core"] != "none" else "off"
     fr = bd.radial_force(r, A, ao, core)
+    att = sr.att_of(c) if c["potential"] in ATT_PARAM else None
+    if att:
+        fr = fr + bd.att_force(r, att)
     U = np.zeros_like(r)
     U[:-1] = np.cumsum((0.5 * (fr[1:] + fr[:-1]) * np.diff(r))[::-1])[::-1]
     return r, U, fr
@@ -64,10 +73,23 @@ def match_phi(c, A_target):
         return float("nan"), target
 
 
+def match_eps(c, A_target):
+    """Well depth eps of an extra model (LJ2n / SW / YUK, range fixed) with the same B2* as LJ at A_target."""
+    from scipy.optimize import brentq
+    target = b2_star({**c, "potential": "LJ", "A": A_target})
+    f = lambda e: b2_star({**c, "eps": e}) - target
+    try:
+        return brentq(f, 0.05, 60.0, xtol=1e-4), target
+    except ValueError:
+        return float("nan"), target
+
+
 def suggested_steps(c):
     if c["potential"] == "AO":
         q = float(c["q"])
         return 32000 if q >= 0.2 else (128000 if q >= 0.1 else 256000)
+    if c["potential"] in ATT_PARAM:          # short-range models: same step as AO q = 0.05
+        return 256000
     return 4000
 
 

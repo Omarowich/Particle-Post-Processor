@@ -4518,7 +4518,12 @@ elif plot_mode == "Run simulation":
                  "sim_out": 100, "sim_seeds": "1, 2, 3", "sim_stream": False, "sim_F": 3000.0, "sim_workers": max(1, min(3, (os.cpu_count() or 2) - 1)),
                  "sim_regime": "auto", "sim_tag": "", "sim_box": float(DEF["box_half"]), "sim_TK": float(DEF["T_K"]),
                  "sim_eta": float(DEF["eta"]) * 1e3, "sim_rad": float(DEF["radius_um"]),
-                 "sim_cap": float(DEF["max_step_um"])}.items():
+                 "sim_cap": float(DEF["max_step_um"]),
+                 # paper-2 extensions: extra attraction models, polydispersity, 3D chamber, 3D fields, streaming
+                 "sim_eps": 5.0, "sim_attp": 0.0, "sim_match_eps": True, "sim_pd": 0.0, "sim_dim": "2D",
+                 "sim_H": 20.0, "sim_drho": 52.0, "sim_layers": 1, "sim_dz": 3.0, "sim_fshape": "1D", "sim_freq": 20.0,
+                 "sim_lid": "absorb", "sim_csaw": 3990.0, "sim_ffile": "", "sim_fprofile": "uniform",
+                 "sim_rayA": 0.0, "sim_secE": 0.0, "sim_nl": False}.items():
         _d(k, v)
 
     def _apply_config(c):
@@ -4543,6 +4548,19 @@ elif plot_mode == "Run simulation":
         SS.sim_runfolder = stt.get("folder", ""); SS.sim_runt = float(stt.get("t_tauB", 1000.0))
         SS.sim_file = stt.get("path", "")
         SS.sim_seeds = ", ".join(str(s) for s in c.get("seeds", [c.get("run_seed", 1)]))
+        if c.get("potential") in sg.ATT_PARAM:
+            SS.sim_eps = float(c.get("eps", 5.0)); SS.sim_attp = float(c.get(sg.ATT_PARAM[c["potential"]][0], 0.0))
+            SS.sim_match_eps = False
+        SS.sim_pd = float(c.get("polydispersity", 0) or 0)
+        SS.sim_dim = "3D" if int(c.get("dim", 2)) == 3 else "2D"
+        if c.get("H") not in (None, "", 0):
+            SS.sim_H = float(c["H"])
+        SS.sim_drho = float(c.get("drho", SS.sim_drho))
+        SS.sim_layers = int(stt.get("layers", 1)); SS.sim_dz = float(stt.get("dz", 3.0))
+        if c.get("arf3d_file"):
+            SS.sim_fshape = "file"; SS.sim_ffile = c["arf3d_file"]
+        SS.sim_fprofile = c.get("flow_profile", "uniform"); SS.sim_rayA = float(c.get("rayleigh_A", 0) or 0)
+        SS.sim_secE = float(c.get("secondary_E0", 0) or 0); SS.sim_nl = c.get("engine", "dense") == "nl"
 
     st.header("Run simulation")
     st.caption("Python Brownian dynamics (`simulation/airpods_bd.py`), the same code as the BD runs. "
@@ -4597,11 +4615,40 @@ elif plot_mode == "Run simulation":
                                    "otherwise untick the box and set φ_p yourself.")
                 st.number_input("φ_p (polymer reservoir volume fraction)", 0.0, 20.0, step=0.01, format="%.3f",
                                 key="sim_phi", disabled=match and not match_failed)
+            elif pot in sg.ATT_PARAM:
+                pk, plab, pdef = sg.ATT_PARAM[pot]
+                if SS.get("sim_attp_for") != pot:          # new model picked: its default range (matched to AO q = 0.05)
+                    SS.sim_attp = pdef; SS.sim_attp_for = pot
+                st.number_input(plab, 0.0, 1000.0, step=0.5 if pot == "LJ2n" else 0.001, format="%.4f" if pot == "SW" else "%.2f",
+                                key="sim_attp", help="Defaults give the Noro–Frenkel range of AO q = 0.05 (λ* ≈ 1.02).")
+                mt = st.checkbox("Match ε to an LJ depth by B₂*", key="sim_match_eps")
+                A = st.number_input("matched LJ A (k_BT)" if mt else "A for the run name (k_BT)", 0.0, 50.0, step=0.25, key="sim_A")
+                if mt and A > 0:
+                    e_, tgt_ = sg.match_eps({"potential": pot, pk: float(SS.sim_attp), "eps": 1.0, "q": SS.sim_q,
+                                             "phi_p": SS.sim_phi, "core": SS.sim_core, "core_Z": SS.sim_Z, "A": 0.0}, A)
+                    if np.isfinite(e_):
+                        SS.sim_eps = round(float(e_), 3)
+                        st.caption(f"ε = **{e_:.3f} k_BT** gives B₂* = {tgt_:.2f} (= LJ A = {A:g}).")
+                    else:
+                        match_failed = True
+                        st.warning("No ε matches this A; untick the box and set ε yourself.")
+                st.number_input("ε, well depth (k_BT)", 0.0, 100.0, step=0.1, key="sim_eps", disabled=mt and not match_failed)
             else:
                 A = 0.0
             st.selectbox("Repulsive core", list(sg.CORES), format_func=sg.CORES.get, key="sim_core")
             if SS.sim_core == "coulomb":
                 st.number_input("Charge number Z", 1, 1000, step=10, key="sim_Z")
+            st.number_input("Polydispersity (relative SD of the radius)", 0.0, 0.3, step=0.05, key="sim_pd",
+                            help="Gaussian radii cut at ±2 SD, drawn from the seed; 0 = all particles equal.")
+            st.subheader("Dimension")
+            dim3 = st.radio("Model", ["2D", "3D"], horizontal=True, key="sim_dim",
+                            help="3D: floor (and lid at height H), buoyant weight, neighbour lists. Folders get _3D.") == "3D"
+            if dim3:
+                st.number_input("Chamber height H (µm; 0 = open top)", 0.0, 500.0, step=1.0, key="sim_H")
+                st.number_input("Δρ = ρ_particle − ρ_liquid (kg/m³; 52 = PS, 0 = density-matched)", -500.0, 2000.0,
+                                step=1.0, key="sim_drho")
+            else:
+                st.checkbox("Neighbour lists (faster for N > 300, same physics)", key="sim_nl")
         with c2:
             st.subheader("Acoustic field")
             field = st.checkbox("Acoustic radiation force on", key="sim_field")
@@ -4614,6 +4661,40 @@ elif plot_mode == "Run simulation":
                 with st.expander("Force law F_y = −F₀ (d_n/4000 nm)² sin(k y)"):
                     st.number_input("F₀ at 4000 nm (k_BT/µm)", 0.0, 1000.0, step=0.5, key="sim_F0")
                     st.number_input("k (1/µm)", 0.0, 2.0, step=0.001, format="%.3f", key="sim_k")
+                if dim3:
+                    fsh = st.selectbox("3D field shape", list(sg.FIELD_SHAPES), format_func=sg.FIELD_SHAPES.get, key="sim_fshape",
+                                       help="Computed fields: Helmholtz solver for this chamber (simulation/acoustic3d.py) → "
+                                            "Gor'kov force; strength scaled to F₀ at mid-height. See paper Fig. 2.")
+                    if fsh in ("side", "idt"):
+                        st.number_input("Frequency (MHz)", 1.0, 200.0, step=1.0, key="sim_freq")
+                        st.selectbox("Lid", list(sg.LIDS), format_func=sg.LIDS.get, key="sim_lid")
+                        if fsh == "idt":
+                            st.number_input("SAW speed of the substrate (m/s; LiNbO₃ 3990)", 1000.0, 10000.0, step=10.0, key="sim_csaw")
+                            ns_ = SS.sim_csaw / (SS.sim_freq * 1e6) / 2 * 1e6
+                            st.caption(f"Nodes {ns_:.0f} µm apart; pick a box width that is an odd multiple of half the node "
+                                       f"spacing so the side walls sit at antinodes (e.g. box half-width {ns_ / 2:.1f} µm).")
+                        if st.button("Compute field", key="sim_fbtn"):
+                            import sys as _sys
+                            _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(sg.__file__)), "simulation"))
+                            import acoustic3d as _a3
+                            with st.spinner("Solving the chamber field..."):
+                                try:
+                                    _pth, _inf = _a3.make_field_file(fsh, os.path.join(sim_root, "_fields"), freq_MHz=float(SS.sim_freq),
+                                                                     lid=SS.sim_lid, H_um=float(SS.sim_H) or 20.0,
+                                                                     box_half_um=float(SS.sim_box), c_saw=float(SS.sim_csaw))
+                                    SS.sim_ffile = _pth; SS.sim_finfo = _inf
+                                except Exception as ex:
+                                    st.error(f"Could not compute the field: {ex}")
+                        if SS.sim_ffile and SS.get("sim_finfo", {}).get("drive") == fsh:
+                            st.caption(f"Using `{os.path.basename(SS.sim_ffile)}` · " + ", ".join(
+                                f"{k_} {v_:.3g}" if isinstance(v_, float) else f"{k_} {v_}" for k_, v_ in SS.sim_finfo.items()))
+                        else:
+                            st.info("Press 'Compute field' (needed once per frequency, lid, H and box).")
+                    elif fsh == "file":
+                        st.text_input("Field file (.npz force grid or COMSOL .csv export)", key="sim_ffile")
+            st.number_input("Secondary radiation force: acoustic energy density (k_BT/µm³; 0 = off)", 0.0, 1e5,
+                            step=50.0, key="sim_secE", help="Particle–particle (dipole) radiation force; ≈ 390 nominal, "
+                                                             "1663 upper bound at d_n = 4000 nm. Off in the paper runs.")
             stream = st.checkbox("Acoustic streaming flow (Regime IV)", key="sim_stream",
                                  help="The streaming flow of your COMSOL Regime IV model (stationary Laminar Flow with the body force F0), "
                                       "exported on a 201 × 201 grid; F is the body force density in N/m³.")
@@ -4623,12 +4704,28 @@ elif plot_mode == "Run simulation":
                             f"fastest {78.8 * SS.sim_F / 1e5:.2f} µm/s. ") if sg.bd.ASF_SOURCE == "comsol" and
                            os.path.isfile(sg.bd.ASF_FIELD_FILE) else
                            f"Fitted two-vortex flow: fastest {2 * sg.bd.ASF_U_PER_1000F * SS.sim_F / 1000:.2f} µm/s. ")
+                if dim3:
+                    st.radio("Height profile of the flow", ["uniform", "parabolic"], horizontal=True, key="sim_fprofile",
+                             format_func={"uniform": "same at every height", "parabolic": "no slip at floor and lid"}.get)
+            if dim3:
+                st.number_input("Rayleigh streaming rolls between floor and lid (µm/s; 0 = off)", 0.0, 100.0, step=0.1,
+                                key="sim_rayA", help="Boundary-driven streaming of the standing wave (needs a lid). "
+                                                     "Nominal 0.54, upper bound 2.1 µm/s at d_n = 4000 nm.")
             st.subheader("Start")
             sk = st.selectbox("Start positions", list(sg.STARTS), format_func=sg.STARTS.get, key="sim_start")
             if sk == "grid":
                 st.number_input("Particles per side", 2, 40, key="sim_nside")
                 st.number_input("Spacing (µm)", 2.0, 20.0, step=0.5, key="sim_spacing")
                 start = {"kind": "grid", "n_side": int(SS.sim_nside), "spacing": float(SS.sim_spacing)}
+            elif sk == "grid3d":
+                st.number_input("Particles per side", 2, 60, key="sim_nside")
+                st.number_input("Spacing (µm)", 2.0, 20.0, step=0.5, key="sim_spacing")
+                st.number_input("Layers", 1, 50, key="sim_layers")
+                st.number_input("Layer spacing (µm)", 2.0, 20.0, step=0.5, key="sim_dz")
+                start = {"kind": "grid3d", "n_side": int(SS.sim_nside), "spacing": float(SS.sim_spacing),
+                         "layers": int(SS.sim_layers), "dz": float(SS.sim_dz)}
+                if not dim3:
+                    st.warning("Stacked layers need the 3D model.")
             elif sk == "random":
                 st.number_input("Number of particles", 2, 2000, key="sim_nrand")
                 st.number_input("Minimum distance (µm)", 2.0, 10.0, step=0.1, key="sim_dmin")
@@ -4685,7 +4782,16 @@ elif plot_mode == "Run simulation":
                "out_per_tauB": int(SS.sim_out), "seeds": seeds, "workers": int(SS.sim_workers),
                "regime": SS.sim_regime, "tag": SS.sim_tag.strip().strip("_"), "out_root": sim_root,
                "box_half": float(SS.sim_box), "T_K": float(SS.sim_TK), "eta": float(SS.sim_eta) * 1e-3,
-               "radius_um": float(SS.sim_rad), "max_step_um": float(SS.sim_cap)}
+               "radius_um": float(SS.sim_rad), "max_step_um": float(SS.sim_cap),
+               "polydispersity": float(SS.sim_pd), "secondary_E0": float(SS.sim_secE),
+               "engine": "nl" if (dim3 or SS.sim_nl) else "dense"}
+        if pot in sg.ATT_PARAM:
+            cfg.update({"eps": float(SS.sim_eps), sg.ATT_PARAM[pot][0]: float(SS.sim_attp)})
+        if dim3:
+            cfg.update({"dim": 3, "H": float(SS.sim_H) if SS.sim_H > 0 else None, "drho": float(SS.sim_drho),
+                        "flow_profile": SS.sim_fprofile, "rayleigh_A": float(SS.sim_rayA)})
+            if field and SS.sim_fshape in ("side", "idt", "file") and SS.sim_ffile:
+                cfg.update({"arf3d_file": clean_path(SS.sim_ffile), "arf3d_match": True})
 
         # ---- sanity checks before anything runs ----
         try:

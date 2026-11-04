@@ -132,10 +132,12 @@ def regime_of(c):
     if c["regime"] != "auto":
         return c["regime"]
     if float(c.get("flow_F", 0)) > 0:
-        return "ASF"
-    if float(c["dn_nm"]) > 0:
-        return "ARF"
-    return "AAF" if c["start"].get("kind") in ("aaf", "run") else "NAF"
+        reg = "ASF"
+    elif float(c["dn_nm"]) > 0:
+        reg = "ARF"
+    else:
+        reg = "AAF" if c["start"].get("kind") in ("aaf", "run") else "NAF"
+    return reg + "_3D" if int(c.get("dim", 2)) == 3 else reg
 
 
 ATT_MODELS = {"LJ2n": "n", "SW": "width", "YUK": "kappa"}
