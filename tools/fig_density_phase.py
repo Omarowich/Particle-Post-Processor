@@ -2,13 +2,19 @@
 Uses the app's phase-diagram code (regime_state_model.fit_phase_map / fig_phase_map)."""
 import sys, os, numpy as np, pandas as pd, matplotlib
 matplotlib.use("Agg"); import matplotlib.pyplot as plt
-sys.path.insert(0, sys.argv[4] if len(sys.argv) > 4 else "/home/claude/particle-post-processor")
+sys.path.insert(0, sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != '-' else "/home/claude/particle-post-processor")
 import regime_state_model as rsm
 d = pd.read_csv(sys.argv[1]); r = pd.read_csv(sys.argv[2]); out = sys.argv[3]; T = 10.0
 d["N"] = d.folder.str.extract(r"_N(\d+)_")[0].astype(int)
 r = r[r.model.isin(["AO q=0.05", "LJ 12-6"])].copy(); r["N"] = 144
 a = pd.concat([d, r]); a = a[np.isclose(a.t_tauB, T) & (a.A <= 7)].copy()
 a["phi_area"] = (a.N * np.pi / 2500).round(2); a["name"] = a.folder; a["t_eval_tauB"] = T
+a["source"] = "Python"
+if len(sys.argv) > 5 and os.path.isfile(sys.argv[5]):           # Anam's COMSOL LJ runs (hollow markers)
+    c = pd.read_csv(sys.argv[5]); c = c[(c.A <= 7) & np.isclose(c.t_tauB, T)].copy()
+    c["model"] = "LJ 12-6"; c["phi_area"] = c.phi; c["name"] = "COMSOL_" + c.spacing + "_A" + c.A.astype(str)
+    c["t_eval_tauB"] = T; c["source"] = "COMSOL"
+    a = pd.concat([a, c[["model", "A", "phi_area", "name", "t_eval_tauB", "state", "z", "Smax", "psi6", "source"]]])
 phi_net = np.pi / 2.9 ** 2
 fig, ax = plt.subplots(1, 2, figsize=(9.6, 4.4), constrained_layout=True, sharey=True)
 for k, (m, lab) in enumerate((("AO q=0.05", "AO q = 0.05"), ("LJ 12-6", "LJ 12-6"))):
