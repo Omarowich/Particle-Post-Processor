@@ -207,7 +207,20 @@ def run_one(args):
 
     _status(job_dir, key, state="running", name=name, folder=folder, frac=0.0)
     try:
-        x, y, t = bd.simulate(A, float(c["dn_nm"]), float(c["T_tauB"]), ao=ao,
+        use_nl = c.get("engine", "dense") == "nl"
+        if use_nl:
+            try:
+                import bd_engine as be
+            except ImportError:                      # no scipy: fall back to the dense pair search (same physics)
+                use_nl = False
+        if use_nl:
+            fr, t = be.simulate(A, float(c["dn_nm"]), float(c["T_tauB"]), ao=ao, att=att, radii=radii,
+                                steps_per_tauB=int(c["steps_per_tauB"]), out_per_tauB=int(c["out_per_tauB"]),
+                                seed=seed, core=c["core"] if c["core"] != "none" else "off", start=P0,
+                                progress=progress, flow_F=float(c.get("flow_F", 0)), dim=2)
+            x, y = fr[:, :, 0], fr[:, :, 1]
+        else:
+          x, y, t = bd.simulate(A, float(c["dn_nm"]), float(c["T_tauB"]), ao=ao,
                               steps_per_tauB=int(c["steps_per_tauB"]), out_per_tauB=int(c["out_per_tauB"]),
                               seed=seed, core=c["core"] if c["core"] != "none" else "off", verbose=False,
                               start=P0, progress=progress, flow_F=float(c.get("flow_F", 0)),
@@ -353,12 +366,19 @@ def run_queue(qdir, workers=None, priorities=None, out=None, watch=False, poll_s
         dflt_out = out or (os.path.dirname(os.path.dirname(os.path.abspath(qdir)))
                            if os.path.basename(os.path.dirname(os.path.abspath(qdir))) == "_batches" else None)
         w = int(workers or 4)
-        tries = [w] + [x for x in (w - 1, w - 2) if x >= 2]   # out of memory: retry with fewer at once
+        wf = os.path.join(qdir, "WORKERS")          # a file with a number overrides --workers (read every file)
+        if os.path.isfile(wf):
+            try:
+                w = int(open(wf).read().strip())
+            except ValueError:
+                pass
+        # out of memory: retry (finished runs are skipped), slowly going down to one run at a time
+        tries = [w, w] + [x for x in range(w - 1, 0, -1)] + [1] * 6
         ok = False
         for k, wk in enumerate(tries):
             if k:
                 print(f"{time.strftime('%H:%M')}  retrying {f} with {wk} at once (finished runs are skipped)")
-                time.sleep(60)
+                time.sleep(120)
             try:
                 ok = main(src, wk, priorities, dflt_out) is not False
             except Exception:
