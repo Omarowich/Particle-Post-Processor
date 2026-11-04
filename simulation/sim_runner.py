@@ -110,6 +110,10 @@ def start_positions(st, run_seed):
             if tries > 200000:
                 raise RuntimeError(f"could only place {len(P)} of {n} particles at min. distance {dmin} µm")
         return np.array(P)
+    if kind == "grid3d":   # stacked square layers on the floor (3D runs)
+        import bd_engine as be
+        return be.grid_start(int(st.get("n_side", 10)), float(st.get("spacing", 5.0)), dim=3,
+                             layers=int(st.get("layers", 1)), dz=float(st.get("dz", 2.0)))
     if kind == "aaf":
         return np.loadtxt(bd.AAF_START, delimiter=",", skiprows=1)
     if kind == "file":
@@ -160,6 +164,11 @@ def run_folder_name(c, seed):
                        ao, seed, int(c["steps_per_tauB"]), reg, float(c.get("flow_F", 0)),
                        att_of(c), float(c.get("polydispersity", 0) or 0))
     tag = c.get("tag", "").strip().strip("_")
+    if int(c.get("dim", 2)) == 3:
+        H = c.get("H")
+        t3 = f"3D_H{float(H):g}" if H not in (None, "", 0) else "3D_open"
+        t3 += f"_drho{float(c.get('drho', 0)):g}"
+        tag = f"{t3}_{tag}" if tag else t3
     if tag:
         name = name.replace(f"_seed{seed}", f"_{tag}_seed{seed}")
     return reg, name
@@ -207,18 +216,23 @@ def run_one(args):
 
     _status(job_dir, key, state="running", name=name, folder=folder, frac=0.0)
     try:
-        use_nl = c.get("engine", "dense") == "nl"
+        dim = int(c.get("dim", 2))
+        use_nl = c.get("engine", "dense") == "nl" or dim == 3
         if use_nl:
             try:
                 import bd_engine as be
             except ImportError:                      # no scipy: fall back to the dense pair search (same physics)
                 use_nl = False
         if use_nl:
+            H = c.get("H")
             fr, t = be.simulate(A, float(c["dn_nm"]), float(c["T_tauB"]), ao=ao, att=att, radii=radii,
                                 steps_per_tauB=int(c["steps_per_tauB"]), out_per_tauB=int(c["out_per_tauB"]),
                                 seed=seed, core=c["core"] if c["core"] != "none" else "off", start=P0,
-                                progress=progress, flow_F=float(c.get("flow_F", 0)), dim=2)
+                                progress=progress, flow_F=float(c.get("flow_F", 0)), dim=dim,
+                                drho=float(c.get("drho", 0.0)), H=float(H) if H not in (None, "", 0) else None)
             x, y = fr[:, :, 0], fr[:, :, 1]
+            if dim == 3:
+                be.write_csv(folder, fr, t)              # datax/datay/dataz
         else:
           x, y, t = bd.simulate(A, float(c["dn_nm"]), float(c["T_tauB"]), ao=ao,
                               steps_per_tauB=int(c["steps_per_tauB"]), out_per_tauB=int(c["out_per_tauB"]),
@@ -248,7 +262,7 @@ def expand_jobs(c, job_dir):
     return [(c, int(s), job_dir, int(s)) for s in c["seeds"]]
 
 
-CSV_NUMERIC = {"eps", "n", "width", "kappa", "polydispersity", "A", "q", "phi_p", "dn_nm", "flow_F", "T_tauB", "steps_per_tauB", "out_per_tauB", "core_Z",
+CSV_NUMERIC = {"dim", "drho", "H", "eps", "n", "width", "kappa", "polydispersity", "A", "q", "phi_p", "dn_nm", "flow_F", "T_tauB", "steps_per_tauB", "out_per_tauB", "core_Z",
                "lj_cutoff_sigma"}
 REGIME_START = {"NAF": {"kind": "grid", "n_side": 12, "spacing": 4.0},
                 "ARF": {"kind": "grid", "n_side": 12, "spacing": 4.0},
