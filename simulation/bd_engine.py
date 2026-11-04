@@ -142,7 +142,7 @@ def acoustic_energy(F0, Phi, k, a=None):
 def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, att=None, radii=None, steps_per_tauB=4000,
              out_per_tauB=100, seed=1, core=None, start=None, dim=2, drho=0.0, H=None, flow_F=0.0,
              arf3d=None, skin=0.3, progress=None, verbose=False, secondary=None, streaming3d=None,
-             flow_profile="uniform"):
+             flow_profile="uniform", flow3d=None):
     """Return positions (frames, N, dim) and t (s). dim = 2: the airpods_bd model with neighbour lists.
     dim = 3: start (N,2) or (N,3); a 2D start is put on the floor (z = a)."""
     rng = np.random.default_rng(seed)
@@ -189,6 +189,8 @@ def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, att=None, radii=None, 
             move[big] *= (bd.MAX_STEP_UM / mag[big])[:, None]
         if streaming3d and dim == 3:
             move += rayleigh_streaming(P, streaming3d) * dt
+        if flow3d is not None and dim == 3:          # streaming computed from the solved field (streaming2d.GridFlow)
+            move += flow3d(P) * dt
         if flow_F:
             vf = bd.asf_flow(P[:, :2], flow_F)
             if dim == 3 and flow_profile == "parabolic" and np.isfinite(zmax):

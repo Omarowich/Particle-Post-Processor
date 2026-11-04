@@ -216,6 +216,53 @@ def _arf3d_force(c):
     return _ARF3D_CACHE[key]
 
 
+_AUTO_CACHE = {}
+
+
+def _field_auto(c):
+    """Radiation force and streaming of one solved chamber field (streaming2d.compute), cached in <out_root>/_fields.
+    c['field_auto'] = {"drive": "side" | "idt", "lid": "glass" | "pdms" | "absorb", "freq_MHz": 20}; both scaled to the
+    2D fit at c['dn_nm'] (one acoustic amplitude). c['field_auto_streaming']: factor on the streaming (1 = as
+    computed, 0 = off); c['radiation_off']: true = streaming only (Regime IV-like). Returns (arf3d callable, flow3d)."""
+    import streaming2d as s2
+    fa = c["field_auto"]
+    drive, lid, f = fa.get("drive", "side"), fa.get("lid", "glass"), float(fa.get("freq_MHz", 20.0))
+    H, bh = float(c["H"]), float(c.get("box_half", bd.BOX))
+    path = os.path.join(c.get("out_root", "."), "_fields",
+                        f"auto_{drive}{f:g}_H{H:g}_box{2 * bh:g}_{lid}.npz")
+    if path not in _AUTO_CACHE:
+        if not os.path.isfile(path):
+            res = s2.compute(drive, H_um=H, box_half_um=bh, freq_MHz=f, lid=lid)
+            s2.save(path, res, fa)
+        _AUTO_CACHE[path] = np.load(path)
+    d = _AUTO_CACHE[path]
+    s = (float(c["dn_nm"]) / 4000.0) ** 2
+    ys, zs = d["ys"] * 1e6, d["zs"] * 1e6
+    Fy, Fz = d["Fy"] * s, d["Fz"] * s
+    sf = float(c.get("field_auto_streaming", 1.0)) * s
+    U, W = d["U"] * sf, d["W"] * sf
+
+    def interp(G, P):
+        fy = np.clip((P[:, 1] - ys[0]) / (ys[1] - ys[0]), 0, len(ys) - 1.000001)
+        fz = np.clip((P[:, 2] - zs[0]) / (zs[1] - zs[0]), 0, len(zs) - 1.000001)
+        i, j = fy.astype(int), fz.astype(int); ty, tz = fy - i, fz - j
+        return ((1 - ty) * (1 - tz) * G[i, j] + ty * (1 - tz) * G[i + 1, j] + (1 - ty) * tz * G[i, j + 1]
+                + ty * tz * G[i + 1, j + 1])
+
+    def arf3d(P):
+        out = np.zeros_like(P)
+        if not c.get("radiation_off"):
+            out[:, 1], out[:, 2] = interp(Fy, P), interp(Fz, P)
+        return out
+
+    def flow3d(P):
+        out = np.zeros_like(P)
+        if sf:
+            out[:, 1], out[:, 2] = interp(U, P), interp(W, P)
+        return out
+    return arf3d, (flow3d if sf else None)
+
+
 def _streaming3d(c):
     """Rayleigh streaming rolls (3D, needs H): c['rayleigh_A'] in um/s (0 = off), c['rayleigh_sign'] (-1 = physical
     direction for a pressure node at y = 0), wavenumber of the pressure field c['rayleigh_k'] (default arf_k / 2)."""
@@ -275,7 +322,10 @@ def run_one(args):
         if use_nl:
             H = c.get("H")
             arf3d = None
-            if dim == 3 and c.get("arf3d_file"):      # COMSOL 3D pressure field -> Gor'kov force (arf3d_field.py)
+            flow3d = None
+            if dim == 3 and c.get("field_auto"):      # solved chamber field: radiation force + computed streaming
+                arf3d, flow3d = _field_auto(c)
+            elif dim == 3 and c.get("arf3d_file"):    # COMSOL 3D pressure field -> Gor'kov force (arf3d_field.py)
                 arf3d = _arf3d_force(c)
             fr, t = be.simulate(A, float(c["dn_nm"]), float(c["T_tauB"]), ao=ao, att=att, radii=radii,
                                 steps_per_tauB=int(c["steps_per_tauB"]), out_per_tauB=int(c["out_per_tauB"]),
@@ -283,7 +333,7 @@ def run_one(args):
                                 progress=progress, flow_F=float(c.get("flow_F", 0)), dim=dim,
                                 drho=float(c.get("drho", 0.0)), H=float(H) if H not in (None, "", 0) else None,
                                 arf3d=arf3d, flow_profile=c.get("flow_profile", "uniform"),
-                                streaming3d=_streaming3d(c), secondary=_secondary(c))
+                                streaming3d=_streaming3d(c), secondary=_secondary(c), flow3d=flow3d)
             x, y = fr[:, :, 0], fr[:, :, 1]
             if dim == 3:
                 be.write_csv(folder, fr, t)              # datax/datay/dataz
