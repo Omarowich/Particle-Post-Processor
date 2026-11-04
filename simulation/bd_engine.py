@@ -86,9 +86,62 @@ def pair_forces_nl(P, nl, A, ao=None, core=None, att=None, radii=None):
     return F
 
 
+def secondary_forces(P, nl2, sec, radii=None):
+    """Secondary (particle-particle) acoustic radiation force at short range, dipole (density) term only
+    (Silva & Bruus, Phys. Rev. E 2014; Weiser, Apfel & Neppiras 1984). The monopole term vanishes at the pressure node
+    and is left out. Standing wave along y with the pressure node at y = 0, so the local kinetic energy density is
+    E_kin(y) = E0 cos^2(k y). Pair potential (k r << 1):
+        U = -pi E0 cos^2(k y_mid) f2^2 a_i^3 a_j^3 (1 - 3 cos^2 theta) / r^3,   theta = angle between r and y
+    -> attractive side by side in the nodal plane (x, z), repulsive along the field axis y.
+    sec = {"E0": kBT/um^3, "f2": dipole factor, "k": pressure wave number 1/um, "rcut": um}. Returns (N, dim) kBT/um."""
+    i, j = nl2.pairs(P)
+    n, dim = P.shape
+    F = np.zeros((n, dim))
+    if len(i) == 0:
+        return F
+    d = P[i] - P[j]
+    r2 = np.einsum("ij,ij->i", d, d)
+    m = r2 < sec["rcut"] ** 2
+    i, j, d, r2 = i[m], j[m], d[m], r2[m]
+    r = np.sqrt(r2)
+    ai3 = (radii[i] ** 3 if radii is not None else bd.A_P ** 3)
+    aj3 = (radii[j] ** 3 if radii is not None else bd.A_P ** 3)
+    ym = 0.5 * (P[i, 1] + P[j, 1])
+    C = np.pi * sec["E0"] * np.cos(sec["k"] * ym) ** 2 * sec["f2"] ** 2 * ai3 * aj3   # kBT um^3
+    # U = -C g, g = (1 - 3 dy^2/r^2) / r^3 ; force on i = -dU/dr_i = C grad g
+    dy = d[:, 1]
+    gr = (-3.0 / r ** 5 + 15.0 * dy ** 2 / r ** 7)[:, None] * d       # radial part of grad g
+    gr[:, 1] += -6.0 * dy / r ** 5                                      # from the dy^2 term
+    f = C[:, None] * gr
+    for k in range(dim):
+        F[:, k] = np.bincount(i, f[:, k], n) - np.bincount(j, f[:, k], n)
+    return F
+
+
+def rayleigh_streaming(P, rs):
+    """Boundary-driven (Rayleigh) streaming between the floor (z = 0) and a hard lid (z = H), standing wave along y
+    (pressure node at y = 0), outer solution for H << wavelength (Rayleigh 1884; Muller et al., Lab Chip 2012):
+        u_y =  s A sin(2 k y) (1 - 3 zeta^2),     zeta = 2 z / H - 1
+        u_z = -s A k H cos(2 k y) (zeta - zeta^3)   (from div u = 0)
+    A = 3 v0^2 / (16 c0) (um/s), s = +-1 picks the roll direction. rs = {"A", "k", "H", "sign"}. Returns (N, 3) um/s."""
+    A, k, H, s = rs["A"], rs["k"], rs["H"], rs.get("sign", 1.0)
+    zeta = 2.0 * P[:, 2] / H - 1.0
+    u = np.zeros_like(P)
+    u[:, 1] = s * A * np.sin(2 * k * P[:, 1]) * (1 - 3 * zeta ** 2)
+    u[:, 2] = -s * A * k * H * np.cos(2 * k * P[:, 1]) * (zeta - zeta ** 3)
+    return u
+
+
+def acoustic_energy(F0, Phi, k, a=None):
+    """Acoustic energy density E0 (kBT/um^3) of the standing wave that gives the primary force amplitude F0 (kBT/um):
+    F = 4 pi Phi k a^3 E0 sin(2 k y) (Bruus, Lab Chip 2012)."""
+    a = bd.A_P if a is None else a
+    return F0 / (4 * np.pi * Phi * k * a ** 3)
+
+
 def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, att=None, radii=None, steps_per_tauB=4000,
              out_per_tauB=100, seed=1, core=None, start=None, dim=2, drho=0.0, H=None, flow_F=0.0,
-             arf3d=None, skin=0.3, progress=None, verbose=False):
+             arf3d=None, skin=0.3, progress=None, verbose=False, secondary=None, streaming3d=None):
     """Return positions (frames, N, dim) and t (s). dim = 2: the airpods_bd model with neighbour lists.
     dim = 3: start (N,2) or (N,3); a 2D start is put on the floor (z = a)."""
     rng = np.random.default_rng(seed)
@@ -111,6 +164,7 @@ def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, att=None, radii=None, 
     noise = np.sqrt(2 * Dp * dt)
     nl = NeighbourList(interaction_range(A, ao, att), skin)
     fg = weight_kbt_per_um(drho) * (1.0 if radii is None else (radii / bd.A_P) ** 3) if dim == 3 else 0.0
+    nl2 = NeighbourList(float(secondary["rcut"]), skin) if secondary else None
     zmin = bd.A_P
     zmax = (H - bd.A_P) if (dim == 3 and H) else np.inf
     frames, times = [P.copy()], [0.0]
@@ -118,6 +172,8 @@ def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, att=None, radii=None, 
     t0 = time.time()
     for s in range(1, n_steps + 1):
         F = pair_forces_nl(P, nl, A, ao, core, att, radii)
+        if secondary:
+            F += secondary_forces(P, nl2, secondary, radii)
         if arf3d is not None:
             F += arf_scale[:, None] * arf3d(P) if radii is not None else arf3d(P)
         else:
@@ -130,6 +186,8 @@ def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, att=None, radii=None, 
         if big.any():
             clipped += int(big.sum())
             move[big] *= (bd.MAX_STEP_UM / mag[big])[:, None]
+        if streaming3d and dim == 3:
+            move += rayleigh_streaming(P, streaming3d) * dt
         if flow_F:
             move[:, :2] += bd.asf_flow(P[:, :2], flow_F) * dt
         P += move + noise * rng.standard_normal(P.shape)
