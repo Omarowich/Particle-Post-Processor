@@ -20,7 +20,7 @@ import numpy as np
 
 
 def solve_box(Lx=50e-6, Ly=50e-6, H=20e-6, h=1e-6, freq=20e6, c0=2030.0, rho0=1180.0, d_n=4000e-9,
-              delta=1e-3, top="hard", Z_top=1.0e6 * 1.0, bottom="hard", actuate="y", k_saw=None, saw="standing"):
+              delta=1e-3, top="hard", Z_top=1.0e6 * 1.0, bottom="hard", actuate="y", k_saw=None, saw="standing", ywalls="hard", Z_y=None):
     """Pressure p (complex, Pa) on a node grid; returns (xs, ys, zs) in m (box centred in x, y; z from 0) and p.
     top / bottom: 'hard' or 'impedance' (Z_top in Pa s/m, PDMS ~ 1.0e6). actuate: 'y' (walls y = +-Ly/2 displaced by d_n
     along y in phase, i.e. one inwards, one outwards: pressure node at y = 0, where the COMSOL band forms), 'bottom' (floor moving
@@ -70,6 +70,8 @@ def solve_box(Lx=50e-6, Ly=50e-6, H=20e-6, h=1e-6, freq=20e6, c0=2030.0, rho0=11
                 ks = np.pi / Ly if k_saw is None else k_saw
                 prof = (np.sin(ks * ys) if saw == "standing" else np.exp(1j * ks * ys))[None, :] * np.ones((nx, 1))
                 b[Iw.ravel()] -= 2 * hh * (rho0 * om ** 2 * d_n * prof.ravel()) / hh ** 2
+            if ax == 1 and ywalls == "impedance":     # side walls that let sound out (e.g. a travelling SAW)
+                add(Iw, Iw, 2 * hh * (-1j * om * rho0 / (Z_y or rho0 * c0)) / hh ** 2)
             if ax == 2 and side == 1 and top == "impedance":
                 add(Iw, Iw, 2 * hh * (-1j * om * rho0 / Z_top) / hh ** 2)
             if ax == 2 and side == -1 and bottom == "impedance":

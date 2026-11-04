@@ -15,6 +15,11 @@ method of acoustofluidics:
 2. Bulk flow. The liquid outside the boundary layers obeys the Stokes equations (Re << 1) with those slip velocities
    as boundary conditions; in 2D this is the biharmonic equation for the stream function psi
    (u_y = d psi / d z, u_z = -d psi / d y), solved by finite differences.
+3. Particles are carried by the Lagrangian mean velocity, not the Eulerian streaming v2: for a wave that travels
+   (an IDT field leaving through an absorbing lid) the Stokes drift of the sound itself is of the same size as v2.
+   We therefore solve for the mass-flux velocity M = v2 + <rho1 v1>/rho0, which is divergence-free, has no flux
+   through any wall (M_n = 0) and, to the order kept here, equals the Lagrangian mean velocity; its tangential wall
+   value is the slip velocity plus <rho1 v1>_t / rho0. For standing fields <rho1 v1> ~ 0 and M = v2.
 Bulk (Eckart) streaming from sound absorption is neglected: its attenuation length at 20 MHz in water-glycerol is
 ~25 cm, against a 20-100 um chamber.
 
@@ -38,6 +43,8 @@ def first_order(drive="side", H_um=20.0, box_half_um=25.0, freq_MHz=20.0, lid="g
     kw = dict(top="hard") if lid == "glass" else dict(top="impedance", Z_top=Z_pdms if lid == "pdms" else rho0 * c0)
     if drive == "idt":
         kw.update(actuate="ssaw", k_saw=2 * np.pi * f / c_saw)
+    elif drive == "idt_travel":       # one IDT: travelling SAW along +y, side walls absorbing -> no pressure nodes
+        kw.update(actuate="ssaw", k_saw=2 * np.pi * f / c_saw, saw="travel", ywalls="impedance")
     else:
         kw.update(actuate="y")
     axes, p = a3.solve_box(Lx=2 * h, Ly=2 * box_half_um * 1e-6, H=H_um * 1e-6, h=h, freq=f, c0=c0, rho0=rho0, **kw)
@@ -57,27 +64,32 @@ def _wall_slip(vt, vn, ds_vt, dn_vt, dn_vn, ds_V, V, omega):
     return ut, un
 
 
-def slip_velocities(ys, zs, vy, vz, omega):
+def slip_velocities(ys, zs, vy, vz, omega, p=None, rho0=1180.0, c0=1850.0):
     """Slip velocities (m/s) on the four walls: dict with floor/lid (u_y, u_z along y) and left/right (u_y, u_z along z)."""
     dy_vy, dz_vy = np.gradient(vy, ys, zs, edge_order=2)
     dy_vz, dz_vz = np.gradient(vz, ys, zs, edge_order=2)
+    if p is not None:                       # <rho1 v1> / rho0 = Re(p* v1) / (2 rho0 c0^2): the wave's own mass flux
+        qy = np.real(np.conj(p) * vy) / (2 * rho0 * c0 ** 2)
+        qz = np.real(np.conj(p) * vz) / (2 * rho0 * c0 ** 2)
+    else:
+        qy = qz = np.zeros_like(vy, dtype=float)
     out = {}
     # floor z = 0: s = +y, n = +z
     vt, vn = vy[:, 0], vz[:, 0]
     ut, un = _wall_slip(vt, vn, dy_vy[:, 0], dz_vy[:, 0], dz_vz[:, 0], np.gradient(vn, ys), vn, omega)
-    out["floor"] = (ut, un)
+    out["floor"] = (ut + qy[:, 0], un)
     # lid z = H: s = +y, n = -z
     vt, vn = vy[:, -1], -vz[:, -1]
     ut, un = _wall_slip(vt, vn, dy_vy[:, -1], -dz_vy[:, -1], dz_vz[:, -1], np.gradient(vn, ys), vn, omega)
-    out["lid"] = (ut, -un)
+    out["lid"] = (ut + qy[:, -1], -un)
     # left y = y0: s = +z, n = +y
     vt, vn = vz[0, :], vy[0, :]
     ut, un = _wall_slip(vt, vn, dz_vz[0, :], dy_vz[0, :], dy_vy[0, :], np.gradient(vn, zs), vn, omega)
-    out["left"] = (un, ut)
+    out["left"] = (un, ut + qz[0, :])
     # right y = y1: s = +z, n = -y
     vt, vn = vz[-1, :], -vy[-1, :]
     ut, un = _wall_slip(vt, vn, dz_vz[-1, :], -dy_vz[-1, :], dy_vy[-1, :], np.gradient(vn, zs), vn, omega)
-    out["right"] = (-un, ut)
+    out["right"] = (-un, ut + qz[-1, :])
     return out
 
 
@@ -88,21 +100,9 @@ def stokes_streamfunction(ys, zs, slip):
     M, N = len(ys) - 1, len(zs) - 1
     h = ys[1] - ys[0]
     assert abs((zs[1] - zs[0]) - h) < 1e-12 * max(1.0, h), "needs equal grid spacing in y and z"
-    # boundary values of psi from the normal slip, integrated around the perimeter (net flux removed)
-    uf_y, uf_z = slip["floor"]; ul_y, ul_z = slip["lid"]; uL_y, uL_z = slip["left"]; uR_y, uR_z = slip["right"]
-    flux = (np.trapezoid(uf_z, ys) - np.trapezoid(ul_z, ys) + np.trapezoid(uL_y, zs) - np.trapezoid(uR_y, zs))
-    perim = 2 * (ys[-1] - ys[0]) + 2 * (zs[-1] - zs[0])
-    corr = flux / perim                       # spread the (small) leftover inflow evenly as outflow
-    uf_z = uf_z - corr; ul_z = ul_z + corr; uL_y = uL_y - corr; uR_y = uR_y + corr
-    cum = lambda u, x: np.concatenate([[0.0], np.cumsum(0.5 * (u[1:] + u[:-1]) * np.diff(x))])
-    psi_floor = -cum(uf_z, ys)                                   # d psi / dy = -u_z along the floor
-    psi_right = psi_floor[-1] + cum(uR_y, zs)                    # d psi / dz =  u_y up the right wall
-    # lid from right to left: d psi / dy = -u_z  ->  psi(y) = psi(y1) + int_y^{y1} u_z dy
-    tail = np.concatenate([np.cumsum((0.5 * (ul_z[1:] + ul_z[:-1]) * np.diff(ys))[::-1])[::-1], [0.0]])
-    psi_lid = psi_right[-1] + tail
-    # left wall from top to bottom: d psi / dz = u_y -> psi(z) = psi(H) - int_z^H u_y dz
-    tailL = np.concatenate([np.cumsum((0.5 * (uL_y[1:] + uL_y[:-1]) * np.diff(zs))[::-1])[::-1], [0.0]])
-    psi_left = psi_lid[0] - tailL
+    # no mass flux through any wall (M_n = 0): psi = 0 on the whole boundary; only tangential values enter
+    uf_y = slip["floor"][0]; ul_y = slip["lid"][0]; uL_z = slip["left"][1]; uR_z = slip["right"][1]
+    psi_floor = np.zeros(M + 1); psi_lid = np.zeros(M + 1); psi_left = np.zeros(N + 1); psi_right = np.zeros(N + 1)
     nY, nZ = M + 3, N + 3
     idx = lambda i, j: (i + 1) * nZ + (j + 1)
     rows, cols, vals, b = [], [], [], np.zeros(nY * nZ)
@@ -143,20 +143,24 @@ def stokes_streamfunction(ys, zs, slip):
 
 
 def compute(drive="side", H_um=20.0, box_half_um=25.0, freq_MHz=20.0, lid="glass", dn_nm=4000.0,
-            F0_ref=18.4, rho_p=1050.0, c_p=2350.0, **kw):
+            F0_ref=18.4, rho_p=1050.0, c_p=2350.0, amp_ref=None, **kw):
     """Streaming (um/s) and radiation force (kBT/um) of one chamber, on the y-z grid, with one acoustic amplitude:
     scaled so that the peak F_y at mid-height equals F0_ref (d_n / 4000 nm)^2."""
     import arf3d_field as af
     ys, zs, p, omega, rho0, c0 = first_order(drive, H_um, box_half_um, freq_MHz, lid, **kw)
     vy, vz = acoustic_velocity(ys, zs, p, omega, rho0)
-    U, W, _ = stokes_streamfunction(ys, zs, slip_velocities(ys, zs, vy, vz, omega))
+    U, W, _ = stokes_streamfunction(ys, zs, slip_velocities(ys, zs, vy, vz, omega, p, rho0, c0))
     f1, f2 = af.contrast_factors(rho_p, c_p, rho0, c0)
     V = 4.0 / 3.0 * np.pi * (1e-6) ** 3
     Ug = V * (f1 * 0.5 * np.abs(p) ** 2 / (2 * rho0 * c0 ** 2) - 0.75 * f2 * rho0 * 0.5 * (np.abs(vy) ** 2 + np.abs(vz) ** 2))
     gy, gz = np.gradient(Ug, ys, zs, edge_order=2)
     kBT = 1.380649e-23 * 293.0
     Fy, Fz = -gy / kBT * 1e-6, -gz / kBT * 1e-6
-    s = F0_ref * (dn_nm / 4000.0) ** 2 / np.abs(Fy[:, len(zs) // 2]).max()
+    if amp_ref is not None:          # scale to a given acoustic energy density (J/m^3) instead of the 2D force fit
+        E = 0.25 * rho0 * np.mean(np.abs(vy) ** 2 + np.abs(vz) ** 2) + 0.25 * np.mean(np.abs(p) ** 2) / (rho0 * c0 ** 2)
+        s = amp_ref * (dn_nm / 4000.0) ** 2 / E
+    else:
+        s = F0_ref * (dn_nm / 4000.0) ** 2 / np.abs(Fy[:, len(zs) // 2]).max()
     return dict(ys=ys, zs=zs, U=U * 1e6 * s, W=W * 1e6 * s, Fy=Fy * s, Fz=Fz * s, scale=s, omega=omega, c0=c0,
                 v1_max=np.sqrt(s) * np.abs(vy).max())
 
