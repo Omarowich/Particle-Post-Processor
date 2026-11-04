@@ -188,6 +188,26 @@ def _status(job_dir, key, **kw):
             time.sleep(0.05)
 
 
+_ARF3D_CACHE = {}
+
+
+def _arf3d_force(c):
+    """GridForce from c['arf3d_file'] (COMSOL export, see arf3d_field.py), scaled to the 2D fit at c['dn_nm'].
+    Settings: arf3d_freq (Hz, needed if no velocity columns), arf3d_rho_p / arf3d_c_p (particle; default PS 1050 kg/m3,
+    2350 m/s), arf3d_offset_um (x, y, z of the BD origin in the COMSOL frame), arf3d_match (default true)."""
+    import arf3d_field as af
+    key = (c["arf3d_file"], float(c["dn_nm"]), str(c.get("arf3d_offset_um")), c.get("arf3d_rho_p"), c.get("arf3d_c_p"))
+    if key not in _ARF3D_CACHE:
+        axes, p, v = af.load_grid(c["arf3d_file"])
+        f1, f2 = af.contrast_factors(float(c.get("arf3d_rho_p", 1050.0)), float(c.get("arf3d_c_p", 2350.0)))
+        F = af.force_grid(axes, p, v, f1=f1, f2=f2, freq=c.get("arf3d_freq"))
+        gf = af.GridForce(axes, F, offset_um=tuple(c.get("arf3d_offset_um", (0.0, 0.0, 0.0))))
+        if c.get("arf3d_match", True):
+            af.match_F0(gf, float(c["dn_nm"]), float(c.get("arf_F0_ref", bd.ARF_F0_REF)))
+        _ARF3D_CACHE[key] = gf
+    return _ARF3D_CACHE[key]
+
+
 def run_one(args):
     c, seed, job_dir = args[:3]
     key = args[3] if len(args) > 3 else seed
@@ -225,11 +245,15 @@ def run_one(args):
                 use_nl = False
         if use_nl:
             H = c.get("H")
+            arf3d = None
+            if dim == 3 and c.get("arf3d_file"):      # COMSOL 3D pressure field -> Gor'kov force (arf3d_field.py)
+                arf3d = _arf3d_force(c)
             fr, t = be.simulate(A, float(c["dn_nm"]), float(c["T_tauB"]), ao=ao, att=att, radii=radii,
                                 steps_per_tauB=int(c["steps_per_tauB"]), out_per_tauB=int(c["out_per_tauB"]),
                                 seed=seed, core=c["core"] if c["core"] != "none" else "off", start=P0,
                                 progress=progress, flow_F=float(c.get("flow_F", 0)), dim=dim,
-                                drho=float(c.get("drho", 0.0)), H=float(H) if H not in (None, "", 0) else None)
+                                drho=float(c.get("drho", 0.0)), H=float(H) if H not in (None, "", 0) else None,
+                                arf3d=arf3d)
             x, y = fr[:, :, 0], fr[:, :, 1]
             if dim == 3:
                 be.write_csv(folder, fr, t)              # datax/datay/dataz
