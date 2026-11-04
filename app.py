@@ -4008,10 +4008,10 @@ elif plot_mode == "Regime state model":
         c3.metric("Near a threshold", int(rsm_end.near_threshold.sum()))
         st.subheader("Runs per regime and state (at the end of each run)")
         st.dataframe(pd.crosstab(rsm_end.regime, rsm_end.state))
-        show_cols = ["regime", "name", "potential", "q", "phi_p", "eval", "t_eval_tauB", "state", "z_mean", "Smax", "spans", "psi6",
+        show_cols = ["regime", "folder", "name", "potential", "q", "phi_p", "N", "box", "phi_area", "pd", "dim", "eval", "t_eval_tauB", "state", "z_mean", "Smax", "spans", "psi6",
                      "bond_persist", "Rg_ratio", "concentrated", "restructuring", "near_threshold"]
         st.subheader("All runs")
-        st.dataframe(rsm_df[show_cols].round(3), hide_index=True)
+        st.dataframe(rsm_df[[c for c in show_cols if c in rsm_df]].round(3), hide_index=True)
         st.download_button("Download labelled runs (CSV)", rsm_df.to_csv(index=False).encode(),
                            "labelled_runs.csv", "text/csv", key="rsm_dl_states")
 
@@ -4043,6 +4043,22 @@ elif plot_mode == "Regime state model":
                                  help="AO attraction is matched to each A by B2*, but its range is 2·q·a, so maps "
                                       "at different q answer different questions. The experiment sits at q ≈ 0.03–0.08.")
                 rsm_dfm = rsm_df[(rsm_df.potential != "AO") | np.isclose(rsm_df.q, map_q)]
+            # particle number / box: one system per map (except on the area-fraction axis)
+            if "N" in rsm_dfm and map_param not in ("N", "phi_area"):
+                _sys = (rsm_dfm[rsm_dfm.regime == map_regime][["N", "box"]].dropna().drop_duplicates()
+                        .sort_values(["N", "box"]).itertuples(index=False, name=None))
+                _sys = [(int(n_), float(b_)) for n_, b_ in _sys]
+                if len(_sys) > 1:
+                    _d0 = _sys.index((144, 50.0)) if (144, 50.0) in _sys else 0
+                    _cntN = rsm_dfm[rsm_dfm.regime == map_regime].groupby(["N", "box"]).name.nunique()
+                    map_sys = st.radio("System (particle number, box)", _sys, index=_d0, horizontal=True,
+                                       key=f"rsm_map_N_{map_regime}",
+                                       format_func=lambda v: (f"N = {v[0]}, {v[1]:g} µm "
+                                                              f"(area fraction {v[0] * np.pi / v[1] ** 2:.2f}; "
+                                                              f"{_cntN.get(v, 0)} runs)"),
+                                       help="Runs at other particle numbers or densities (folders like NAF_N576, "
+                                            "NAF_density). Use the x axis 'area fraction' to see them together.")
+                    rsm_dfm = rsm_dfm[(rsm_dfm.N == map_sys[0]) & np.isclose(rsm_dfm.box, map_sys[1])]
             times_ = rsm.map_times(rsm_dfm, map_regime, map_pot, map_param)
             if not times_:
                 st.info(f"No {map_pot} runs in {rsm.regime_label(map_regime)} with the current filter.")

@@ -36,6 +36,7 @@ from scipy.spatial import cKDTree
 
 TAUB_S = 13.514          # Brownian time in seconds (same constant as the rest of the app)
 REGIMES = ("NAF", "ARF", "AAF", "ASF")   # Regime I-IV
+A_P_UM = 1.0                               # particle radius (um), for the area fraction
 # Folder names stay NAF / ARF / AAF / ASF (they are the data keys); everything shown to the user
 # uses the paper's terminology: Regime I-IV.
 REGIME_NAMES = {
@@ -127,18 +128,54 @@ def _tag_value(tags, key, cast, default):
     return cast(m.group(1)) if m else default
 
 
+def _run_geometry(rd: str) -> tuple[float, float]:
+    """(box side in um, particle number) from the run's sim_config.json; COMSOL / old runs: 50 um, 144."""
+    box, n = 50.0, np.nan
+    f = os.path.join(rd, "sim_config.json")
+    if os.path.isfile(f):
+        try:
+            import json
+            with open(f) as fh:
+                c = json.load(fh)
+            box = 2.0 * float(c.get("box_half", 25.0))
+            st_ = c.get("start", {}) or {}
+            if st_.get("kind") == "grid":
+                n = int(st_.get("n_side", 12)) ** 2
+            elif st_.get("kind") == "grid3d":
+                n = int(st_.get("n_side", 10)) ** 2 * int(st_.get("layers", 1))
+            elif st_.get("kind") == "random":
+                n = int(st_.get("n", 144))
+        except Exception:
+            pass
+    return box, n
+
+
 def discover_runs(root: str, regimes=REGIMES) -> list[tuple[dict, str]]:
+    """Runs of each regime folder (NAF, ARF, ...) and of its variant folders (NAF_N576, NAF_density, ARF_3D, ...):
+    variant runs get the base regime plus a 'folder' column, the box side and the particle number."""
     out = []
     for reg in regimes:
-        base = os.path.join(root, reg)
-        if not os.path.isdir(base):
-            continue
-        for name in sorted(os.listdir(base)):
-            rd = os.path.join(base, name)
-            if not os.path.isfile(os.path.join(rd, "datax.csv")):
+        folders = [reg] + sorted(f for f in (os.listdir(root) if os.path.isdir(root) else [])
+                                 if f.upper().startswith(reg.upper() + "_") and os.path.isdir(os.path.join(root, f)))
+        for fold in folders:
+            base = os.path.join(root, fold)
+            if not os.path.isdir(base):
                 continue
-            p = parse_run_name(reg, name)
-            if p is not None:
+            for name in sorted(os.listdir(base)):
+                rd = os.path.join(base, name)
+                if not os.path.isfile(os.path.join(rd, "datax.csv")):
+                    continue
+                p = parse_run_name(reg, name)
+                if p is None:
+                    continue
+                box, n = _run_geometry(rd)
+                if not np.isfinite(p.get("N", np.nan)):
+                    p["N"] = n if np.isfinite(n) else 144
+                p["box"] = box
+                p["phi_area"] = round(float(p["N"]) * np.pi * A_P_UM ** 2 / box ** 2, 3)
+                p["folder"] = fold
+                if "3D" in fold.upper():
+                    p["dim"] = 3
                 out.append((p, rd))
     return out
 
@@ -287,7 +324,7 @@ def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: flo
                     rr = dict(p)
                     rr["eval"] = tg
                     rr["T_actual_tauB"] = float(T / TAUB_S)
-                    rr.update(_evaluate(x, y, t, te, rc, box, lag_tauB * TAUB_S))
+                    rr.update(_evaluate(x, y, t, te, rc, float(p.get("box", box)), lag_tauB * TAUB_S))
                     entry[tg] = rr
             cache[key] = entry
             n_new += 1
@@ -393,8 +430,9 @@ def boundary_data(df: pd.DataFrame, regime="ARF", param="dn", common_time_tauB=1
 
 
 AXIS_LABELS = {"dn": "inward displacement d$_n$ (nm)", "F": "streaming force F$_0$ (N/m³)", "t_map": "time (τ$_B$)",
-               "T_name": "run length (τ$_B$)", "phi_p": "φ$_p$", "q": "q", "N": "number of particles"}
-X_CANDIDATES = ("dn", "F", "t_map", "phi_p", "q", "N")
+               "T_name": "run length (τ$_B$)", "phi_p": "φ$_p$", "q": "q", "N": "number of particles",
+               "phi_area": "area fraction"}
+X_CANDIDATES = ("dn", "F", "t_map", "phi_p", "q", "N", "phi_area")
 
 
 def fmt_val(v):
