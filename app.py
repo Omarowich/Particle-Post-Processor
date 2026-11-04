@@ -954,7 +954,7 @@ with st.sidebar.expander("0.5 Output saving", expanded=False):
 st.sidebar.header("1. Output type")
 plot_mode = st.sidebar.radio(
     "Select output type:",
-    ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram", "Regime state model", "Run viewer", "Paper figures", "Run simulation"],
+    ["Single plot", "Multiple plots", "Function mixer", "Summary plots", "Phase diagram", "Regime state model", "Run viewer", "3D viewer", "Paper figures", "Run simulation"],
     key="plot_mode",
     index=1,
 )
@@ -4912,6 +4912,53 @@ elif plot_mode == "Run simulation":
                     if "Traceback" in log or j["state"] == "failed":
                         st.code(log[-3000:])
         _jobs_view()
+    st.stop()
+
+elif plot_mode == "3D viewer":
+    import viewer3d as v3
+
+    @st.cache_data(show_spinner=False)
+    def _v3_load(folder, mtime):
+        return v3.load_run3d(folder)
+
+    st.title("3D viewer")
+    st.caption("Runs with a z coordinate: simulation/bd_engine.py with dim = 3 (folders like ARF_3D, NAF_3D) and the "
+               "quasi-3D runs (_quasi3D). Same pair forces as 2D; field = 1D standing wave along y; no hydrodynamics.")
+    v3_root = st.sidebar.text_input("Data folder", value=source_root, key="v3_root").strip().strip('"').strip("'")
+    v3_runs = v3.list_3d_runs(v3_root)
+    if not v3_runs:
+        st.info("No 3D runs (folders with dataz.csv) in this data folder.")
+        st.stop()
+    v3_folders = sorted(set(l.split("/")[0] for l, _ in v3_runs))
+    v3_fold = st.sidebar.selectbox("Folder", v3_folders, key="v3_fold")
+    v3_txt = st.sidebar.text_input("Name contains (e.g. H4, drho0, phi0.244)", "", key="v3_txt")
+    v3_opts = [(l, p) for l, p in v3_runs if l.split("/")[0] == v3_fold and v3_txt.lower() in l.lower()]
+    if not v3_opts:
+        st.info("No run matches."); st.stop()
+    v3_lab = st.sidebar.selectbox("Run", [l for l, _ in v3_opts], key="v3_run",
+                                  format_func=lambda l: l.split("/")[-1])
+    v3_path = dict(v3_opts)[v3_lab]
+    frames, t3, cfg3 = _v3_load(v3_path, os.path.getmtime(os.path.join(v3_path, "dataz.csv")))
+    tt = t3 / v3.TAUB_S
+    k3 = st.slider("Time (τ_B)", 0, len(tt) - 1, len(tt) - 1, key="v3_k", format="frame %d")
+    P3 = frames[k3]
+    stats3, z3 = v3.frame_stats(P3, box=2 * float(cfg3.get("box_half", 25.0)))
+    st.markdown(f"**t = {tt[k3]:.2f} τ_B** · N = {len(P3)} · 3D coordination {stats3['z3']:.2f} · largest cluster "
+                f"{stats3['Smax']:.0%}{' (spans the box)' if stats3['spans'] else ''} · resting on another particle "
+                f"{stats3['f_on_top']:.0%} · ≥ 10 neighbours {stats3['f_cryst']:.0%} · mean height {stats3['h_mean']:.2f} µm")
+    v3c1, v3c2 = st.columns([1, 3])
+    v3_col = v3c1.radio("Colour", ["height", "coordination"], key="v3_col")
+    if cfg3:
+        v3c1.caption(", ".join(f"{k} = {cfg3[k]}" for k in ("potential", "A", "q", "phi_p", "eps", "dn_nm", "H", "drho",
+                                                           "T_tauB", "steps_per_tauB", "run_seed") if k in cfg3))
+    try:
+        v3c2.plotly_chart(v3.fig_3d(P3, cfg3, v3_col, z3, title=v3_lab.split("/")[-1]), use_container_width=True)
+    except ImportError:
+        v3c2.error("The 3D view needs plotly: run `pip install plotly` and restart the app.")
+    st.pyplot(v3.fig_views(P3, cfg3))
+    if st.checkbox("Observables over time (computed on up to 60 frames)", key="v3_time"):
+        figt, _ = v3.fig_stats_over_time(frames, t3, cfg3)
+        st.pyplot(figt)
     st.stop()
 
 elif plot_mode == "Run viewer":
