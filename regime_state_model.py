@@ -982,9 +982,11 @@ def fit_phase_map(d: pd.DataFrame, regime: str, param: str, potential="LJ") -> P
 
 def fig_phase_map(pm: PhaseMap, show_runs=True, per_run=True, region_labels=True, confidence=False,
                   borders=True, colors=None, title=None, figsize=(8.5, 5.6), even_spacing=True,
-                  x_values=None, A_values=None):
+                  x_values=None, A_values=None, ax=None, legend=True, x_note=None):
     """Smooth phase diagram: every state as a coloured region (most likely state), smooth borders where two
-    states are equally likely, optional run dots (COMSOL hollow) and fading where the model is unsure."""
+    states are equally likely, optional run dots (COMSOL hollow) and fading where the model is unsure.
+    ax: draw into an existing axis (several diagrams in one figure). x_note = (x, text): a dashed vertical
+    line at parameter value x with a note (e.g. where a state label stops being meaningful)."""
     import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap, to_rgb
     _style(plt)
@@ -1009,7 +1011,10 @@ def fig_phase_map(pm: PhaseMap, show_runs=True, per_run=True, region_labels=True
     P = pm.gpc.predict_proba((np.c_[GL.ravel(), GA.ravel()] - pm.mu) / pm.sd).reshape(len(UA), len(U), -1)
     lab = P.argmax(-1)
     conf = P.max(-1)
-    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    else:
+        fig = ax.figure
     rgb = np.array([to_rgb(col.get(c, "#999")) for c in pm.classes])
     img = rgb[lab]
     alpha = (0.25 + 0.55 * np.clip((conf - 1 / len(pm.classes)) / (1 - 1 / len(pm.classes)), 0, 1)) if confidence \
@@ -1052,7 +1057,12 @@ def fig_phase_map(pm: PhaseMap, show_runs=True, per_run=True, region_labels=True
     hand = [Patch(facecolor=col.get(c, "#999"), alpha=0.6, label=c) for c in pm.classes]
     if show_runs and "source" in d and (d.source == "COMSOL").any() and (d.source != "COMSOL").any():
         hand.append(plt.Line2D([], [], ls="", marker="o", mfc="white", mec="#555", label="hollow = COMSOL run"))
-    ax.legend(handles=hand, frameon=False, fontsize=8.5, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3)
+    if legend:
+        ax.legend(handles=hand, frameon=False, fontsize=8.5, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3)
+    if x_note is not None:
+        xn = float(pos(x_note[0]))
+        ax.axvline(xn, color="#333", ls="--", lw=0.9, zorder=3)
+        ax.text(xn, UA[-1], " " + x_note[1], ha="left", va="top", fontsize=7, color="#333", zorder=6)
     if even_spacing:
         ax.set_xticks(np.arange(len(TK)))
         ax.set_xticklabels([f"{v:g}" for v in TK], rotation=45 if len(TK) > 12 else 0)

@@ -4134,7 +4134,31 @@ elif plot_mode == "Regime state model":
                              "animation. Each frame uses only the runs that reach that time.")
                     ph_kw = dict(show_runs=ph_runs, per_run=ph_each, region_labels=ph_lab, confidence=ph_conf,
                                  borders=ph_borders, even_spacing=ph_even, colors=sty.get("state_colors"))
-                    if not ph_play:
+                    ph_side = False
+                    if map_param == "phi_area":
+                        # grid start spacing box/sqrt(N) falls below the bond cutoff (2.9 um) at this area fraction:
+                        # above it the 'network' label is reached without attraction
+                        phi_net = float(np.pi * rsm.A_P_UM ** 2 / 2.9 ** 2)
+                        pa1, pa2 = st.columns(2)
+                        if pa1.checkbox(f"mark area fraction {phi_net:.2f} (network label not meaningful above)", True,
+                                        key="rsm_ph_netnote"):
+                            ph_kw["x_note"] = (phi_net, "network label\nnot meaningful →")
+                        ph_side = len(pots) > 1 and pa2.checkbox("all attractions side by side", True, key="rsm_ph_side")
+                    if ph_side and not ph_play:
+                        _pp = [p_ for p_ in pots if p_ in set(rsm_dfm.loc[rsm_dfm.regime == map_regime, "potential"].fillna("LJ"))]
+                        fig, axs = plt.subplots(1, len(_pp), figsize=(5.2 * len(_pp), 4.6), constrained_layout=True,
+                                                sharey=True, squeeze=False)
+                        for ax_, p_ in zip(axs[0], _pp):
+                            md_ = rsm.map_data(rsm_dfm, map_regime, map_param, float(map_t), p_)
+                            if md_.empty:
+                                ax_.set_axis_off(); continue
+                            rsm.fig_phase_map(rsm.fit_phase_map(md_, map_regime, map_param, p_), ax=ax_,
+                                              title=f"{p_}" + (f" (q = {map_q:g})" if map_q is not None and p_ == "AO" else ""),
+                                              **ph_kw)
+                        st.pyplot(fig)
+                        save_figure_if_requested(fig, f"phase_diagram_{map_regime}_{map_param}_all", save_plots, output_dir)
+                        plt.close(fig)
+                    elif not ph_play:
                         pm = rsm.fit_phase_map(mdata, map_regime, map_param, map_pot)
                         if len(pm.classes) == 1:
                             st.info(f"All {len(mdata)} runs here are '{pm.classes[0]}', so the whole map is one state.")
