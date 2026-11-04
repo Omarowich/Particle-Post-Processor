@@ -141,7 +141,8 @@ def acoustic_energy(F0, Phi, k, a=None):
 
 def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, att=None, radii=None, steps_per_tauB=4000,
              out_per_tauB=100, seed=1, core=None, start=None, dim=2, drho=0.0, H=None, flow_F=0.0,
-             arf3d=None, skin=0.3, progress=None, verbose=False, secondary=None, streaming3d=None):
+             arf3d=None, skin=0.3, progress=None, verbose=False, secondary=None, streaming3d=None,
+             flow_profile="uniform"):
     """Return positions (frames, N, dim) and t (s). dim = 2: the airpods_bd model with neighbour lists.
     dim = 3: start (N,2) or (N,3); a 2D start is put on the floor (z = a)."""
     rng = np.random.default_rng(seed)
@@ -189,7 +190,11 @@ def simulate(A=0.0, dn_nm=4000.0, T_tauB=1.0, *, ao=None, att=None, radii=None, 
         if streaming3d and dim == 3:
             move += rayleigh_streaming(P, streaming3d) * dt
         if flow_F:
-            move[:, :2] += bd.asf_flow(P[:, :2], flow_F) * dt
+            vf = bd.asf_flow(P[:, :2], flow_F)
+            if dim == 3 and flow_profile == "parabolic" and np.isfinite(zmax):
+                # in-plane streaming between floor and lid with no slip: 6 z (H - z) / H^2 (height average 1)
+                vf = vf * (6.0 * P[:, 2] * (H - P[:, 2]) / H ** 2)[:, None]
+            move[:, :2] += vf * dt
         P += move + noise * rng.standard_normal(P.shape)
         P[:, :2] = np.where(P[:, :2] > bd.BOX, 2 * bd.BOX - P[:, :2], P[:, :2])
         P[:, :2] = np.where(P[:, :2] < -bd.BOX, -2 * bd.BOX - P[:, :2], P[:, :2])

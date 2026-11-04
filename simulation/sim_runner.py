@@ -48,6 +48,9 @@ DEFAULTS = {
     "lj_cutoff_sigma": 3.0,       # LJ cut off at this many sigma
     "dn_nm": 4000.0,              # field amplitude (inward wall displacement); 0 = field off
     "flow_F": 0.0,                # acoustic streaming parameter F (as in COMSOL); 0 = no streaming
+    "flow_profile": "uniform",    # 3D: in-plane streaming "uniform" in height or "parabolic" (no slip at floor and lid)
+    "rayleigh_A": 0.0,            # 3D: Rayleigh streaming rolls between floor and lid, um/s (0 = off)
+    "secondary_E0": 0.0,          # secondary radiation force, acoustic energy density in kBT/um^3 (0 = off)
     "arf_F0_ref": bd.ARF_F0_REF, "arf_k": bd.ARF_K,
     "start": {"kind": "grid", "n_side": 12, "spacing": 4.0},
     "T_tauB": 1.0, "steps_per_tauB": 4000, "out_per_tauB": 100,
@@ -211,6 +214,27 @@ def _arf3d_force(c):
     return _ARF3D_CACHE[key]
 
 
+def _streaming3d(c):
+    """Rayleigh streaming rolls (3D, needs H): c['rayleigh_A'] in um/s (0 = off), c['rayleigh_sign'] (-1 = physical
+    direction for a pressure node at y = 0), wavenumber of the pressure field c['rayleigh_k'] (default arf_k / 2)."""
+    A = float(c.get("rayleigh_A", 0) or 0)
+    H = c.get("H")
+    if not A or H in (None, "", 0) or int(c.get("dim", 2)) != 3:
+        return None
+    return {"A": A, "k": float(c.get("rayleigh_k", float(c.get("arf_k", 0.124)) / 2)), "H": float(H),
+            "sign": float(c.get("rayleigh_sign", -1.0))}
+
+
+def _secondary(c):
+    """Secondary (particle-particle) radiation force: c['secondary_E0'] acoustic energy density in kBT/um^3
+    (0 = off; ~390 nominal, 1663 upper bound at d_n = 4000 nm), monopole-free dipole term (Silva & Bruus 2014)."""
+    E0 = float(c.get("secondary_E0", 0) or 0)
+    if not E0:
+        return None
+    return {"E0": E0, "f2": float(c.get("secondary_f2", -0.079)), "k": float(c.get("arf_k", 0.124)) / 2,
+            "rcut": float(c.get("secondary_rcut", 6.0))}
+
+
 def run_one(args):
     c, seed, job_dir = args[:3]
     key = args[3] if len(args) > 3 else seed
@@ -256,7 +280,8 @@ def run_one(args):
                                 seed=seed, core=c["core"] if c["core"] != "none" else "off", start=P0,
                                 progress=progress, flow_F=float(c.get("flow_F", 0)), dim=dim,
                                 drho=float(c.get("drho", 0.0)), H=float(H) if H not in (None, "", 0) else None,
-                                arf3d=arf3d)
+                                arf3d=arf3d, flow_profile=c.get("flow_profile", "uniform"),
+                                streaming3d=_streaming3d(c), secondary=_secondary(c))
             x, y = fr[:, :, 0], fr[:, :, 1]
             if dim == 3:
                 be.write_csv(folder, fr, t)              # datax/datay/dataz
@@ -289,7 +314,7 @@ def expand_jobs(c, job_dir):
     return [(c, int(s), job_dir, int(s)) for s in c["seeds"]]
 
 
-CSV_NUMERIC = {"dim", "drho", "H", "eps", "n", "width", "kappa", "polydispersity", "A", "q", "phi_p", "dn_nm", "flow_F", "T_tauB", "steps_per_tauB", "out_per_tauB", "core_Z",
+CSV_NUMERIC = {"rayleigh_A", "rayleigh_sign", "secondary_E0", "dim", "drho", "H", "eps", "n", "width", "kappa", "polydispersity", "A", "q", "phi_p", "dn_nm", "flow_F", "T_tauB", "steps_per_tauB", "out_per_tauB", "core_Z",
                "lj_cutoff_sigma"}
 REGIME_START = {"NAF": {"kind": "grid", "n_side": 12, "spacing": 4.0},
                 "ARF": {"kind": "grid", "n_side": 12, "spacing": 4.0},
