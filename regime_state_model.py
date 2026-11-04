@@ -53,7 +53,7 @@ def regime_label(regime: str, long: bool = False) -> str:
     if r not in REGIME_NUMBER:
         return str(regime)
     return f"Regime {REGIME_NUMBER[r]}" + (f" ({REGIME_NAMES[r]})" if long else "")
-_NAME_RE = re.compile(r"^([\d.]+)Tkb_([\d.]+)TauB(?:_(\d+(?:\.\d+)?)(nm|nn|F))?((?:_[A-Za-z]+[\d.]*)*)$",
+_NAME_RE = re.compile(r"^([\d.]+)Tkb_([\d.]+)TauB(?:_(\d+(?:\.\d+)?)(nm|nn|F))?((?:_[A-Za-z0-9.]+)*)$",
                       re.IGNORECASE)   # optional tags: _core, _dt50, _seed2, _AO_q0.2_phi0.664, ...
 
 # colours: categorical slots of the app's chart palette (identity), blue ramp for magnitude
@@ -96,7 +96,10 @@ def parse_run_name(regime: str, name: str) -> dict | None:
         "tags": "_".join(t for t in (m.group(5) or "").lstrip("_").split("_") if t and t.upper() != "CS"),
         "source": "BD" if re.search(r"(^|_)BD(_|$)", m.group(5) or "") else "COMSOL",
         "seed": _tag_value(m.group(5), "seed", int, 0),
-        "potential": "AO" if re.search(r"(^|_)AO(_|$)", m.group(5) or "") else "LJ",
+        "potential": _potential_of(m.group(5) or ""),
+        "eps": _tag_value(m.group(5), "eps", float, np.nan),     # well depth of the extra models (kBT)
+        "pd": _tag_value(m.group(5), "pd", float, 0.0),          # polydispersity (relative SD of the radii)
+        "dim": 3 if re.search(r"(^|_)3D(_|$)", m.group(5) or "") else 2,
         "q": _tag_value(m.group(5), "q", float, np.nan),
         "phi_p": _tag_value(m.group(5), "phi", float, np.nan),
         "dt": _tag_value(m.group(5), "dt", int, 0),
@@ -105,6 +108,17 @@ def parse_run_name(regime: str, name: str) -> dict | None:
         "extra": "_".join(t for t in (m.group(5) or "").lstrip("_").split("_")
                           if t and not re.fullmatch(r"(?i)(CS|BD|AO|core|q[\d.]+|phi[\d.]+|dt\d+|seed\d+)", t)),
     }
+
+
+POTENTIAL_TAGS = {"AO": "AO", "LJ2n": "2n-n LJ", "SW": "square well", "YUK": "Yukawa"}
+
+
+def _potential_of(tags):
+    """Attraction model from the name tags: AO, 2n-n LJ (LJ2n), square well (SW), Yukawa (YUK); else LJ 12-6."""
+    for tag, label in POTENTIAL_TAGS.items():
+        if re.search(rf"(^|_){tag}(_|$)", tags):
+            return label
+    return "LJ"
 
 
 def _tag_value(tags, key, cast, default):
@@ -279,7 +293,7 @@ def compute_observables(root: str, regimes=REGIMES, *, rc: float = 2.9, box: flo
             n_new += 1
             if _time.time() - last_save > 30:      # keep partial work if the page is reloaded
                 _save(); last_save = _time.time()
-        rows.extend(dict(entry[tg]) for tg in need)
+        rows.extend({**entry[tg], **p} for tg in need)   # name fields from the current parser (cache keeps old ones)
     if n_new or any(k not in seen for k in cache if k != "_version" and k[3] == base and k[0] in scanned):
         _save()
     if progress:
@@ -356,6 +370,10 @@ def is_check_run(d: pd.DataFrame) -> pd.Series:
     tags = d.tags.fillna("") if "tags" in d else pd.Series("", index=d.index)
     bad = tags.str.contains("|".join(f"dt{v}(?:_|$)" for v in TIMESTEP_TEST_DT), regex=True)
     bad |= tags.str.contains("|".join(f"_{t}(?:_|$)" for t in CHECK_TAGS), regex=True)
+    if "pd" in d:                       # polydisperse runs: a separate test, not map runs
+        bad |= pd.to_numeric(d["pd"], errors="coerce").fillna(0) > 0
+    if "dim" in d:                      # 3D runs have their own tab
+        bad |= pd.to_numeric(d["dim"], errors="coerce").fillna(2) == 3
     if {"potential", "q", "dt"} <= set(d.columns):
         ao = (d.potential == "AO") & d.q.notna() & d.dt.notna()
         std = d.q.where(ao, 0.2).map(standard_ao_steps)
