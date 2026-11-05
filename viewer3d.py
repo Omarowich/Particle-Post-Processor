@@ -69,7 +69,9 @@ def _pairs(P, rc):
 
 
 def frame_stats(P, rc=2.9, box=50.0, a=A_UM):
-    """3D observables of one frame (same definitions as Data/_tools/obs3d.py)."""
+    """3D observables of one frame. z: neighbours within rc = 2.9 um (as obs3d.py and the 2D analysis);
+    S_max and spanning: clusters of bonded particles, centres within CLUSTER_RC = 2.2 um (1.1 sigma). NOTE: the 2D
+    analysis and Data/_tools/obs3d.py use 2.9 um for clusters too, so S_max here is stricter (smaller)."""
     n = len(P)
     i, j = _pairs(P, rc)
     z = np.bincount(np.r_[i, j], minlength=n)
@@ -81,6 +83,13 @@ def frame_stats(P, rc=2.9, box=50.0, a=A_UM):
             u = lab[u]
         return u
     for u, v in zip(i, j):
+        ru, rv = root(u), root(v)
+        if ru != rv:
+            lab[ru] = rv
+    # clusters by bond distance (1.1 sigma), as the "largest cluster" colouring; z keeps the 2.9 um shell
+    lab = np.arange(n)
+    bi, bj = _pairs(P, CLUSTER_RC)
+    for u, v in zip(bi, bj):
         ru, rv = root(u), root(v)
         if ru != rv:
             lab[ru] = rv
