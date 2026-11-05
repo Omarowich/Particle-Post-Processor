@@ -5194,11 +5194,11 @@ elif plot_mode == "3D viewer":
     v3_falpha = st.sidebar.slider("Overlay strength", 0.1, 1.0, 0.45, 0.05, key="v3_falpha") if v3_fmode != "none" else 0.45
 
     @st.cache_resource(show_spinner=False)
-    def _v3_field(cfg_json, root):
+    def _v3_field(cfg_json, root, ver=0):
         import json as _json
         return v3.RunField(_json.loads(cfg_json), root)
     import json as _json3
-    v3_fields = [_v3_field(_json3.dumps(d_[1][2], sort_keys=True, default=str), v3_root) for d_ in v3_data] \
+    v3_fields = [_v3_field(_json3.dumps(d_[1][2], sort_keys=True, default=str), v3_root, getattr(v3, 'FIELD_VERSION', 0)) for d_ in v3_data] \
         if v3_fmode != "none" else None
     if v3_fields:
         st.sidebar.caption("; ".join(f"{l.split('/')[-1][:28]}…: {f_.kind} field {f_.note}".strip()

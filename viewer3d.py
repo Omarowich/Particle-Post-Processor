@@ -284,6 +284,8 @@ def _overlay_2d(ax, field, plane, at, mode, alpha=0.45):
 # --------------------------------------------------------------------------- views, snapshots and animations
 VIEWS = {"3D perspective": "3d", "Top (x–y)": "xy", "Side along x (y–z, field axis)": "yz",
          "Side along y (x–z)": "xz", "Top + side": "xy+yz"}
+CLUSTER_RC = 2.2      # um: two particles count as bonded (same cluster) within 1.1 sigma
+FIELD_VERSION = 2     # bump when RunField changes, so the app's cached fields are rebuilt
 COLOR_BY = {"plain": "plain colour", "stacked": "resting on another particle", "height": "height z (µm)",
             "coordination": "3D coordination", "clusters": "largest cluster"}
 FIELD_OVERLAYS = {"none": "none", "potential": "Gor'kov potential (shading)", "force": "|force| (shading)",
@@ -307,7 +309,7 @@ def particle_colours(P, by="plain", plain="#e34948", rc=2.9, rng=None, cmap="vir
         top[jj[sel & (dz < -A_UM)]] = True
         return np.array([to_rgba(plain) if t_ else to_rgba("#c9c7bd") for t_ in top]), None
     if by == "clusters":
-        i, j = _pairs(P, rc)
+        i, j = _pairs(P, CLUSTER_RC)        # bonded = centres within 1.1 sigma (Lindemann), not the 2.9 um shell of z
         lab = np.arange(n)
 
         def root(u):
