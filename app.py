@@ -5161,7 +5161,7 @@ elif plot_mode == "3D viewer":
         v3_azim = cv2.slider("Azimuth (°)", -180, 180, -60, 5, key="v3_azim")
     st.sidebar.header("5. Colour and show")
     v3_by = st.sidebar.selectbox("Colour by", list(v3.COLOR_BY), format_func=lambda k_: v3.COLOR_BY[k_], key="v3_by",
-                                 index=1, help="'resting on another particle': stacked particles in the particle colour, "
+                                 index=list(v3.COLOR_BY).index("clusters"), help="'resting on another particle': stacked particles in the particle colour, "
                                                "particles on the floor or beside others in grey.")
     cc1, cc2 = st.sidebar.columns(2)
     v3_plain = cc1.color_picker("Particle colour", "#e34948", key="v3_plain")
