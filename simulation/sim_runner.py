@@ -124,6 +124,10 @@ def start_positions(st, run_seed):
     if kind == "run":   # a frame of an existing run
         x, y, t = bd.read_comsol(st["folder"])
         k = int(np.clip(np.searchsorted(t, float(st.get("t_tauB", 1e9)) * bd.TAUB - 1e-9), 0, len(t) - 1))
+        zf = os.path.join(st["folder"], "dataz.csv")
+        if os.path.isfile(zf):          # a 3D run: keep the heights (e.g. a 3D band)
+            z = np.loadtxt(zf, delimiter=",", skiprows=1)[0::2]
+            return np.c_[x[k], y[k], z[k]]
         return np.c_[x[k], y[k]]
     raise ValueError(f"unknown start kind {kind}")
 
@@ -294,6 +298,8 @@ def run_one(args):
         _status(job_dir, key, state="exists", name=name, folder=folder, frac=1.0)
         return name, "already existed"
     P0 = start_positions(c["start"], seed)
+    if int(c.get("dim", 2)) != 3 and P0.shape[1] == 3:
+        P0 = P0[:, :2]                       # a 2D run started from a frame of a 3D run: drop the heights
     ao = (float(c["q"]), float(c["phi_p"])) if c["potential"] == "AO" else None
     att = att_of(c)
     radii = radii_of(c, seed)
