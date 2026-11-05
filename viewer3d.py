@@ -413,31 +413,28 @@ def run_info_lines(cfg, name=""):
     m_ = re.search(r"_N(\d+)", str(name))
     n_ = int(m_.group(1)) if m_ else n_
     H = c.get("H")
-    p2 = (f"H = {float(H):g} µm · " if H else ("open top · " if int(c.get("dim", 2)) == 3 else "2D · ")) + \
-         f"box {2 * half:g} × {2 * half:g} µm" + (f" · N = {n_}" if n_ else "") + \
-         (f" · Δρ = {float(c.get('drho', 0)):g} kg/m³" if int(c.get("dim", 2)) == 3 else "")
+    p2 = (f"H {float(H):g} µm · " if H else ("open top · " if int(c.get("dim", 2)) == 3 else "2D · ")) + \
+         f"box {2 * half:g}" + (f" · N {n_}" if n_ else "") + \
+         (f" · Δρ {float(c.get('drho', 0)):g}" if int(c.get("dim", 2)) == 3 else "")
     fa = c.get("field_auto") or {}
     dn = float(c.get("dn_nm", 0) or 0)
-    if fa:
-        drv = {"side": "side wall", "idt": "IDT standing SAW", "idt_travel": "IDT travelling SAW"}.get(fa.get("drive"), fa.get("drive"))
-        fld = f"{drv} {fa.get('freq_MHz', 20):g} MHz, {fa.get('lid', '')} lid, d$_n$ = {dn:g} nm"
-        if c.get("radiation_off"):
-            fld = f"streaming only ({drv}, {fa.get('lid', '')} lid)"
-        elif c.get("field_auto_streaming", 0):
-            fld += " + computed streaming"
+    if fa:   # compact: drive+MHz, lid, d_n, streaming
+        drv = {"side": "wall", "idt": "IDT", "idt_travel": "IDT-trav"}.get(fa.get("drive"), str(fa.get("drive")))
+        lid = {"glass": "glass", "pdms": "PDMS", "absorb": "abs"}.get(fa.get("lid"), str(fa.get("lid", "")))
+        fld = f"{drv}{float(fa.get('freq_MHz', 20)):g} {lid}"
+        fld += " str-only" if c.get("radiation_off") else (f" d$_n${dn:g}" + (" +str" if c.get("field_auto_streaming", 0) else ""))
     elif c.get("arf3d_file"):
-        fld = f"field file {os.path.basename(str(c['arf3d_file']))}, d$_n$ = {dn:g} nm"
+        fld = f"file d$_n${dn:g}"
     elif dn > 0:
-        fld = f"1D standing wave, d$_n$ = {dn:g} nm"
+        fld = f"1D d$_n${dn:g}"
     else:
         fld = "no field"
     if float(c.get("flow_F", 0) or 0) > 0:
-        fld += f" · streaming F = {float(c['flow_F']):g}"
+        fld += f" +F{float(c['flow_F']):g}"
     if float(c.get("rayleigh_A", 0) or 0) > 0:
-        fld += f" · rolls {float(c['rayleigh_A']):g} µm/s"
+        fld += f" +roll{float(c['rayleigh_A']):g}"
     seed = re.search(r"seed(\d+)", str(name))
-    tag = "_".join(t_ for t_ in str(c.get("tag") or "").split("_") if t_ and not re.fullmatch(r"(N\d+|box\d+|SSAW\d+|SIDE\d+|hard|glass|pdms|absorb)", t_, re.I))
-    p3 = f"{fld} · {float(c.get('T_tauB', 0)):g} τ$_B$" + (f" · s{seed.group(1)}" if seed else "") + (f" · {tag}" if tag else "")
+    p3 = f"{fld} · {float(c.get('T_tauB', 0)):g}τ$_B$" + (f" · s{seed.group(1)}" if seed else "")
     return [p1, p2, p3]
 
 def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e34948", elev=22, azim=-60,
