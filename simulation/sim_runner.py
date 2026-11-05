@@ -235,11 +235,12 @@ def _field_auto(c):
     fa = c["field_auto"]
     drive, lid, f = fa.get("drive", "side"), fa.get("lid", "glass"), float(fa.get("freq_MHz", 20.0))
     H, bh = float(c["H"]), float(c.get("box_half", bd.BOX))
+    fluid = fa.get("fluid", "legacy")
     path = os.path.join(c.get("out_root", "."), "_fields",
-                        f"auto_{drive}{f:g}_H{H:g}_box{2 * bh:g}_{lid}.npz")
+                        f"auto_{drive}{f:g}_H{H:g}_box{2 * bh:g}_{lid}" + ("" if fluid == "legacy" else f"_{fluid}") + ".npz")
     if path not in _AUTO_CACHE:
         if not os.path.isfile(path):
-            res = s2.compute(drive, H_um=H, box_half_um=bh, freq_MHz=f, lid=lid)
+            res = s2.compute(drive, H_um=H, box_half_um=bh, freq_MHz=f, lid=lid, fluid=fluid)
             s2.save(path, res, fa)
         _AUTO_CACHE[path] = np.load(path)
     d = _AUTO_CACHE[path]

@@ -33,12 +33,29 @@ import os
 import numpy as np
 
 
-def first_order(drive="side", H_um=20.0, box_half_um=25.0, freq_MHz=20.0, lid="glass", c0=None, rho0=1180.0,
-                c_saw=3990.0, h_um=None, Z_pdms=1.0e6):
+# Fluid sets. "legacy": the values used for the runs before 6 Nov 2026 (rho0 1180, c0 chosen per drive, PS c_p 2350).
+# "water": the COMSOL model's fluid (paper Table 1). For the side-wall drive with water, the frequency is set so that
+# the force period equals the 2D fit (2 pi / 0.124 um^-1 = 50.7 um): f = c0 k_fit / (4 pi) = 14.6 MHz.
+K_FIT = 0.124e6                       # 1/m, force wavenumber of the 2D fit
+FLUIDS = {"legacy": dict(rho0=1180.0, c0_side=2030.0, c0_idt=1850.0, c_p=2350.0, side_from_fit=False),
+          "water": dict(rho0=998.0, c0_side=1481.0, c0_idt=1481.0, c_p=2400.0, side_from_fit=True)}
+
+
+def fluid_params(fluid, drive, freq_MHz):
+    """(rho0, c0, c_p, f in Hz) for a fluid set and drive."""
+    F = FLUIDS[fluid or "legacy"]
+    c0 = F["c0_side"] if drive == "side" else F["c0_idt"]
+    f = c0 * K_FIT / (4 * np.pi) if (drive == "side" and F["side_from_fit"]) else freq_MHz * 1e6
+    return F["rho0"], c0, F["c_p"], f
+
+
+def first_order(drive="side", H_um=20.0, box_half_um=25.0, freq_MHz=20.0, lid="glass", c0=None, rho0=None,
+                c_saw=3990.0, h_um=None, Z_pdms=1.0e6, fluid="legacy"):
     """y-z cross-section of the first-order field: ys, zs (m), p (Pa, exp(-i w t) convention), omega, rho0, c0."""
     import acoustic3d as a3
-    c0 = (2030.0 if drive == "side" else 1850.0) if c0 is None else c0
-    f = freq_MHz * 1e6
+    r0, c0f, _, f = fluid_params(fluid, drive, freq_MHz)
+    rho0 = r0 if rho0 is None else rho0
+    c0 = c0f if c0 is None else c0
     h = (h_um or (0.25 if H_um <= 6 else 0.5)) * 1e-6
     kw = dict(top="hard") if lid == "glass" else dict(top="impedance", Z_top=Z_pdms if lid == "pdms" else rho0 * c0)
     if drive == "idt":
@@ -143,11 +160,12 @@ def stokes_streamfunction(ys, zs, slip):
 
 
 def compute(drive="side", H_um=20.0, box_half_um=25.0, freq_MHz=20.0, lid="glass", dn_nm=4000.0,
-            F0_ref=18.4, rho_p=1050.0, c_p=2350.0, amp_ref=None, **kw):
+            F0_ref=18.4, rho_p=1050.0, c_p=None, amp_ref=None, fluid="legacy", **kw):
     """Streaming (um/s) and radiation force (kBT/um) of one chamber, on the y-z grid, with one acoustic amplitude:
     scaled so that the peak F_y at mid-height equals F0_ref (d_n / 4000 nm)^2."""
     import arf3d_field as af
-    ys, zs, p, omega, rho0, c0 = first_order(drive, H_um, box_half_um, freq_MHz, lid, **kw)
+    c_p = fluid_params(fluid, drive, freq_MHz)[2] if c_p is None else c_p
+    ys, zs, p, omega, rho0, c0 = first_order(drive, H_um, box_half_um, freq_MHz, lid, fluid=fluid, **kw)
     vy, vz = acoustic_velocity(ys, zs, p, omega, rho0)
     U, W, _ = stokes_streamfunction(ys, zs, slip_velocities(ys, zs, vy, vz, omega, p, rho0, c0))
     f1, f2 = af.contrast_factors(rho_p, c_p, rho0, c0)

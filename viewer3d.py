@@ -209,7 +209,7 @@ class RunField:
         if fa and data_root:
             p0 = os.path.join(data_root, "_fields", f"auto_{fa.get('drive', 'side')}{float(fa.get('freq_MHz', 20)):g}"
                                                     f"_H{float(cfg.get('H') or top):g}_box{2 * float(cfg.get('box_half', half)):g}"
-                                                    f"_{fa.get('lid', 'glass')}.npz")
+                                                    f"_{fa.get('lid', 'glass')}" + ("" if fa.get("fluid", "legacy") == "legacy" else "_" + fa["fluid"]) + ".npz")
             sf = (dn / 4000.0) ** 2 * float(cfg.get("field_auto_streaming") if cfg.get("field_auto_streaming") is not None else 1.0)
             if os.path.isfile(p0) and sf:
                 d0 = np.load(p0)
@@ -223,7 +223,8 @@ class RunField:
         if fa and data_root:                               # computed chamber field (sim_runner field_auto cache)
             H_ = float(cfg.get("H") or top); bh = float(cfg.get("box_half", half))
             p_ = os.path.join(data_root, "_fields", f"auto_{fa.get('drive', 'side')}{float(fa.get('freq_MHz', 20)):g}"
-                                                    f"_H{H_:g}_box{2 * bh:g}_{fa.get('lid', 'glass')}.npz")
+                                                    f"_H{H_:g}_box{2 * bh:g}_{fa.get('lid', 'glass')}"
+                                                    + ("" if fa.get("fluid", "legacy") == "legacy" else "_" + fa["fluid"]) + ".npz")
             if os.path.isfile(p_):
                 d = np.load(p_); s_ = (dn / 4000.0) ** 2
                 self.ys, self.zs = d["ys"] * 1e6, d["zs"] * 1e6; self.xs = np.linspace(-half, half, 21)
@@ -315,7 +316,7 @@ VIEWS = {"3D perspective": "3d", "Top (x–y)": "xy", "Side along x (y–z, fiel
          "Side along y (x–z)": "xz", "Top + side": "xy+yz"}
 OTHER_ALPHA = 0.3     # opacity of particles outside the largest cluster ("largest cluster" colouring)
 CLUSTER_RC = 2.2      # um: two particles count as bonded (same cluster) within 1.1 sigma
-FIELD_VERSION = 3     # bump when RunField changes, so the app's cached fields are rebuilt
+FIELD_VERSION = 4     # bump when RunField changes, so the app's cached fields are rebuilt
 COLOR_BY = {"plain": "plain colour", "stacked": "resting on another particle", "height": "height z (µm)",
             "coordination": "3D coordination", "clusters": "largest cluster"}
 FIELD_OVERLAYS = {"none": "none", "potential": "Gor'kov potential (shading)", "force": "|force| (shading)",
