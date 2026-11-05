@@ -204,11 +204,20 @@ class RunField:
         dn = float(cfg.get("dn_nm", 0) or 0)
         f = cfg.get("arf3d_file")
         fa = cfg.get("field_auto") or {}
+        self.flow = None                                  # (ys, zs, U, W) in um, um/s: computed streaming in the y-z plane
+        if fa and data_root:
+            p0 = os.path.join(data_root, "_fields", f"auto_{fa.get('drive', 'side')}{float(fa.get('freq_MHz', 20)):g}"
+                                                    f"_H{float(cfg.get('H') or top):g}_box{2 * float(cfg.get('box_half', half)):g}"
+                                                    f"_{fa.get('lid', 'glass')}.npz")
+            sf = (dn / 4000.0) ** 2 * float(cfg.get("field_auto_streaming") if cfg.get("field_auto_streaming") is not None else 1.0)
+            if os.path.isfile(p0) and sf:
+                d0 = np.load(p0)
+                self.flow = (d0["ys"] * 1e6, d0["zs"] * 1e6, d0["U"] * sf, d0["W"] * sf)
         if cfg.get("radiation_off"):                       # streaming-only run: no radiation force acted
             self.xs = np.linspace(-half, half, 21); self.ys = np.linspace(-half, half, 21); self.zs = np.linspace(0, top, 5)
             self.F = np.zeros((21, 21, 5, 3)); self.kind = "none"
             self.note = "streaming only: the radiation force was off in this run"
-            self.U = np.zeros(self.F.shape[:3]); self.empty = True
+            self.U = np.zeros(self.F.shape[:3]); self.empty = self.flow is None
             return
         if fa and data_root:                               # computed chamber field (sim_runner field_auto cache)
             H_ = float(cfg.get("H") or top); bh = float(cfg.get("box_half", half))
@@ -276,7 +285,17 @@ class RunField:
 
 
 def _overlay_2d(ax, field, plane, at, mode, alpha=0.45):
-    if field is None or field.empty or mode == "none":
+    if field is None or mode == "none":
+        return
+    if mode == "streaming":
+        if getattr(field, "flow", None) is None or plane != "yz":
+            return
+        ys, zs, U, W = field.flow
+        sp = np.hypot(U, W)
+        ax.pcolormesh(ys, zs, sp.T, cmap="Blues", alpha=alpha, shading="auto", zorder=0, rasterized=True)
+        ax.streamplot(ys, zs, U.T, W.T, color="#33415c", density=(1.4, 0.8), linewidth=0.5, arrowsize=0.6, zorder=1)
+        return
+    if field.empty:
         return
     a, b, U, Fa, Fb = field.plane(plane, at)
     if "potential" in mode or mode == "force":
@@ -294,11 +313,12 @@ def _overlay_2d(ax, field, plane, at, mode, alpha=0.45):
 VIEWS = {"3D perspective": "3d", "Top (x–y)": "xy", "Side along x (y–z, field axis)": "yz",
          "Side along y (x–z)": "xz", "Top + side": "xy+yz"}
 CLUSTER_RC = 2.2      # um: two particles count as bonded (same cluster) within 1.1 sigma
-FIELD_VERSION = 2     # bump when RunField changes, so the app's cached fields are rebuilt
+FIELD_VERSION = 3     # bump when RunField changes, so the app's cached fields are rebuilt
 COLOR_BY = {"plain": "plain colour", "stacked": "resting on another particle", "height": "height z (µm)",
             "coordination": "3D coordination", "clusters": "largest cluster"}
 FIELD_OVERLAYS = {"none": "none", "potential": "Gor'kov potential (shading)", "force": "|force| (shading)",
-                  "arrows": "force arrows", "potential+arrows": "potential + arrows"}
+                  "arrows": "force arrows", "potential+arrows": "potential + arrows",
+                  "streaming": "streaming flow (side views and 3D back wall)"}
 
 
 def particle_colours(P, by="plain", plain="#e34948", rc=2.9, rng=None, cmap="viridis"):
@@ -378,7 +398,13 @@ def _draw_3d(ax, P, cols, half, top, elev=22, azim=-60, scale=1.0, show_box=True
             ax.plot(xs, ys, [zz] * 5, color="#c3c2b7", lw=0.8)
         for x0, y0 in zip(xs[:4], ys[:4]):
             ax.plot([x0, x0], [y0, y0], [0, top], color="#c3c2b7", lw=0.8)
-    if field is not None and not field.empty and field_mode != "none":
+    if field is not None and field_mode == "streaming" and getattr(field, "flow", None) is not None:
+        ys_, zs_, U_, W_ = field.flow
+        sa, sb = max(1, len(ys_) // 22), max(1, len(zs_) // 8)
+        Y_, Z_ = np.meshgrid(ys_[::sa], zs_[::sb], indexing="ij")
+        ax.quiver(np.full_like(Y_, -half), Y_, Z_ * stretch, np.zeros_like(Y_), U_[::sa, ::sb], W_[::sa, ::sb] * stretch,
+                  length=1.5, normalize=False, color="#2a5aa8", alpha=0.8, linewidth=0.6)
+    elif field is not None and not field.empty and field_mode not in ("none", "streaming"):
         a, b, U, Fa, Fb = field.plane("yz", 0.0)
         img = U if "potential" in field_mode or "arrows" in field_mode else np.hypot(Fa, Fb)
         import matplotlib.pyplot as plt
