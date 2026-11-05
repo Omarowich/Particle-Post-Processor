@@ -366,6 +366,83 @@ def _draw_3d(ax, P, cols, half, top, elev=22, azim=-60, scale=1.0, show_box=True
     ax.set_xlabel("x (µm)"); ax.set_ylabel("y (µm), field"); ax.set_zlabel("z (µm)")
 
 
+
+_B2_CACHE = {}
+
+
+def _b2_of(cfg):
+    """Reduced B2* of the run's pair potential (sim_gui.b2_star), cached; None if it cannot be computed."""
+    keys = ("potential", "A", "q", "phi_p", "eps", "n", "kappa", "width", "core", "core_Z", "lj_cutoff_sigma")
+    k = tuple(str(cfg.get(x)) for x in keys)
+    if k not in _B2_CACHE:
+        try:
+            import sim_gui as _sg
+            _B2_CACHE[k] = float(_sg.b2_star(cfg))
+        except Exception:
+            _B2_CACHE[k] = None
+    return _B2_CACHE[k]
+
+
+def run_info_lines(cfg, name=""):
+    """Compact, complete description of a run for panel titles (from its sim_config.json):
+    line 1 pair potential and B2*, line 2 chamber and system, line 3 field / flow, start, length, seed."""
+    import re
+    c = cfg or {}
+    if not c:
+        return [str(name).split("/")[-1]]
+    pot = c.get("potential", "?")
+    if pot == "AO":
+        p1 = f"AO q = {c.get('q', 0):g}, φ$_p$ = {c.get('phi_p', 0):g}"
+    elif pot == "LJ":
+        p1 = f"LJ 12-6 ε = {c.get('A', 0):g} k$_B$T"
+    elif pot == "LJ2n":
+        p1 = f"2n–n LJ n = {c.get('n', 0):g}, ε = {c.get('eps', 0):g}"
+    elif pot == "SW":
+        p1 = f"square well w = {1000 * float(c.get('width', 0)):.0f} nm, ε = {c.get('eps', 0):g}"
+    elif pot == "YUK":
+        p1 = f"Yukawa κ = {c.get('kappa', 0):g}/µm, ε = {c.get('eps', 0):g}"
+    else:
+        p1 = "no attraction"
+    b2 = _b2_of(c) if pot not in ("none", None) else None
+    p1 += f" · A = {c.get('A', 0):g}" + (f" (B$_2^*$ = {b2:.2f})" if b2 is not None else "")
+    if c.get("polydispersity"):
+        p1 += f" · pd {100 * float(c['polydispersity']):g} %"
+    half = float(c.get("box_half", 25.0))
+    st_ = c.get("start") or {}
+    n_ = (int(st_.get("n_side", 0)) ** 2 * int(st_.get("layers", 1))) if st_.get("kind") in ("grid", "grid3d") else None
+    m_ = re.search(r"_N(\d+)", str(name))
+    n_ = int(m_.group(1)) if m_ else n_
+    H = c.get("H")
+    p2 = (f"H = {float(H):g} µm · " if H else ("open top · " if int(c.get("dim", 2)) == 3 else "2D · ")) + \
+         f"box {2 * half:g} × {2 * half:g} µm" + (f" · N = {n_}" if n_ else "") + \
+         (f" · Δρ = {float(c.get('drho', 0)):g} kg/m³" if int(c.get("dim", 2)) == 3 else "")
+    fa = c.get("field_auto") or {}
+    dn = float(c.get("dn_nm", 0) or 0)
+    if fa:
+        drv = {"side": "side wall", "idt": "IDT standing SAW", "idt_travel": "IDT travelling SAW"}.get(fa.get("drive"), fa.get("drive"))
+        fld = f"{drv} {fa.get('freq_MHz', 20):g} MHz, {fa.get('lid', '')} lid, d$_n$ = {dn:g} nm"
+        if c.get("radiation_off"):
+            fld = f"streaming only ({drv}, {fa.get('lid', '')} lid)"
+        elif c.get("field_auto_streaming", 0):
+            fld += " + computed streaming"
+    elif c.get("arf3d_file"):
+        fld = f"field file {os.path.basename(str(c['arf3d_file']))}, d$_n$ = {dn:g} nm"
+    elif dn > 0:
+        fld = f"1D standing wave, d$_n$ = {dn:g} nm"
+    else:
+        fld = "no field"
+    if float(c.get("flow_F", 0) or 0) > 0:
+        fld += f" · streaming F = {float(c['flow_F']):g}"
+    if float(c.get("rayleigh_A", 0) or 0) > 0:
+        fld += f" · rolls {float(c['rayleigh_A']):g} µm/s"
+    sk = {"grid": "grid", "grid3d": "stacked grid", "aaf": "COMSOL band", "run": "from a run", "random": "random",
+          "file": "file"}.get(st_.get("kind"), st_.get("kind", "?"))
+    seed = re.search(r"seed(\d+)", str(name))
+    tag = c.get("tag") or ""
+    p3 = f"{fld} · start {sk} · {float(c.get('T_tauB', 0)):g} τ$_B$" + (f" · seed {seed.group(1)}" if seed else "") + \
+         (f" · {tag}" if tag else "")
+    return [p1, p2, p3]
+
 def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e34948", elev=22, azim=-60,
                   scale=1.0, show_box=True, show_time=True, show_stats=True, show_name=True, panel=4.6,
                   font=9, fixed_range=None, cmap="viridis", dpi=None, alpha=1.0, depthshade=False, edge="#ffffff",
@@ -405,7 +482,7 @@ def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e3494
             if r == 0:
                 lines = []
                 if show_name:
-                    lines.append(label.split("/")[-1])
+                    lines.extend(run_info_lines(cfg, label))
                 info = []
                 if show_time:
                     info.append(f"t = {t[k] / TAUB_S:.2f} τ$_B$")
