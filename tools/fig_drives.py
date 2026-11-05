@@ -6,8 +6,8 @@ from matplotlib.patches import Rectangle, FancyArrowPatch, Polygon
 D = np.load(sys.argv[1], allow_pickle=True).item(); out = sys.argv[2]
 c0, cs = 1850.0, 3990.0; th = np.arcsin(c0 / cs)
 plt.rcParams.update({"font.size": 8, "axes.spines.top": False, "axes.spines.right": False, "axes.linewidth": 0.6})
-fig = plt.figure(figsize=(7.4, 5.0), constrained_layout=True)
-gs = fig.add_gridspec(2, 4, width_ratios=[1.25, 1, 1, 1])
+fig = plt.figure(figsize=(7.4, 4.0), constrained_layout=True)
+gs = fig.add_gridspec(2, 4, width_ratios=[1.25, 1, 1, 1], height_ratios=[0.45, 1])
 F6 = np.load(sys.argv[3], allow_pickle=True).item()["pdms_H6"] if len(sys.argv) > 3 else None
 
 def arrow(ax, a, b, **kw):
@@ -81,4 +81,4 @@ for k, (key, lab, kind) in enumerate(panels):
     if k == 0:
         ax.set_ylabel("z (µm)")
 os.makedirs(out, exist_ok=True)
-for ext in ("png", "pdf"): fig.savefig(os.path.join(out, f"Fig2_acoustic-drives_side-wall-vs-IDT.{ext}"), dpi=300)
+for ext in ("png", "pdf"): fig.savefig(os.path.join(out, f"Fig3_acoustic-drives_side-wall-vs-IDT.{ext}"), dpi=300)
