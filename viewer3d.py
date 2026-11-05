@@ -194,6 +194,26 @@ class RunField:
         half, top = _box_geometry(cfg, frames if frames is not None else np.zeros((1, 3)))
         dn = float(cfg.get("dn_nm", 0) or 0)
         f = cfg.get("arf3d_file")
+        fa = cfg.get("field_auto") or {}
+        if cfg.get("radiation_off"):                       # streaming-only run: no radiation force acted
+            self.xs = np.linspace(-half, half, 21); self.ys = np.linspace(-half, half, 21); self.zs = np.linspace(0, top, 5)
+            self.F = np.zeros((21, 21, 5, 3)); self.kind = "none"
+            self.note = "streaming only: the radiation force was off in this run"
+            self.U = np.zeros(self.F.shape[:3]); self.empty = True
+            return
+        if fa and data_root:                               # computed chamber field (sim_runner field_auto cache)
+            H_ = float(cfg.get("H") or top); bh = float(cfg.get("box_half", half))
+            p_ = os.path.join(data_root, "_fields", f"auto_{fa.get('drive', 'side')}{float(fa.get('freq_MHz', 20)):g}"
+                                                    f"_H{H_:g}_box{2 * bh:g}_{fa.get('lid', 'glass')}.npz")
+            if os.path.isfile(p_):
+                d = np.load(p_); s_ = (dn / 4000.0) ** 2
+                self.ys, self.zs = d["ys"] * 1e6, d["zs"] * 1e6; self.xs = np.linspace(-half, half, 21)
+                F = np.zeros((len(self.xs), len(self.ys), len(self.zs), 3))
+                F[..., 1] = (d["Fy"] * s_)[None]; F[..., 2] = (d["Fz"] * s_)[None]
+                self.F, self.kind, self.note = F, "3D", os.path.basename(p_)
+                self.U = self._potential(); self.empty = not np.any(self.F)
+                return
+            self.note = f"computed field {os.path.basename(p_)} not found: showing the 1D standing wave"
         if f:
             path = f if os.path.isfile(f) else None
             if path is None and data_root:                 # Windows path from another machine: look in Data/_fields
