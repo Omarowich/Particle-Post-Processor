@@ -435,12 +435,9 @@ def run_info_lines(cfg, name=""):
         fld += f" · streaming F = {float(c['flow_F']):g}"
     if float(c.get("rayleigh_A", 0) or 0) > 0:
         fld += f" · rolls {float(c['rayleigh_A']):g} µm/s"
-    sk = {"grid": "grid", "grid3d": "stacked grid", "aaf": "COMSOL band", "run": "from a run", "random": "random",
-          "file": "file"}.get(st_.get("kind"), st_.get("kind", "?"))
     seed = re.search(r"seed(\d+)", str(name))
-    tag = c.get("tag") or ""
-    p3 = f"{fld} · start {sk} · {float(c.get('T_tauB', 0)):g} τ$_B$" + (f" · seed {seed.group(1)}" if seed else "") + \
-         (f" · {tag}" if tag else "")
+    tag = "_".join(t_ for t_ in str(c.get("tag") or "").split("_") if t_ and not re.fullmatch(r"(N\d+|box\d+)", t_))
+    p3 = f"{fld} · {float(c.get('T_tauB', 0)):g} τ$_B$" + (f" · s{seed.group(1)}" if seed else "") + (f" · {tag}" if tag else "")
     return [p1, p2, p3]
 
 def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e34948", elev=22, azim=-60,
