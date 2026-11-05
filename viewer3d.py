@@ -436,7 +436,7 @@ def run_info_lines(cfg, name=""):
     if float(c.get("rayleigh_A", 0) or 0) > 0:
         fld += f" · rolls {float(c['rayleigh_A']):g} µm/s"
     seed = re.search(r"seed(\d+)", str(name))
-    tag = "_".join(t_ for t_ in str(c.get("tag") or "").split("_") if t_ and not re.fullmatch(r"(N\d+|box\d+)", t_))
+    tag = "_".join(t_ for t_ in str(c.get("tag") or "").split("_") if t_ and not re.fullmatch(r"(N\d+|box\d+|SSAW\d+|SIDE\d+|hard|glass|pdms|absorb)", t_, re.I))
     p3 = f"{fld} · {float(c.get('T_tauB', 0)):g} τ$_B$" + (f" · s{seed.group(1)}" if seed else "") + (f" · {tag}" if tag else "")
     return [p1, p2, p3]
 
