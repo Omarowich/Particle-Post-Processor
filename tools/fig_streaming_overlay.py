@@ -26,13 +26,23 @@ for r, (key, fn, title) in enumerate(CASES):
         P = S[f"{key}|{T}"]
         a.scatter(P[:, 1], P[:, 2], s=6 if half < 30 else 3, color="#e34948", edgecolor="white", linewidth=0.2, zorder=3)
         a.axvline(0, color="#999", ls=":", lw=0.6)
+        # where the sound comes from (orange) and what the lid does (grey solid = reflecting glass, purple dashed = absorbing)
+        src = dict(color="#eb6834", lw=3.2, solid_capstyle="butt", zorder=4, clip_on=False)
+        if key.startswith("side"):
+            a.plot([-half, -half], [0, H], **src); a.plot([half, half], [0, H], **src)
+            a.plot([-half, half], [H, H], color="#555", lw=2.2, zorder=4, clip_on=False)
+        else:
+            a.plot([-half, half], [0, 0], **src)
+            a.plot([-half, half], [H, H], color="#7a2a9a", lw=1.6, ls=(0, (3, 2)), zorder=4, clip_on=False)
         a.set_xlim(-half, half); a.set_ylim(0, H)
         if r == 0: a.set_title(f"{T} τ$_B$", fontsize=8, fontweight="bold")
         if c == 0: a.set_ylabel("z (µm)")
 
     ax[r, 0].text(0.02, 0.97, title, transform=ax[r, 0].transAxes, fontsize=6.5, fontweight="bold", va="top", zorder=5,
                   bbox=dict(fc="white", ec="none", alpha=0.85, pad=1.5)).set_in_layout(False)
-fig.supxlabel("y (µm), across the band (dotted: pressure node)", fontsize=7)
+fig.supxlabel("y (µm), across the band (dotted: pressure node).  Orange: vibrating surface that makes the sound "
+              "(side wall: both side walls move in y; IDT: the floor carries the standing SAW from IDTs outside the box).  "
+              "Lid: grey = glass (reflects), purple dashed = absorbing.", fontsize=6.3, wrap=True)
 sm = plt.cm.ScalarMappable(cmap="Blues", norm=plt.Normalize(0, vmax)); sm.set_array([])
 fig.colorbar(sm, ax=ax[:, -1], shrink=0.5, label="streaming speed (µm/s), d$_n$ = 4000 nm")
 for e in ("png", "pdf"): fig.savefig(os.path.join(out, f"Fig12b_streaming-field-with-particles_side-views.{e}"), dpi=300)
