@@ -70,7 +70,8 @@ def _pairs(P, rc):
 
 def frame_stats(P, rc=2.9, box=50.0, a=A_UM):
     """3D observables of one frame. z: neighbours within rc = 2.9 um (as obs3d.py and the 2D analysis);
-    S_max and spanning: clusters of bonded particles, centres within CLUSTER_RC = 2.2 um (1.1 sigma). NOTE: the 2D
+    S_max and spanning: clusters of bonded particles, centres within OTHER_ALPHA = 0.3     # opacity of particles outside the largest cluster ("largest cluster" colouring)
+CLUSTER_RC = 2.2 um (1.1 sigma). NOTE: the 2D
     analysis and Data/_tools/obs3d.py use 2.9 um for clusters too, so S_max here is stricter (smaller)."""
     n = len(P)
     i, j = _pairs(P, rc)
@@ -312,6 +313,7 @@ def _overlay_2d(ax, field, plane, at, mode, alpha=0.45):
 # --------------------------------------------------------------------------- views, snapshots and animations
 VIEWS = {"3D perspective": "3d", "Top (x–y)": "xy", "Side along x (y–z, field axis)": "yz",
          "Side along y (x–z)": "xz", "Top + side": "xy+yz"}
+OTHER_ALPHA = 0.3     # opacity of particles outside the largest cluster ("largest cluster" colouring)
 CLUSTER_RC = 2.2      # um: two particles count as bonded (same cluster) within 1.1 sigma
 FIELD_VERSION = 3     # bump when RunField changes, so the app's cached fields are rebuilt
 COLOR_BY = {"plain": "plain colour", "stacked": "resting on another particle", "height": "height z (µm)",
@@ -319,6 +321,14 @@ COLOR_BY = {"plain": "plain colour", "stacked": "resting on another particle", "
 FIELD_OVERLAYS = {"none": "none", "potential": "Gor'kov potential (shading)", "force": "|force| (shading)",
                   "arrows": "force arrows", "potential+arrows": "potential + arrows",
                   "streaming": "streaming flow (side views and 3D back wall)"}
+
+
+def _with_alpha(cols, alpha):
+    """RGBA colours with the overall opacity multiplied into each particle's own alpha."""
+    c = np.array(cols, float, copy=True)
+    if c.ndim == 2 and c.shape[1] == 4:
+        c[:, 3] *= float(alpha)
+    return c
 
 
 def particle_colours(P, by="plain", plain="#e34948", rc=2.9, rng=None, cmap="viridis"):
@@ -353,7 +363,7 @@ def particle_colours(P, by="plain", plain="#e34948", rc=2.9, rng=None, cmap="vir
         roots = np.array([root(u) for u in range(n)])
         cnt = np.bincount(roots)
         big = (roots == np.argmax(cnt)) & (cnt.max() >= 3)      # no "largest cluster" while everything is single
-        return np.array([to_rgba(plain) if b else to_rgba("#b8b6ad") for b in big]), None
+        return np.array([to_rgba(plain) if b else to_rgba("#b8b6ad", OTHER_ALPHA) for b in big]), None
     if by == "height":
         v = P[:, 2]
     else:
@@ -372,7 +382,7 @@ def _draw_2d(ax, P, cols, plane, half, top, scale=1.0, show_box=True, edge="#fff
     _overlay_2d(ax, field, plane, at, field_mode, field_alpha)
     order = np.argsort(P[:, depth])                     # far particles first
     ax.add_collection(PatchCollection([Circle((P[k, a_], P[k, b_]), A_UM * scale) for k in order],
-                                      facecolors=cols[order], edgecolors=edge, linewidths=0.3, alpha=alpha, zorder=3))
+                                      facecolors=_with_alpha(cols[order], alpha), edgecolors=edge, linewidths=0.3, zorder=3))
     lim = {0: (-half, half), 1: (-half, half), 2: (0.0, top)}
     if show_box:
         (x0, x1), (y0, y1) = lim[a_], lim[b_]
@@ -390,7 +400,7 @@ def _draw_3d(ax, P, cols, half, top, elev=22, azim=-60, scale=1.0, show_box=True
     span = max(2 * half, top)
     pts_per_um = panel_in * 72 * 0.62 / span                 # rough: axes fill ~62 % of the panel
     s = (2 * A_UM * scale * pts_per_um) ** 2
-    ax.scatter(P[:, 0], P[:, 1], P[:, 2], s=s, c=cols, edgecolors=edge, linewidths=0.3, alpha=alpha,
+    ax.scatter(P[:, 0], P[:, 1], P[:, 2], s=s, c=_with_alpha(cols, alpha), edgecolors=edge, linewidths=0.3,
                depthshade=depthshade)
     if show_box:
         xs = [-half, half, half, -half, -half]; ys = [-half, -half, half, half, -half]
@@ -470,8 +480,14 @@ def run_info_lines(cfg, name=""):
     m_ = re.search(r"_N(\d+)", str(name))
     n_ = int(m_.group(1)) if m_ else n_
     H = c.get("H")
+    if n_:
+        a_ = float(c.get("radius_um", 1.0))
+        if int(c.get("dim", 2)) == 3 and H:
+            frac = f" (φ$_V$ {n_ * 4 / 3 * np.pi * a_ ** 3 / ((2 * half) ** 2 * float(H)):.3f})"
+        else:
+            frac = f" (φ$_A$ {n_ * np.pi * a_ ** 2 / (2 * half) ** 2:.3f})"
     p2 = (f"H {float(H):g} µm · " if H else ("open top · " if int(c.get("dim", 2)) == 3 else "2D · ")) + \
-         f"box {2 * half:g}" + (f" · N {n_}" if n_ else "") + \
+         f"box {2 * half:g}" + (f" · N {n_}{frac}" if n_ else "") + \
          (f" · Δρ {float(c.get('drho', 0)):g}" if int(c.get("dim", 2)) == 3 else "")
     fa = c.get("field_auto") or {}
     dn = float(c.get("dn_nm", 0) or 0)
