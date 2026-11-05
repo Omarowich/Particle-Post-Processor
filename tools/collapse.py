@@ -8,7 +8,26 @@ base = {"core": "coulomb", "core_Z": 100, "q": 0.05, "phi_p": 0.1, "A": 0.0, "lj
 EXTRA = {"2n-n LJ": ("LJ2n", "n", 57.55), "Yukawa": ("YUK", "kappa", 17.28), "square well": ("SW", "width", 0.03319)}
 r = np.linspace(1.5, 12, 120001)
 cache = {}
+NEW = {"2n-n LJ n=8": ("LJ2n", "n", 8.0, {1: 1.32, 2: 2.421, 3: 3.436, 5: 5.4}),
+       "2n-n LJ n=12": ("LJ2n", "n", 12.0, {1: 1.82, 2: 3.005, 3: 4.022, 5: 5.949}),
+       "Yukawa k=2": ("YUK", "kappa", 2.0, {1: 1.837, 2: 3.206, 3: 4.379, 5: 6.522}),
+       "Yukawa k=4": ("YUK", "kappa", 4.0, {1: 2.605, 2: 4.002, 3: 5.117, 5: 7.137})}
+def states(f):
+    """State table, with the batch-19 intermediate-range models appended to Regime I."""
+    d = pd.read_csv(T + f)
+    if "RegimeI." in f:
+        try:
+            n = pd.read_csv(T + "obs_19.csv")
+            lab = {"LJ2n_n8": "2n-n LJ n=8", "LJ2n_n12": "2n-n LJ n=12", "YUK_k2": "Yukawa k=2", "YUK_k4": "Yukawa k=4"}
+            n["model"] = n.name.str.extract(r"BD_(LJ2n_n\d+|YUK_k\d+)")[0].map(lab)
+            n["A"] = n.name.str.extract(r"^(\d+)Tkb")[0].astype(float); n["t_tauB"] = n.t
+            d = pd.concat([d, n[["model", "A", "t_tauB", "z", "Smax", "psi6"]]], ignore_index=True)
+        except FileNotFoundError:
+            pass
+    return d
 def cfg(model, A):
+    if model in NEW:
+        pot, pk, pv, E = NEW[model]; return {**base, "potential": pot, pk: pv, "eps": E[int(A)]}
     if model == "LJ 12-6":
         return {**base, "potential": "LJ", "A": A}
     if model.startswith("AO"):
@@ -31,7 +50,7 @@ if __name__ == '__main__':
     if __name__ != "__main__":
         pass
     for f, reg, T_ in (("states_RegimeI.csv", "I", 10.0), ("states_RegimeIII.csv", "III", 10.0)):
-        d = pd.read_csv(T + f); d = d[np.isclose(d.t_tauB, T_) & (d.A > 0)]
+        d = states(f); d = d[np.isclose(d.t_tauB, T_) & (d.A > 0)]
         for (m, A), g in d.groupby(["model", "A"]):
             try:
                 bs = b2s(m, float(A), CUTS)

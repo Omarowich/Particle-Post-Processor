@@ -1,7 +1,7 @@
 """Fig. 11 (draft): 2D vs full 3D against chamber height (batches 17a-i). AO q = 0.05, PS (drho = 52), N = 144, 50 um box.
 Usage: python fig_hscan.py <hscan csv> <states_RegimeI.csv> <states_RegimeIII.csv> <out dir>"""
 import sys, os, numpy as np, pandas as pd, matplotlib
-matplotlib.use("Agg"); import matplotlib.pyplot as plt
+matplotlib.use("Agg"); import matplotlib.pyplot as plt, matplotlib.ticker
 hs, sI, sIII, out = sys.argv[1:5]
 d = pd.read_csv(hs); d = d[d.name.str.contains("_10TauB_|_5TauB_2500|_5TauB_3500")]
 d3 = d[d.dim == 3]; d2 = d[d.dim == 2]
@@ -41,9 +41,11 @@ for c in range(3):
     ax[1, c].set_ylabel("fraction resting on another"); ax[1, c].set_ylim(0, 0.7)
     for r in range(2):
         ax[r, c].set_xscale("log"); ax[r, c].set_xticks([2.2, 3, 4, 6, 10, 20]); ax[r, c].set_xticklabels(["2.2", "3", "4", "6", "10", "20"])
-        ax[r, c].axvline(2.2, color="#bbb", lw=0.6, ls=":")
+        ax[r, c].xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax[r, c].axvspan(2.0, 3.5, color="#e8f3e8", zorder=0, lw=0)
     ax[1, c].set_xlabel("chamber height H (µm)")
     ax[1, c].axhline(0, color="#999", lw=0.5)
+ax[1, 0].text(2.6, 0.62, "room for\none layer", fontsize=6.5, color="#3a7d3a", ha="center")
 ax[0, 0].legend(frameon=False, fontsize=6.5, loc="lower left"); ax[0, 1].legend(frameon=False, fontsize=6.5, loc="upper left")
 ax[0, 2].legend(frameon=False, fontsize=6.5, loc="lower left")
 for c, lab in enumerate("def"):

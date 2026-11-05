@@ -7,8 +7,9 @@ import sys, json, numpy as np, pandas as pd, matplotlib
 matplotlib.use("Agg"); import matplotlib.pyplot as plt
 R = pd.read_csv("scan.csv"); cum = json.load(open("cumulative.json")); out = sys.argv[1]
 MOD = {"LJ 12-6": ("#2a78d6", "o"), "AO q=0.2": ("#008300", "v"), "AO q=0.075": ("#7fbf7f", "<"), "AO q=0.05": ("#eb6834", "s"),
-       "2n-n LJ": ("#1baf7a", "^"), "square well": ("#eda100", "D"), "Yukawa": ("#e87ba4", "P")}
-LAB = {"AO q=0.05": "AO q = 0.05", "AO q=0.2": "AO q = 0.2", "AO q=0.075": "AO q = 0.075", "2n-n LJ": "2n–n LJ"}
+       "2n-n LJ": ("#1baf7a", "^"), "square well": ("#eda100", "D"), "Yukawa": ("#e87ba4", "P"),
+       "2n-n LJ n=8": ("#4b2991", "X"), "2n-n LJ n=12": ("#8f5bd6", "X"), "Yukawa k=2": ("#7a4b1e", "*"), "Yukawa k=4": ("#c08a4f", "*")}
+LAB = {"AO q=0.05": "AO q = 0.05", "AO q=0.2": "AO q = 0.2", "AO q=0.075": "AO q = 0.075", "2n-n LJ": "2n–n LJ", "2n-n LJ n=8": "2n–n LJ n = 8", "2n-n LJ n=12": "2n–n LJ n = 12", "Yukawa k=2": "Yukawa κ = 2", "Yukawa k=4": "Yukawa κ = 4"}
 cuts = sorted(float(c[1:]) for c in R.columns if c.startswith("c"))
 
 def onset(g, col):
@@ -37,7 +38,7 @@ yl, yt = [], []
 for reg_i, reg in enumerate(("I", "III")):
     G = R[R.regime == reg]
     for k, (m, g) in enumerate(sorted(G.groupby("model"), key=lambda t: t[0])):
-        yy = reg_i * 8 + k
+        yy = reg_i * 12 + k
         o1, o2 = onset(g, "B2"), onset(g, "c1.10")
         c, mk = MOD[m]
         if np.isfinite(o1) and np.isfinite(o2):

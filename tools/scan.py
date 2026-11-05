@@ -5,7 +5,7 @@ import collapse as C                       # reuses cfg(), potential cache, stat
 cuts = np.round(np.arange(1.02, 1.52, 0.02), 2)
 rows = []
 for f, reg in (("states_RegimeI.csv", "I"), ("states_RegimeIII.csv", "III")):
-    d = pd.read_csv(C.T + f); d = d[np.isclose(d.t_tauB, 10.0) & (d.A > 0)]
+    d = C.states(f); d = d[np.isclose(d.t_tauB, 10.0) & (d.A > 0)]
     for (m, A), g in d.groupby(["model", "A"]):
         try:
             bs = C.b2s(m, float(A), [None] + [2.0 * c for c in cuts])
@@ -16,7 +16,7 @@ for f, reg in (("states_RegimeI.csv", "I"), ("states_RegimeIII.csv", "III")):
 R = pd.DataFrame(rows); R.to_csv("/home/claude/sim/b2c/scan.csv", index=False)
 # cumulative B2*(r) at matched A = 3 for every model
 cum = {}
-for m in ("LJ 12-6", "AO q=0.05", "2n-n LJ", "Yukawa", "square well"):
+for m in ("LJ 12-6", "AO q=0.05", "2n-n LJ", "Yukawa", "square well", "2n-n LJ n=8", "2n-n LJ n=12", "Yukawa k=2", "Yukawa k=4"):
     C.b2s(m, 3.0, [None]); U = C.cache[(m, 3.0)]; r = C.r
     f = 1 - np.exp(-np.clip(U, -50, 700))
     cumv = (np.concatenate([[0], np.cumsum(0.5 * (f[1:] * r[1:] + f[:-1] * r[:-1]) * np.diff(r))]) + r[0] ** 2 / 2) / (C.bd.SIGMA ** 2 / 2)
