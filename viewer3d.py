@@ -468,6 +468,58 @@ def run_info_lines(cfg, name=""):
     p3 = f"{fld} · {float(c.get('T_tauB', 0)):g}τ$_B$" + (f" · s{seed.group(1)}" if seed else "")
     return [p1, p2, p3]
 
+
+def _safe(s):
+    import re
+    return re.sub(r"[^A-Za-z0-9.+-]+", "-", str(s)).strip("-")
+
+
+def compact_name(name):
+    """Shorter, file-safe version of a run folder name (drops the parts every run shares)."""
+    import re
+    n = str(name).split("/")[-1].split("\\")[-1]
+    for pat in (r"_dt\d+", r"_core", r"_BD", r"_drho52", r"Tkb", r"TauB"):
+        n = re.sub(pat, {"Tkb": "kT", "TauB": "tB"}.get(pat, ""), n)
+    return _safe(n.replace("_", "-"))
+
+
+def run_file_tag(cfg, name=""):
+    """File-name tag of a 3D run from its settings: model, A, chamber, box, field, length, seed."""
+    import re
+    c = cfg or {}
+    if not c:
+        return compact_name(name)
+    pot = c.get("potential", "none")
+    p = {"AO": f"AO-q{c.get('q', 0):g}", "LJ": "LJ", "LJ2n": f"LJ2n-n{c.get('n', 0):g}",
+         "SW": f"SW-w{1000 * float(c.get('width', 0)):.0f}nm", "YUK": f"YUK-k{c.get('kappa', 0):g}"}.get(pot, "noatt")
+    parts = [f"{p}-A{c.get('A', 0):g}"]
+    if c.get("H"):
+        parts.append(f"H{float(c['H']):g}")
+    parts.append(f"box{2 * float(c.get('box_half', 25)):g}")
+    fa = c.get("field_auto") or {}
+    dn = float(c.get("dn_nm", 0) or 0)
+    if fa:
+        f_ = f"{ {'side': 'wall', 'idt': 'IDT', 'idt_travel': 'IDTtrav'}.get(fa.get('drive'), fa.get('drive'))}{float(fa.get('freq_MHz', 20)):g}{fa.get('lid', '')}"
+        f_ += "-stronly" if c.get("radiation_off") else f"-dn{dn:g}"
+    elif dn > 0:
+        f_ = f"dn{dn:g}"
+    else:
+        f_ = "nofield"
+    if float(c.get("flow_F", 0) or 0) > 0:
+        f_ += f"-F{float(c['flow_F']):g}" + ("hs" if c.get("flow_hele_shaw") else "")
+    parts.append(f_)
+    seed = re.search(r"seed(\d+)", str(name))
+    parts.append(f"{float(c.get('T_tauB', 0)):g}tB" + (f"-s{seed.group(1)}" if seed else ""))
+    return _safe("_".join(parts))
+
+
+def file_name(prefix, tags, suffix, ext, max_len=180):
+    """prefix_tag1_vs_tag2_suffix.ext, shortened (with a count) if very long."""
+    body = "_vs_".join(tags)
+    if len(body) > max_len:
+        body = tags[0][:max_len - 12] + f"_and{len(tags) - 1}more"
+    return f"{prefix}_{body}_{suffix}.{ext}"
+
 def make_figure3d(runs, k_per_run, view="3d", *, color_by="plain", plain="#e34948", elev=22, azim=-60,
                   scale=1.0, show_box=True, show_time=True, show_stats=True, show_name=True, panel=4.6,
                   font=9, fixed_range=None, cmap="viridis", dpi=None, alpha=1.0, depthshade=False, edge="#ffffff",

@@ -5222,10 +5222,10 @@ elif plot_mode == "3D viewer":
         fig3 = v3.make_figure3d(v3_data, ks3, v3_view, azim=v3_azim, **v3_kw)
         st.pyplot(fig3)
         buf3 = io.BytesIO(); fig3.savefig(buf3, format="png", dpi=300, bbox_inches="tight")
-        st.download_button("Download PNG (300 dpi)", buf3.getvalue(), f"3D_snapshot_{t3sel:.2f}tauB.png", "image/png",
-                           key="v3_dl_png")
-        save_figure_if_requested(fig3, f"3D_snapshot_{'_vs_'.join(l.split('/')[-1] for l in v3_sel)}_{t3sel:.2f}tauB",
-                                 save_plots, output_dir)
+        v3_tags = [v3.run_file_tag(d_[1][2], l_) for l_, d_ in zip(v3_sel, v3_data)]
+        v3_png = v3.file_name("3D", v3_tags, f"{v3_view}_t{t3sel:.2f}tB", "png")
+        st.download_button("Download PNG (300 dpi)", buf3.getvalue(), v3_png, "image/png", key="v3_dl_png")
+        save_figure_if_requested(fig3, v3_png[:-4], save_plots, output_dir)
         plt.close(fig3)
     with tab3_anim:
         a1_, a2_, a3_, a4_, a5_ = st.columns([2, 1, 1, 1, 1])
@@ -5249,11 +5249,12 @@ elif plot_mode == "3D viewer":
             bar3.empty()
         if st.session_state.get("v3_gif"):
             st.image(st.session_state["v3_gif"])
-            st.download_button("Download GIF", st.session_state["v3_gif"], "3D_run_animation.gif", "image/gif",
-                               key="v3_dl_gif")
+            v3_gname = v3.file_name("3D-anim", [v3.run_file_tag(d_[1][2], l_) for l_, d_ in zip(v3_sel, v3_data)],
+                                    f"{v3_view}_t{ar0:g}-{ar1:g}tB", "gif")
+            st.download_button("Download GIF", st.session_state["v3_gif"], v3_gname, "image/gif", key="v3_dl_gif")
             if save_plots and output_dir:
                 os.makedirs(output_dir, exist_ok=True)
-                with open(os.path.join(output_dir, "3D_run_animation.gif"), "wb") as fh:
+                with open(os.path.join(output_dir, v3_gname), "wb") as fh:
                     fh.write(st.session_state["v3_gif"])
     with tab3_live:
         live3 = st.selectbox("Run", v3_sel, key="v3_live_run", format_func=lambda l: v3_label_of[l]) \
@@ -5384,11 +5385,12 @@ elif plot_mode == "Run viewer":
         fig = rv.make_figure(rv_runs, [rv.frame_at_time(r[1][2], t_sel * rv.TAUB_S) for r in rv_runs],
                              rv_opts_draw, rv_models)
         st.pyplot(fig)
-        save_figure_if_requested(fig, f"snapshot_{'_vs_'.join(rv_sel)}_{t_sel:.2f}tauB", save_plots, output_dir)
+        import viewer3d as _vn
+        rv_png = _vn.file_name("2D", [_vn.compact_name(n_) for n_ in rv_sel], f"t{t_sel:.2f}tB", "png")
+        save_figure_if_requested(fig, rv_png[:-4], save_plots, output_dir)
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
-        st.download_button("Download PNG (300 dpi)", buf.getvalue(), f"snapshot_{t_sel:.2f}tauB.png", "image/png",
-                           key="rv_dl_png")
+        st.download_button("Download PNG (300 dpi)", buf.getvalue(), rv_png, "image/png", key="rv_dl_png")
         plt.close(fig)
 
     with tab_anim:
@@ -5411,12 +5413,13 @@ elif plot_mode == "Run viewer":
             bar.empty()
         if st.session_state.get("rv_gif"):
             st.image(st.session_state["rv_gif"])
-            st.download_button("Download GIF", st.session_state["rv_gif"], "run_animation.gif", "image/gif",
-                               key="rv_dl_gif")
+            import viewer3d as _vn
+            rv_gname = _vn.file_name("2D-anim", [_vn.compact_name(n_) for n_ in rv_sel], f"t{a0:g}-{a1:g}tB", "gif")
+            st.download_button("Download GIF", st.session_state["rv_gif"], rv_gname, "image/gif", key="rv_dl_gif")
             if save_plots and output_dir:
                 try:
                     os.makedirs(output_dir, exist_ok=True)
-                    pth = os.path.join(output_dir, f"animation_{'_vs_'.join(rv_sel)}.gif")
+                    pth = os.path.join(output_dir, rv_gname)
                     with open(pth, "wb") as fh:
                         fh.write(st.session_state["rv_gif"])
                     st.info(f"Saved animation to: `{pth}`")
