@@ -4719,6 +4719,11 @@ elif plot_mode == "Run simulation":
                 if dim3:
                     st.radio("Height profile of the flow", ["uniform", "parabolic"], horizontal=True, key="sim_fprofile",
                              format_func={"uniform": "same at every height", "parabolic": "no slip at floor and lid"}.get)
+                    st.checkbox("F is a body force between floor and lid (wall friction slows the flow)", key="sim_fhs",
+                                help="Brinkman / Hele-Shaw: mean in-plane speed × K²/(K² + 12/H²), K = 2π / vortex size. "
+                                     "Off: the 2D COMSOL speed is kept at every chamber height.")
+                    if SS.get("sim_fhs"):
+                        st.number_input("Vortex pair size (µm)", 5.0, 1000.0, 50.0, 5.0, key="sim_fvort")
             if dim3:
                 st.number_input("Rayleigh streaming rolls between floor and lid (µm/s; 0 = off)", 0.0, 100.0, step=0.1,
                                 key="sim_rayA", help="Boundary-driven streaming of the standing wave (needs a lid). "
@@ -4801,7 +4806,8 @@ elif plot_mode == "Run simulation":
             cfg.update({"eps": float(SS.sim_eps), sg.ATT_PARAM[pot][0]: float(SS.sim_attp)})
         if dim3:
             cfg.update({"dim": 3, "H": float(SS.sim_H) if SS.sim_H > 0 else None, "drho": float(SS.sim_drho),
-                        "flow_profile": SS.sim_fprofile, "rayleigh_A": float(SS.sim_rayA)})
+                        "flow_profile": SS.sim_fprofile, "rayleigh_A": float(SS.sim_rayA),
+                        "flow_hele_shaw": bool(SS.get("sim_fhs", False)), "flow_vortex_um": float(SS.get("sim_fvort", 50.0))})
             if field and SS.sim_fshape in ("side", "idt", "idt_travel") and SS.get("sim_fauto"):
                 cfg.update({"field_auto": {"drive": SS.sim_fshape, "lid": SS.sim_lid, "freq_MHz": float(SS.sim_freq)},
                             "field_auto_streaming": float(SS.get("sim_ffac", 1.0)),

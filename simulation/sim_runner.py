@@ -49,6 +49,9 @@ DEFAULTS = {
     "dn_nm": 4000.0,              # field amplitude (inward wall displacement); 0 = field off
     "flow_F": 0.0,                # acoustic streaming parameter F (as in COMSOL); 0 = no streaming
     "flow_profile": "uniform",    # 3D: in-plane streaming "uniform" in height or "parabolic" (no slip at floor and lid)
+    "flow_hele_shaw": False,      # 3D: treat F as a body force between floor and lid: in-plane speed reduced by the wall
+                                  # friction, factor K^2 / (K^2 + 12/H^2), K = 2 pi / flow_vortex_um (Brinkman / Hele-Shaw)
+    "flow_vortex_um": 50.0,       # size of one streaming vortex pair (um) for that factor
     "rayleigh_A": 0.0,            # 3D: Rayleigh streaming rolls between floor and lid, um/s (0 = off)
     "secondary_E0": 0.0,          # secondary radiation force, acoustic energy density in kBT/um^3 (0 = off)
     "arf_F0_ref": bd.ARF_F0_REF, "arf_k": bd.ARF_K,
@@ -333,10 +336,14 @@ def run_one(args):
                 arf3d, flow3d = _field_auto(c)
             elif dim == 3 and c.get("arf3d_file"):    # COMSOL 3D pressure field -> Gor'kov force (arf3d_field.py)
                 arf3d = _arf3d_force(c)
+            flowF = float(c.get("flow_F", 0))
+            if dim == 3 and flowF > 0 and c.get("flow_hele_shaw") and H not in (None, "", 0):
+                K = 2 * np.pi / float(c.get("flow_vortex_um", 50.0))
+                flowF *= K ** 2 / (K ** 2 + 12.0 / float(H) ** 2)
             fr, t = be.simulate(A, float(c["dn_nm"]), float(c["T_tauB"]), ao=ao, att=att, radii=radii,
                                 steps_per_tauB=int(c["steps_per_tauB"]), out_per_tauB=int(c["out_per_tauB"]),
                                 seed=seed, core=c["core"] if c["core"] != "none" else "off", start=P0,
-                                progress=progress, flow_F=float(c.get("flow_F", 0)), dim=dim,
+                                progress=progress, flow_F=flowF, dim=dim,
                                 drho=float(c.get("drho", 0.0)), H=float(H) if H not in (None, "", 0) else None,
                                 arf3d=arf3d, flow_profile=c.get("flow_profile", "uniform"),
                                 streaming3d=_streaming3d(c), secondary=_secondary(c), flow3d=flow3d)
