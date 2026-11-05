@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -4648,6 +4649,9 @@ elif plot_mode == "Run simulation":
                 st.number_input("Chamber height H (µm; 0 = open top)", 0.0, 500.0, step=1.0, key="sim_H")
                 st.number_input("Δρ = ρ_particle − ρ_liquid (kg/m³; 52 = PS, 0 = density-matched)", -500.0, 2000.0,
                                 step=1.0, key="sim_drho")
+                st.caption("3D options elsewhere: **Acoustic field** → tick the radiation force to pick the 3D field shape "
+                           "(1D fit, computed side-wall / IDT / travelling SAW, file), lid and computed streaming; "
+                           "**Start** → 'stacked square layers (3D)'. The Batch tab uses all of these.")
             else:
                 st.checkbox("Neighbour lists (faster for N > 300, same physics)", key="sim_nl")
         with c2:
@@ -4666,10 +4670,10 @@ elif plot_mode == "Run simulation":
                     fsh = st.selectbox("3D field shape", list(sg.FIELD_SHAPES), format_func=sg.FIELD_SHAPES.get, key="sim_fshape",
                                        help="Computed fields: Helmholtz solver for this chamber (simulation/acoustic3d.py) → "
                                             "Gor'kov force; strength scaled to F₀ at mid-height. See paper Fig. 2.")
-                    if fsh in ("side", "idt"):
+                    if fsh in ("side", "idt", "idt_travel"):
                         st.number_input("Frequency (MHz)", 1.0, 200.0, step=1.0, key="sim_freq")
                         st.selectbox("Lid", list(sg.LIDS), format_func=sg.LIDS.get, key="sim_lid")
-                        if fsh == "idt":
+                        if fsh in ("idt", "idt_travel"):
                             st.number_input("SAW speed of the substrate (m/s; LiNbO₃ 3990)", 1000.0, 10000.0, step=10.0, key="sim_csaw")
                             ns_ = SS.sim_csaw / (SS.sim_freq * 1e6) / 2 * 1e6
                             st.caption(f"Nodes {ns_:.0f} µm apart; pick a box width that is an odd multiple of half the node "
@@ -4798,11 +4802,11 @@ elif plot_mode == "Run simulation":
         if dim3:
             cfg.update({"dim": 3, "H": float(SS.sim_H) if SS.sim_H > 0 else None, "drho": float(SS.sim_drho),
                         "flow_profile": SS.sim_fprofile, "rayleigh_A": float(SS.sim_rayA)})
-            if field and SS.sim_fshape in ("side", "idt") and SS.get("sim_fauto"):
+            if field and SS.sim_fshape in ("side", "idt", "idt_travel") and SS.get("sim_fauto"):
                 cfg.update({"field_auto": {"drive": SS.sim_fshape, "lid": SS.sim_lid, "freq_MHz": float(SS.sim_freq)},
                             "field_auto_streaming": float(SS.get("sim_ffac", 1.0)),
                             "radiation_off": bool(SS.get("sim_radoff", False))})
-            elif field and SS.sim_fshape in ("side", "idt", "file") and SS.sim_ffile:
+            elif field and SS.sim_fshape in ("side", "idt", "idt_travel", "file") and SS.sim_ffile:
                 cfg.update({"arf3d_file": clean_path(SS.sim_ffile), "arf3d_match": True})
 
         # ---- sanity checks before anything runs ----
@@ -4919,8 +4923,9 @@ elif plot_mode == "Run simulation":
             st.success(f"Started. Follow it in the Jobs tab (job {os.path.basename(jd)}).")
 
     with tab_batch:
-        st.caption("Many parameter sets in one job. Physics, repulsive core, particle number (grid start), saved "
-                   "frames and output folder come from **Settings and start**; AO is matched to each A by B₂*. "
+        st.caption("Many parameter sets in one job. Physics, repulsive core, 2D/3D (H, Δρ, 3D field shape, lid, streaming), "
+                   "start positions (also stacked 3D layers), saved frames and output folder come from **Settings and start**; "
+                   "AO (φ_p) and the other models (ε) are matched to each A by B₂*. "
                    "Runs that already exist are skipped, so a stopped batch can simply be started again.")
         bdir = os.path.join(sim_root, "_batches") if sim_root else ""
         saved = sorted(f[:-5] for f in os.listdir(bdir) if f.endswith(".json")) if bdir and os.path.isdir(bdir) else []
@@ -4937,6 +4942,10 @@ elif plot_mode == "Run simulation":
                 SS.bt_pots = spec0.get("potentials", ["LJ", "AO"])
                 SS.bt_q = ", ".join(f"{v:g}" for v in spec0.get("q", [0.2]))
                 SS.bt_T = float(spec0.get("T_tauB", 10)); SS.bt_seeds = ", ".join(map(str, spec0.get("seeds", [1, 2, 3])))
+                for p_, v_ in (spec0.get("attp") or {}).items():
+                    SS[f"bt_attp_{p_}"] = ", ".join(f"{x:g}" for x in v_)
+                if spec0.get("H"):
+                    SS.bt_H = ", ".join(f"{x:g}" for x in spec0["H"])
                 SS.bt_loaded_name = pick
                 st.rerun()
 
@@ -4954,7 +4963,25 @@ elif plot_mode == "Run simulation":
         A_list = _nums(b1.text_input("A values (k_BT; AO at the same B₂*)", "1, 2, 3, 5", key="bt_A"))
         dn_list = _nums(b2.text_input("d_n values (nm)", "2000, 3000, 4000", key="bt_dn")) if sc == "II" else []
         F_list = _nums(b2.text_input("F₀ values (N/m³)", "300, 1000, 3000", key="bt_F")) if sc == "IV" else []
-        pots = b3.multiselect("Attraction", ["LJ", "AO"], default=["LJ", "AO"], key="bt_pots")
+        pots = b3.multiselect("Attraction", list(sg.POTENTIALS), default=["LJ", "AO"], key="bt_pots",
+                              format_func=lambda p: p if p in ("LJ", "AO") else sg.POTENTIALS[p].split(" (")[0])
+        attp = {}
+        extra = [p for p in pots if p in sg.ATT_PARAM]
+        if extra:
+            ec = st.columns(len(extra))
+            for col_, p in zip(ec, extra):
+                pk_, plab_, pdef_ = sg.ATT_PARAM[p]
+                attp[p] = _nums(col_.text_input(f"{sg.POTENTIALS[p].split(' (')[0]}: {plab_} values", f"{pdef_:g}",
+                                                key=f"bt_attp_{p}", help="ε is matched to each A by B₂*."))
+        dim3_b = int(cfg.get("dim", 2)) == 3
+        H_list = []
+        if dim3_b:
+            H_list = _nums(st.text_input("Chamber heights H (µm; 3D, from Settings: Δρ, field shape, start)",
+                                         f"{float(SS.sim_H):g}", key="bt_H"))
+        keep_start = False
+        if sc in ("III", "IV") and cfg["start"].get("kind") == "run":
+            keep_start = st.checkbox("Start from the run frame set in Settings (e.g. a 3D band) instead of the COMSOL band",
+                                     key="bt_keep")
         b4, b5, b6, b7 = st.columns(4)
         q_list = _nums(b4.text_input("AO q values", "0.2", key="bt_q")) if "AO" in pots else []
         T_b = b5.number_input("Run length (τ_B)", 0.01, 1000.0, 10.0, 1.0, key="bt_T")
@@ -4964,6 +4991,7 @@ elif plot_mode == "Run simulation":
                                     help="Each one is a separate Python process (~200 MB). Stay below your number of "
                                          "cores and don't run two jobs at once, or the computer runs out of memory.")
         spec = {"scenario": sc, "A": A_list, "dn": dn_list, "F": F_list, "potentials": pots, "q": q_list,
+                "attp": attp, "H": H_list, "keep_start": keep_start,
                 "T_tauB": float(T_b), "seeds": seeds_b, "auto_steps": True,
                 "out_per_tauB": int(cfg["out_per_tauB"])}
         if "bt_match" not in SS:
@@ -5000,6 +5028,13 @@ elif plot_mode == "Run simulation":
                 with open(os.path.join(bdir, re.sub(r"[^A-Za-z0-9_.-]+", "_", bname) + ".json"), "w") as f:
                     json.dump(full, f, indent=2)
                 st.success(f"saved in {bdir}. Command line: python simulation\\sim_runner.py \"{os.path.join(bdir, bname)}.json\"")
+            if s3.button("Add to the queue", key="bt_queue", help="Writes it to <output>/_batches/queue; queue_loop.py runs "
+                                                                  "the queue file by file (the overnight workflow)."):
+                qd = os.path.join(bdir, "queue"); os.makedirs(qd, exist_ok=True)
+                qn = time.strftime("%Y%m%d-%H%M_") + re.sub(r"[^A-Za-z0-9_.-]+", "_", bname) + ".json"
+                with open(os.path.join(qd, qn), "w") as f:
+                    json.dump(full, f, indent=2)
+                st.success(f"queued as {qn}")
             if s1.button("▶ Start batch", type="primary", key="bt_go", disabled=not todo):
                 os.makedirs(sim_root, exist_ok=True)
                 jd = sg.launch(full)

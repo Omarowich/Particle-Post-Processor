@@ -23,7 +23,8 @@ POTENTIALS = {"LJ": "Lennard-Jones 12-6 (ε = A k_BT, σ = 2a)", "AO": "Asakura�
 ATT_PARAM = {"LJ2n": ("n", "exponent n", 57.55), "SW": ("width", "well width (µm)", 0.03319),
              "YUK": ("kappa", "κ (1/µm)", 17.28)}
 FIELD_SHAPES = {"1D": "fitted 1D standing wave (same at every height)", "side": "computed: side-wall drive (bulk wave)",
-                "idt": "computed: IDT drive (standing SAW from the floor)", "file": "field file (.npz or COMSOL .csv)"}
+                "idt": "computed: IDT drive (standing SAW from the floor)",
+                "idt_travel": "computed: one IDT, travelling SAW (no nodes)", "file": "field file (.npz or COMSOL .csv)"}
 LIDS = {"glass": "glass (reflects)", "pdms": "PDMS (Z = 1 MRayl)", "absorb": "absorbing (Z = ρ₀c₀)"}
 CORES = {"coulomb": "Coulomb, Z = 100, below 2a (= COMSOL)", "phs": "pseudo-hard sphere (Mie 50/49)",
          "wca": "soft WCA (old)", "none": "no core"}
@@ -120,8 +121,10 @@ SCENARIOS = {
 def expand_batch(base, spec, match_cache=None):
     """List of setting overrides (one per parameter set) for a batch.
 
-    spec: {"scenario": "I".."IV", "A": [...], "dn": [...], "F": [...], "potentials": ["LJ", "AO"],
-           "q": [0.2], "T_tauB": 10, "seeds": [1, 2, 3], "auto_steps": True, "out_per_tauB": 100}
+    spec: {"scenario": "I".."IV", "A": [...], "dn": [...], "F": [...], "potentials": ["LJ", "AO", "LJ2n", "SW", "YUK"],
+           "q": [0.2], "attp": {"LJ2n": [57.55], ...}, "H": [4, 20] (3D only), "keep_start": False,
+           "T_tauB": 10, "seeds": [1, 2, 3], "auto_steps": True, "out_per_tauB": 100}
+    LJ2n / SW / YUK are matched to each A by B2* (eps from the matching, at each range parameter).
     AO is matched to each A by B2* (phi_p from the matching, at each q)."""
     match_cache = {} if match_cache is None else match_cache
     sc = spec.get("scenario", "II")
@@ -131,14 +134,26 @@ def expand_batch(base, spec, match_cache=None):
               "IV": [{"dn_nm": 0.0, "flow_F": float(F)} for F in spec.get("F") or [3000]]}[sc]
     start = dict(base.get("start", {"kind": "grid"}))
     if sc in ("III", "IV"):
-        start = {"kind": "aaf"}
+        # Regime III/IV: the COMSOL band, or the start set in Settings when it is a run frame (e.g. a 3D band)
+        start = start if (spec.get("keep_start") and start.get("kind") == "run") else {"kind": "aaf"}
     elif start.get("kind") in ("aaf", "run"):
         start = {"kind": "grid", "n_side": 12, "spacing": 4.0}
     regime = {"I": "NAF", "II": "ARF", "III": "AAF", "IV": "ASF"}[sc]
+    if int(base.get("dim", 2)) == 3:
+        regime += "_3D"
+    heights = [float(h) for h in spec.get("H") or []] if int(base.get("dim", 2)) == 3 else []
     items = []
     for A in spec.get("A") or [3.0]:
         for pot in spec.get("potentials") or ["LJ"]:
-            for q in (spec.get("q") or [0.2]) if pot == "AO" else [None]:
+            if pot == "AO":
+                variants = [("q", float(q)) for q in (spec.get("q") or [0.2])]
+            elif pot in ATT_PARAM:
+                pk = ATT_PARAM[pot][0]
+                variants = [(pk, float(v)) for v in (spec.get("attp", {}).get(pot) or [ATT_PARAM[pot][2]])]
+            else:
+                variants = [(None, None)]
+            for vk, vv in variants:
+                q = vv if pot == "AO" else None
                 it = {"potential": pot, "A": float(A), "start": start, "regime": regime,
                       "T_tauB": float(spec.get("T_tauB", base.get("T_tauB", 10))),
                       "seeds": [int(s) for s in spec.get("seeds") or [1, 2, 3]],
@@ -149,10 +164,17 @@ def expand_batch(base, spec, match_cache=None):
                         phi, _ = match_phi({**base, "potential": "AO", "q": float(q)}, float(A))
                         match_cache[key] = float(phi)
                     it.update({"q": float(q), "phi_p": round(match_cache[key], 3)})
+                elif pot in ATT_PARAM:
+                    key = (pot, vv, float(A))
+                    if key not in match_cache:
+                        e, _ = match_eps({**base, "potential": pot, vk: vv, "eps": 1.0, "A": 0.0}, float(A))
+                        match_cache[key] = float(e)
+                    it.update({vk: vv, "eps": round(match_cache[key], 3)})
                 if spec.get("auto_steps", True):
                     it["steps_per_tauB"] = suggested_steps({**base, **it})
                 for f in fields:
-                    items.append({**it, **f})
+                    for h in heights or [None]:
+                        items.append({**it, **f, **({"H": h} if h is not None else {})})
     return items
 
 

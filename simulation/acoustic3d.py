@@ -99,7 +99,8 @@ def chamber_force(H=20e-6, *, top="hard", h=1e-6, d_n=4000e-9, freq=20e6, c0=203
 def make_field_file(drive, out_dir, *, freq_MHz=20.0, lid="glass", H_um=20.0, box_half_um=25.0, c_saw=3990.0,
                     c0=None, rho0=1180.0, rho_p=1050.0, c_p=2350.0, h_um=None, Z_pdms=1.0e6):
     """Solve the chamber field and save the Gor'kov force grid (npz) for sim_runner's arf3d_file.
-    drive: 'side' (the two y walls move along y, COMSOL set-up) or 'idt' (standing SAW on the floor, LiNbO3 c_SAW).
+    drive: 'side' (the two y walls move along y, COMSOL set-up), 'idt' (standing SAW on the floor, LiNbO3 c_SAW) or
+    'idt_travel' (one IDT: travelling SAW, absorbing side walls, no nodes).
     lid: 'glass' (hard), 'pdms' (impedance Z_pdms) or 'absorb' (Z = rho0 c0). The field is uniform in x, so it is
     solved on a thin y-z slab and copied along x. Returns (path, info dict). Strength: scaled to the 2D fit by the run."""
     import os
@@ -110,11 +111,15 @@ def make_field_file(drive, out_dir, *, freq_MHz=20.0, lid="glass", H_um=20.0, bo
     h = (h_um or (0.5 if H_um <= 10 else 1.0)) * 1e-6
     kw = dict(top="hard") if lid == "glass" else dict(top="impedance", Z_top=Z_pdms if lid == "pdms" else rho0 * c0)
     info = {"drive": drive, "freq_MHz": freq_MHz, "lid": lid, "H_um": H_um, "box_half_um": box_half_um, "c0": c0}
-    if drive == "idt":
+    if drive in ("idt", "idt_travel"):
         k = 2 * np.pi * f / c_saw
         info.update(k_saw_per_um=k * 1e-6, node_spacing_um=np.pi / k * 1e6,
                     rayleigh_angle_deg=float(np.degrees(np.arcsin(min(1.0, c0 / c_saw)))))
-        axes, p = solve_box(Lx=2e-6, Ly=Ly, H=H, h=h, freq=f, c0=c0, rho0=rho0, actuate="ssaw", k_saw=k, **kw)
+        if drive == "idt_travel":       # one IDT, travelling SAW, absorbing side walls: no pressure nodes
+            axes, p = solve_box(Lx=2e-6, Ly=Ly, H=H, h=h, freq=f, c0=c0, rho0=rho0, actuate="ssaw", k_saw=k, saw="travel",
+                                ywalls="impedance", Z_y=rho0 * c0, **kw)
+        else:
+            axes, p = solve_box(Lx=2e-6, Ly=Ly, H=H, h=h, freq=f, c0=c0, rho0=rho0, actuate="ssaw", k_saw=k, **kw)
     else:
         info.update(node_spacing_um=c0 / f / 2 * 1e6)
         axes, p = solve_box(Lx=2e-6, Ly=Ly, H=H, h=h, freq=f, c0=c0, rho0=rho0, actuate="y", **kw)
