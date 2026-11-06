@@ -347,7 +347,8 @@ def run_one(args):
                                 progress=progress, flow_F=flowF, dim=dim,
                                 drho=float(c.get("drho", 0.0)), H=float(H) if H not in (None, "", 0) else None,
                                 arf3d=arf3d, flow_profile=c.get("flow_profile", "uniform"),
-                                streaming3d=_streaming3d(c), secondary=_secondary(c), flow3d=flow3d)
+                                streaming3d=_streaming3d(c), secondary=_secondary(c), flow3d=flow3d,
+                                noise_scale=float(c.get("noise_scale", 1.0)))
             x, y = fr[:, :, 0], fr[:, :, 1]
             if dim == 3:
                 be.write_csv(folder, fr, t)              # datax/datay/dataz
