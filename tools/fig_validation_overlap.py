@@ -9,7 +9,7 @@ S = np.load(sys.argv[1]); G = np.load(sys.argv[2]); SIM, out = sys.argv[3], sys.
 sys.path.insert(0, SIM); import airpods_bd as bd; from verify_ao import potential_from_force
 plt.rcParams.update({"font.size": 6.8, "axes.linewidth": 0.6, "axes.spines.top": False, "axes.spines.right": False})
 OR, BL, GR = "#eb6834", "#2a78d6", "#888888"
-fig = plt.figure(figsize=(7.2, 6.4), constrained_layout=True)
+fig = plt.figure(figsize=(7.2, 5.0), constrained_layout=True)
 gs = fig.add_gridspec(3, 4)
 CASES = ((0, 2000), (0, 4000), (5, 2000), (5, 4000))
 L = iter("abcdefghijkl")

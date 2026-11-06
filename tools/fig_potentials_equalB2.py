@@ -14,7 +14,7 @@ MOD = [("LJ 12-6", "#2a78d6", "-", lambda A: bd.radial_force(r, A, None)),
        ("2n–n LJ, n = 57.6", "#1baf7a", "--", lambda A: core + bd.att_force(r, {"model": "LJ2n", "eps": M["LJ2n"]["eps"][str(A)], "n": M["LJ2n"]["n"]})),
        ("square well, w = 33 nm", "#d39200", "-.", lambda A: core + bd.att_force(r, {"model": "SW", "eps": M["SW"]["eps"][str(A)], "width": M["SW"]["width"]})),
        ("Yukawa, 1/κ = 58 nm", "#e87ba4", ":", lambda A: core + bd.att_force(r, {"model": "YUK", "eps": M["YUK"]["eps"][str(A)], "kappa": M["YUK"]["kappa"]}))]
-fig, axs = plt.subplots(2, 2, figsize=(7.2, 5.0), constrained_layout=True, gridspec_kw={"width_ratios": [1.35, 1]})
+fig, axs = plt.subplots(2, 2, figsize=(7.2, 4.1), constrained_layout=True, gridspec_kw={"width_ratios": [1.35, 1]})
 (d, e), (g, h) = axs
 A = 2
 for lab, col, ls, f in MOD:
