@@ -14,7 +14,7 @@ pan = [(L, "A2", "a  5.0 k$_B$T, 100 τ$_B$"), (L, "A3", "b  5.6 k$_B$T, 100 τ$
 for j, (D, k, t) in enumerate(pan):
     a = fig.add_axes([0.25 * j, 0.47, 0.25, 0.52], projection="3d"); P = D[k + "|snap"]; fl = D[k + ("|xf" if D is L else "|xflag")]
     sm = D[k + "|ser"][-1, 1] if D is L else D[k + "|S"][-1]
-    persp(a, P, fl, ((-25, 25), (-25, 25), (0, 20)), t, s=6, elev=22, azim=-58, note=f"crystal-like {fl.mean():.2f}, S$_{{max}}$ {sm:.2f}")
+    persp(a, P, fl, ((-25, 25), (-25, 25), (0, 20)), t, elev=22, azim=-58, note=f"crystal-like {fl.mean():.2f}, S$_{{max}}$ {sm:.2f}")
 ax = fig.add_axes([0.07, 0.10, 0.40, 0.30]); cm = plt.get_cmap("viridis")
 for core, ls in (("coul", "-"), ("phs1000", "--"), ("phs1000long", "--"), ("phs4000", ":")):
     for A, dep in DEP[core].items():

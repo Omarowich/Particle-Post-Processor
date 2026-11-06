@@ -7,18 +7,7 @@ matplotlib.use("Agg"); import matplotlib.pyplot as plt
 S = np.load(sys.argv[1]); out = sys.argv[2]; os.makedirs(out, exist_ok=True)
 plt.rcParams.update({"font.size": 7, "axes.spines.top": False, "axes.spines.right": False, "axes.linewidth": 0.5})
 XT, OT = "#a3222b", "#9fb3c8"
-def persp(ax, P, fl, lim, title, s=9, elev=24, azim=-62, note=None, zoom=1.3):
-    (x0, x1), (y0, y1), (z0, z1) = lim
-    ax.set_box_aspect((x1 - x0, y1 - y0, (z1 - z0)), zoom=zoom); ax.set_axis_off()
-    xx, yy = np.meshgrid([x0, x1], [y0, y1]); ax.plot_surface(xx, yy, 0 * xx + z0, color="#dfe5ec", alpha=0.5, shade=False, zorder=0)
-    for zz, kw in ((z0, dict(color="#8a96a3", lw=0.6)), (z1, dict(color="#8a96a3", lw=0.5, ls=(0, (2, 2))))):
-        ax.plot([x0, x1, x1, x0, x0], [y0, y0, y1, y1, y0], [zz] * 5, **kw)
-    for xv, yv in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)): ax.plot([xv, xv], [yv, yv], [z0, z1], color="#8a96a3", lw=0.4, ls=(0, (2, 2)))
-    o = np.argsort(P[:, 1] - P[:, 0] * 0.3)
-    ax.scatter(P[o, 0], P[o, 1], P[o, 2], s=s, c=np.where(fl[o], XT, OT), edgecolor="white", linewidth=0.15, depthshade=True, alpha=1)
-    ax.set_xlim(x0, x1); ax.set_ylim(y0, y1); ax.set_zlim(z0, z1); ax.view_init(elev=elev, azim=azim)
-    ax.text2D(0.03, 0.97, title, transform=ax.transAxes, fontsize=7, fontweight="bold", va="top")
-    if note: ax.text2D(0.03, 0.06, note, transform=ax.transAxes, fontsize=5.8)
+from persp3d import persp
 lab = dict(fontsize=7.2, fontweight="bold", loc="left", pad=24)
 # ---------------- Fig 16 ----------------
 fig = plt.figure(figsize=(7.2, 4.0))
@@ -68,7 +57,7 @@ pan = [(0.0, "gel|coul|A2", "a  5.0 k$_B$T (Coulomb core), 20 τ$_B$"), (0.25, "
 for x, k, title in pan:
     ax = fig.add_axes([x, 0.47, 0.25, 0.52], projection="3d"); P = S[k + "|snap"]; fl = S[k + "|xflag"]
     L = 50 if "4000" in k else 25
-    persp(ax, P, fl, ((-L, L), (-L, L), (0, 20)), title, s=3 if L == 50 else 6, elev=22, azim=-58,
+    persp(ax, P, fl, ((-L, L), (-L, L), (0, 20)), title, elev=22, azim=-58,
           note=f"crystal-like {fl.mean():.2f}, S$_{{max}}$ {S[k + '|S'][-1]:.2f}")
 ax = fig.add_axes([0.07, 0.12, 0.40, 0.29])
 cm = plt.get_cmap("viridis")

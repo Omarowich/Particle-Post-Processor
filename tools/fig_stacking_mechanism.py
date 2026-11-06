@@ -33,7 +33,7 @@ ax.set_xlabel("t (τ$_B$)"); ax.set_ylim(0, 1.02); ax.set_xlim(0, 5); ax.set_yla
 ax.set_title("c  same start, noise on/off", **lab)
 for j, (k, t) in enumerate((("noise", "d  with thermal noise, 5 τ$_B$"), ("nonoise", "e  without thermal noise, 5 τ$_B$"))):
     a = fig.add_axes([0.0 + 0.5 * j, 0.02, 0.5, 0.48], projection="3d"); P = S31[k + "|snap"]
-    persp(a, P, np.zeros(len(P), bool), ((-25, 25), (-12, 12), (0, 6)), t, s=10, color=zcolor(P, 4.0), zoom=1.55,
+    persp(a, P, np.zeros(len(P), bool), ((-25, 25), (-12, 12), (0, 6)), t, color=zcolor(P, 4.0), zoom=1.55,
           note=f"on top {np.mean(P[:, 2] > 2.5):.0%}, within 3 µm of node {np.mean(abs(P[:, 1]) < 3):.0%}")
 for e in ("png", "pdf"): fig.savefig(f"{out}/Fig_stacking-mechanism_squeeze-vs-weight_noise-control.{e}", dpi=300)
 print("saved")

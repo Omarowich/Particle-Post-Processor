@@ -4,12 +4,12 @@ a PDMS lid at H = 4-20 um (water) and the old H = 6 um PDMS field; glass for ref
 Usage: python fig_flat_trap.py <_fields dir> <night_32.npz> <out dir>"""
 import sys, os, numpy as np, matplotlib
 matplotlib.use("Agg"); import matplotlib.pyplot as plt
-from persp3d import persp, zcolor
+from persp3d import persp, zcolor, topview, top2d
 FD, S, out = sys.argv[1], np.load(sys.argv[2]), sys.argv[3]
 plt.rcParams.update({"font.size": 7, "axes.spines.top": False, "axes.spines.right": False, "axes.linewidth": 0.5})
 lab = dict(fontsize=7.2, fontweight="bold", loc="left")
 fig = plt.figure(figsize=(7.2, 4.4))
-ax = fig.add_axes([0.07, 0.60, 0.40, 0.33])
+ax = fig.add_axes([0.07, 0.64, 0.40, 0.30])
 cols = {4: "#eb6834", 6: "#e34948", 10: "#7a2a9a", 20: "#33415c"}
 for H, c in cols.items():
     d = np.load(os.path.join(FD, f"auto_side20_H{H}_box50_pdms_water.npz")); ys, zs = d["ys"] * 1e6, d["zs"] * 1e6
@@ -22,7 +22,7 @@ ax.plot(ys, F[ix, :, np.argmin(abs(zs - 1)), 1] * s, color="#e34948", lw=1.2, ls
 ax.axhspan(-1, 1, color="#2a78d6", alpha=0.10, lw=0); ax.text(-24, -3.5, "|F$_y$| < 1 k$_B$T/µm", fontsize=5.6, color="#2a78d6")
 ax.set_xlim(-25, 25); ax.set_ylim(-20, 20); ax.set_xlabel("y (µm)"); ax.set_ylabel("F$_y$ at z = 1 µm (k$_B$T/µm)")
 ax.legend(fontsize=5.0, frameon=False, loc="upper right", ncol=1); ax.set_title("a  force along the floor", **lab)
-ax = fig.add_axes([0.57, 0.60, 0.41, 0.33]); yb = np.arange(-25, 26, 2.5); yc = (yb[:-1] + yb[1:]) / 2
+ax = fig.add_axes([0.57, 0.64, 0.41, 0.30]); yb = np.arange(-25, 26, 2.5); yc = (yb[:-1] + yb[1:]) / 2
 for k, c, ls, l in (("H6_drho52_PDMSlid", "#e34948", "--", "old field, 5 τ$_B$"), ("H6_drho52_PDMSlid_long", "#7f1d1d", "--", "old field, 20 τ$_B$"),
                      ("H6_drho52_PDMSlid_noattr", "#f4a3a3", ":", "old field, no attraction"), ("H4_drho52_sidepdmsradonlyW", "#eb6834", "-", "water, H = 4 µm"),
                      ("H6_drho52_sidepdmsradonlyW", "#e34948", "-", "water, H = 6 µm"), ("H20_drho52_sidepdmsradonlyW", "#33415c", "-", "water, H = 20 µm")):
@@ -31,7 +31,8 @@ ax.set_xlim(-25, 25); ax.set_xlabel("y (µm)"); ax.set_ylabel("particles per 2.5
 ax.set_title("b  where the particles end up (PDMS lid)", **lab)
 for j, (k, t) in enumerate((("H6_drho52_PDMSlid", "c  old field, H = 6 µm, 5 τ$_B$"), ("H6_drho52_PDMSlid_long", "d  same, 20 τ$_B$"),
                             ("H4_drho52_sidepdmsradonlyW", "e  water, H = 4 µm, 5 τ$_B$"))):
-    a = fig.add_axes([0.0 + 0.333 * j, 0.0, 0.333, 0.50], projection="3d"); P = S[k + "|snap"]; H = 4 if "H4" in k else 6
-    persp(a, P, np.zeros(len(P), bool), ((-25, 25), (-25, 25), (0, H)), t, s=7, color=zcolor(P, 3.5), zoom=1.3, elev=58, azim=-90)
+    a = fig.add_axes([0.04 + 0.33 * j, 0.05, 0.27, 0.40]); P = S[k + "|snap"][:, [1, 0, 2]]       # y (across the band) horizontal
+    top2d(a, P, (-25, 25), (-25, 25), t, note=f"within 3 µm of the node: {np.mean(abs(P[:, 0]) < 3):.0%}")
+    a.axvline(0, color="#555", lw=0.5, ls=":")
 for e in ("png", "pdf"): fig.savefig(f"{out}/Fig_flat-trap_PDMS-lid_two-side-bands.{e}", dpi=300)
 print("saved")

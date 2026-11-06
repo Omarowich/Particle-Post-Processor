@@ -11,8 +11,8 @@ plt.rcParams.update({"font.size": 7, "axes.spines.top": False, "axes.spines.righ
 lab = dict(fontsize=7.2, fontweight="bold", loc="left")
 fig = plt.figure(figsize=(7.2, 4.3))
 for j, T in enumerate(("0", "0.06", "0.3", "1")):
-    a = fig.add_axes([0.25 * j - 0.01, 0.50, 0.27, 0.50], projection="3d"); P = FR[f"stream_noise|{T}"]
-    persp(a, P, np.zeros(len(P), bool), ((-25, 25), (-25, 25), (0, 10)), f"{'abcd'[j]}  {T} τ$_B$", s=6, color=zcolor(P, 8.0), zoom=1.25, elev=18, azim=-20,
+    a = fig.add_axes([0.005 + 0.25 * j, 0.50, 0.245, 0.50], projection="3d"); P = FR[f"stream_noise|{T}"]
+    persp(a, P, np.zeros(len(P), bool), ((-25, 25), (-25, 25), (0, 10)), f"{'abcd'[j]}  {T} τ$_B$", color=zcolor(P, 8.0), zoom=1.25, elev=18, azim=-20,
           note=f"at node {np.mean(abs(P[:, 1]) < 3):.0%}, above 3 µm {np.mean(P[:, 2] > 3):.0%}")
 ax = fig.add_axes([0.07, 0.09, 0.36, 0.33])
 ys, zs, U, W = FL["ys"] * 1e6, FL["zs"] * 1e6, FL["U"], FL["W"]
